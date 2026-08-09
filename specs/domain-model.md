@@ -12,6 +12,11 @@ The manager uses three distinct states:
 Observed state remains authoritative for live health. Applied state MUST NOT be
 used as a substitute for observing the host.
 
+P5 authorizes destructive planning only from current ownership evidence such as
+manager ownership markers. A future applied-state record MAY corroborate that
+evidence but MUST NOT override missing/foreign live ownership. P6 is the first
+phase permitted to persist `applied.json` after a complete successful apply.
+
 ## Lifecycle semantics
 
 The desired declaration contains:
@@ -39,6 +44,18 @@ Future command semantics are frozen as follows:
 
 M0 exposes only declaration validation/create/update/list/show and read-only host
 inspection. Host mutation commands MUST NOT be implemented before the M0 review.
+
+P4/P5 add deterministic resource rendering and reconciliation planning only.
+They MUST NOT write generated resources or invoke mutating systemd operations.
+
+The manager-owned tunnel profile directory is:
+
+```text
+~/.config/workspace-mcp-manager/tunnel-profiles/
+```
+
+This intentionally avoids co-locating generated profiles with the external
+`tunnel-client/runtime.env` credential file.
 
 ## Configuration rules
 

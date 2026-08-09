@@ -11,7 +11,15 @@ from workspace_mcp_manager.paths import ManagerPaths
 
 class HostInspectorTests(unittest.TestCase):
     def _paths(self, root: Path) -> ManagerPaths:
-        return ManagerPaths(root, root / ".config/wmm", root / ".config/wmm/instances", root / ".state/wmm")
+        return ManagerPaths(
+            account_home=root,
+            config_root=root / ".config/wmm",
+            registry_dir=root / ".config/wmm/instances",
+            state_root=root / ".state/wmm",
+            user_unit_dir=root / ".config/systemd/user",
+            tunnel_profile_dir=root / ".config/wmm/tunnel-profiles",
+            manager_executable=root / ".local/bin/workspace-mcp-manager",
+        )
 
     def test_environment_reports_secret_presence_not_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

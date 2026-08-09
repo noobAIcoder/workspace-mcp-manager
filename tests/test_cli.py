@@ -7,12 +7,17 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from workspace_mcp_manager.cli import main
+from workspace_mcp_manager.cli import _payload_exit_code, main
 
 from tests.helpers import sample_instance
 
 
 class CliTests(unittest.TestCase):
+    def test_structured_false_result_returns_semantic_failure_exit(self) -> None:
+        self.assertEqual(_payload_exit_code({"ok": False}), 1)
+        self.assertEqual(_payload_exit_code({"ok": True}), 0)
+        self.assertEqual(_payload_exit_code({"status": "observed"}), 0)
+
     def test_validate_outputs_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "instance.json"

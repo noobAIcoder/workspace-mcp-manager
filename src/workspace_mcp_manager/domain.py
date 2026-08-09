@@ -172,7 +172,7 @@ class McpConfig:
         if len(set(roots)) != len(roots):
             raise config_error("mcp.external_roots contains duplicate paths")
         return cls(
-            binary=_nonempty_string(data["binary"], "mcp.binary"),
+            binary=_absolute_path(data["binary"], "mcp.binary"),
             host=_nonempty_string(data["host"], "mcp.host"),
             port=_port(data["port"], "mcp.port"),
             permission_mode=_enum(PermissionMode, data["permission_mode"], "mcp.permission_mode"),
@@ -216,7 +216,7 @@ class TunnelConfig:
         if not PROFILE_RE.fullmatch(profile):
             raise config_error("tunnel.profile contains unsupported characters")
         return cls(
-            binary=_nonempty_string(data["binary"], "tunnel.binary"),
+            binary=_absolute_path(data["binary"], "tunnel.binary"),
             id=tunnel_id,
             profile=profile,
             health_host=_nonempty_string(data["health_host"], "tunnel.health_host"),

@@ -75,17 +75,27 @@ class ManagerPaths:
     config_root: Path
     registry_dir: Path
     state_root: Path
+    user_unit_dir: Path
+    tunnel_profile_dir: Path
+    manager_executable: Path
 
     @classmethod
     def for_current_user(cls, *, registry_override: Path | None = None) -> "ManagerPaths":
         account_home = current_account_home()
         config_root = account_home / ".config" / "workspace-mcp-manager"
-        registry_dir = registry_override or config_root / "instances"
+        registry_dir = (
+            registry_override.expanduser().resolve(strict=False)
+            if registry_override is not None
+            else config_root / "instances"
+        )
         state_root = account_home / ".local" / "state" / "workspace-mcp-manager"
         return cls(
             account_home=account_home,
             config_root=config_root,
             registry_dir=registry_dir,
             state_root=state_root,
+            user_unit_dir=account_home / ".config" / "systemd" / "user",
+            tunnel_profile_dir=config_root / "tunnel-profiles",
+            manager_executable=account_home / ".local" / "bin" / "workspace-mcp-manager",
         )
 

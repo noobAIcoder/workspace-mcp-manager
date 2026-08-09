@@ -8,10 +8,13 @@ from typing import Any, Sequence
 
 from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
+from .generation import ResourceGenerator
 from .host import HostInspector
 from .paths import ManagerPaths
+from .planning import ReconciliationPlanner
 from .redaction import redact_object
 from .registry import InstanceRegistry
+from .runtime import run_admission_guard, run_tunnel
 
 
 def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
@@ -27,6 +30,12 @@ def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
         separators=None if pretty else (",", ":"),
     )
     stream.write("\n")
+
+
+def _payload_exit_code(payload: Any) -> int:
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return 1
+    return 0
 
 
 def _load_declaration(path: Path) -> DesiredInstance:
@@ -59,6 +68,21 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd = instance_sub.add_parser("show")
     show_cmd.add_argument("instance_id")
     show_cmd.add_argument("--pretty", action="store_true")
+
+    render_cmd = instance_sub.add_parser("render")
+    render_cmd.add_argument("instance_id")
+    render_cmd.add_argument("--include-content", action="store_true")
+    render_cmd.add_argument("--pretty", action="store_true")
+
+    plan_cmd = instance_sub.add_parser("plan")
+    plan_cmd.add_argument("instance_id")
+    plan_cmd.add_argument("--pretty", action="store_true")
+
+    runtime = subparsers.add_parser("_runtime", help=argparse.SUPPRESS)
+    runtime_sub = runtime.add_subparsers(dest="command", required=True)
+    for command in ("tunnel", "admission-guard"):
+        item = runtime_sub.add_parser(command)
+        item.add_argument("instance_id")
     return parser
 
 
@@ -73,7 +97,11 @@ def _run_host(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
     raise AssertionError(args.command)
 
 
-def _run_instance(args: argparse.Namespace, registry: InstanceRegistry) -> dict[str, Any]:
+def _run_instance(
+    args: argparse.Namespace,
+    registry: InstanceRegistry,
+    paths: ManagerPaths,
+) -> dict[str, Any]:
     if args.command in {"validate", "create", "update"}:
         desired = _load_declaration(args.file)
         if args.command == "validate":
@@ -112,6 +140,29 @@ def _run_instance(args: argparse.Namespace, registry: InstanceRegistry) -> dict[
             "fingerprint": desired.fingerprint(),
             "desired": desired.to_dict(),
         }
+    if args.command == "render":
+        desired = registry.get(args.instance_id)
+        bundle = ResourceGenerator(paths).generate(desired)
+        return {"ok": True, **bundle.to_dict(include_content=args.include_content)}
+    if args.command == "plan":
+        desired = registry.get(args.instance_id)
+        plan = ReconciliationPlanner(paths, registry).plan(desired)
+        return {"ok": plan.valid, **plan.to_dict()}
+    raise AssertionError(args.command)
+
+
+def _run_runtime(
+    args: argparse.Namespace,
+    registry: InstanceRegistry,
+    paths: ManagerPaths,
+) -> None:
+    desired = registry.get(args.instance_id)
+    if args.command == "tunnel":
+        run_tunnel(desired, paths)
+        return
+    if args.command == "admission-guard":
+        run_admission_guard(desired, paths)
+        return
     raise AssertionError(args.command)
 
 
@@ -122,10 +173,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         paths = ManagerPaths.for_current_user(registry_override=args.registry_dir)
         if args.area == "host":
             payload = _run_host(args, paths)
+        elif args.area == "_runtime":
+            _run_runtime(args, InstanceRegistry(paths.registry_dir), paths)
+            return 0
         else:
-            payload = _run_instance(args, InstanceRegistry(paths.registry_dir))
+            payload = _run_instance(args, InstanceRegistry(paths.registry_dir), paths)
         _emit(payload, pretty=args.pretty)
-        return 0
+        return _payload_exit_code(payload)
     except ManagerError as exc:
         _emit(exc.to_dict(), pretty=getattr(args, "pretty", False), stream=sys.stderr)
         return 2

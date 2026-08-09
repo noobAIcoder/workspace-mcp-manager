@@ -61,6 +61,17 @@ class DesiredInstanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagerError, "absolute POSIX"):
             DesiredInstance.from_dict(value)
 
+    def test_component_binaries_must_be_absolute(self) -> None:
+        value = sample_instance()
+        value["mcp"]["binary"] = "coding-tools-mcp"
+        with self.assertRaisesRegex(ManagerError, "absolute POSIX"):
+            DesiredInstance.from_dict(value)
+
+        value = sample_instance()
+        value["tunnel"]["binary"] = "tunnel-client"
+        with self.assertRaisesRegex(ManagerError, "absolute POSIX"):
+            DesiredInstance.from_dict(value)
+
     def test_exec_path_requires_absolute_entries(self) -> None:
         value = sample_instance()
         value["mcp"]["exec_path"] = "/usr/bin:relative/bin"

@@ -31,6 +31,9 @@ The manager MUST therefore render multiple desired `mcp.external_roots[]` as an
 External roots grant Landlock read/execute admission for `exec_command`; they do
 not expand the direct MCP file tools' workspace boundary.
 
+Desired `mcp.binary` and `tunnel.binary` values MUST be absolute POSIX paths.
+The manager does not defer binary resolution to a mutable service `PATH`.
+
 ### RO/RW external folders
 
 Legacy `workspace-mcp 0.4.0` exposes external folders by mounting them *inside*
@@ -50,6 +53,36 @@ PrivateUsers=true when mounts exist
 
 The manager MUST preserve this enforcement model unless a later verified
 `coding-tools-mcp` contract provides an equivalent stronger primitive.
+
+## Tunnel credential/runtime boundary
+
+Generated manager-owned tunnel profiles live under:
+
+```text
+~/.config/workspace-mcp-manager/tunnel-profiles/
+```
+
+They reference the credential only as:
+
+```text
+env:CONTROL_PLANE_API_KEY
+```
+
+The external `tunnel.env_file` is parsed only by the tunnel runtime path. The
+verified parser accepts `KEY=VALUE` and `export KEY=VALUE`, rejects duplicate or
+malformed assignments, and requires a non-empty `CONTROL_PLANE_API_KEY` without
+printing it.
+
+## Host-observation boundary
+
+P5 MUST fail closed when collision-sensitive identity metadata for an existing
+MCP/tunnel deployment cannot be observed. In the current MCP sandbox,
+`systemctl show` exposes MCP working directories and ports, but legacy tunnel
+profile/health/tunnel-ID markers cannot be fully read because their generated
+unit/config files are outside the MCP read roots.
+
+This is a P6 host-execution prerequisite. The solution MUST be narrow and MUST
+NOT expose tunnel credential contents merely to make reconciliation convenient.
 
 ## Existing lifecycle evidence
 

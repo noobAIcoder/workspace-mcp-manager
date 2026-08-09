@@ -1,0 +1,38 @@
+{
+  "access": {
+    "read_only": [],
+    "read_write": []
+  },
+  "config_version": 1,
+  "github": {
+    "config_dir": null
+  },
+  "instance_id": "manager-qual",
+  "lifecycle": {
+    "deployment": "present",
+    "runtime": "running"
+  },
+  "mcp": {
+    "binary": "/home/cloudtoor/.local/bin/coding-tools-mcp",
+    "exec_path": "/home/cloudtoor/.local/bin:/usr/local/bin:/usr/bin:/bin",
+    "external_roots": [],
+    "host": "127.0.0.1",
+    "permission_mode": "trusted",
+    "port": 7657,
+    "shell_env_inherit": "all"
+  },
+  "recovery": {
+    "admission_guard_enabled": false,
+    "guard_interval_seconds": 30,
+    "recovery_cooldown_seconds": 120
+  },
+  "tunnel": {
+    "binary": "/home/cloudtoor/.local/bin/tunnel-client",
+    "env_file": "/home/cloudtoor/.config/tunnel-client/runtime.env",
+    "health_host": "127.0.0.1",
+    "health_port": 7373,
+    "id": "tunnel_6a78e290552c81918e1fa028923b3087",
+    "profile": "workspace-mcp-manager-qual"
+  },
+  "workspace_path": "/home/cloudtoor/repos/workspace-mcp-manager-qual"
+}
