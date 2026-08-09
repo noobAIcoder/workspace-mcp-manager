@@ -1,0 +1,131 @@
+id	source_class	disposition	target	name
+CAP-001	A	REPLACE	P1	Strict UTF-8 `KEY=VALUE` config parser
+CAP-002	A	PRESERVE	P1	Config version validation
+CAP-003	A	DEFER	P16	Per-instance launcher `<instance>-mcp`
+CAP-004	A	REPLACE	P1-P6	Repo-agnostic shared actuator
+CAP-005	A	REPLACE	P1-P6	`workspace-mcp-setup` provisioning
+CAP-006	A	DEFER	P15	Shared toolkit installer
+CAP-007	A	DEFER	P15	Explicit toolkit `--upgrade`
+CAP-008	A	DEFER	P15	Validate all existing configs before shared-manager upgrade
+CAP-009	A	DEFER	P15	Atomic toolkit installation/copy
+CAP-010	A	DEFER	P15	Refuse silent manager replacement while instances exist
+CAP-011	A	PRESERVE	P6-P7	`install` lifecycle
+CAP-012	A	PRESERVE	P6-P7	`remove` lifecycle
+CAP-013	A	REPLACE	P6/P14	`cleanup` lifecycle
+CAP-014	A	RETIRE	N/A	Default toggle install/remove behavior
+CAP-015	A	PRESERVE	P6-P7	`start` / `stop` / `restart`
+CAP-016	A	PRESERVE	P6-P7	`status`
+CAP-017	A	PRESERVE	P6-P7	`test`
+CAP-018	A	PRESERVE	P6-P7	`logs`
+CAP-019	A	PRESERVE	P6-P7	`config-check`
+CAP-020	A	PRESERVE	P4-P6	Generated MCP user-systemd service
+CAP-021	A	PRESERVE	P4-P6	Generated tunnel user-systemd service
+CAP-022	A	PRESERVE	P4-P6	Generated admission-guard service/timer
+CAP-023	A	PRESERVE	P4-P6	Generated tunnel profile
+CAP-024	A	PRESERVE	P4-P6	Explicit tunnel ID per instance
+CAP-025	A	PRESERVE	P4-P6	Explicit MCP port
+CAP-026	A	PRESERVE	P4-P6	Explicit tunnel-health port
+CAP-027	A	PRESERVE	P4-P6	Tunnel profile-name isolation
+CAP-028	A	PRESERVE	P4-P6	Duplicate workspace detection
+CAP-029	A	PRESERVE	P4-P6	Cross-instance MCP-port collision detection
+CAP-030	A	PRESERVE	P4-P6	Cross-instance tunnel-health-port collision detection
+CAP-031	A	PRESERVE	P4-P6	Duplicate tunnel-ID detection in instance configs
+CAP-032	A	PRESERVE	P4-P6	Duplicate tunnel-ID detection in legacy/existing profiles
+CAP-033	A	PRESERVE	P4-P6	Tunnel-profile collision detection
+CAP-034	A	PRESERVE	P4-P6	Listener ownership validation
+CAP-035	A	PRESERVE	P4-P6	Process argument/cgroup ownership checks
+CAP-036	A	PRESERVE	P4-P6	Safe orphan MCP/tunnel process cleanup
+CAP-037	A	PRESERVE	P4-P6	Refuse termination of unverified foreign PID
+CAP-038	A	PRESERVE	P4-P6	Managed-resource ownership markers
+CAP-039	A	PRESERVE	P4-P6	Ownership-protected removal
+CAP-040	A	PRESERVE	P4-P6	Cleanup audit defaults to read-only
+CAP-041	A	PRESERVE	P4-P6	Cleanup preserves shared binaries/credential files
+CAP-042	A	DEFER	P14	Legacy cleanup support
+CAP-043	A	PRESERVE	P7	MCP discovery validation
+CAP-044	A	PRESERVE	P7	MCP protocol `initialize` validation
+CAP-045	A	PRESERVE	P7	MCP session cleanup after protocol test
+CAP-046	A	PRESERVE	P7	`server_info` workspace validation
+CAP-047	A	PRESERVE	P7	Permission-mode validation through MCP
+CAP-048	A	PRESERVE	P7	Outside-workspace read rejection test
+CAP-049	A	PRESERVE	P7	Tunnel `/healthz` validation
+CAP-050	A	PRESERVE	P7	Tunnel `/readyz` validation
+CAP-051	A	PRESERVE	P9	Git repository detection
+CAP-052	A	PRESERVE	P9	Git working-tree status test
+CAP-053	A	PRESERVE	P9	Git remote-access `ls-remote` test
+CAP-054	A	PRESERVE	P9	Git remote probe uses real account home
+CAP-055	A	PRESERVE	P9	Configurable MCP execution `PATH`
+CAP-056	A	PRESERVE	P10	Codex executable resolution from configured PATH
+CAP-057	A	PRESERVE	P10	Detached Codex jobs
+CAP-058	A	PRESERVE	P10	Codex `read` and `write` modes
+CAP-059	A	PRESERVE	P10	Codex `status`
+CAP-060	A	PRESERVE	P10	Codex bounded `output`
+CAP-061	A	PRESERVE	P10	Codex `cancel`
+CAP-062	A	PRESERVE	P10	Persisted Codex request/status/result/output
+CAP-063	A	PRESERVE	P10	Codex request-to-instance/workspace binding validation
+CAP-064	A	PRESERVE	P10	Codex detached worker via transient systemd unit
+CAP-065	A	PRESERVE	P10	Codex survival independent of initiating MCP request
+CAP-066	A	PRESERVE	P13	Checkpoint written before reboot request
+CAP-067	A	PRESERVE	P13	`reboot-check`
+CAP-068	A	PRESERVE	P13	Narrow `workspace-mcp-reboot` bridge
+CAP-069	A	PRESERVE	P13	Reboot authorization preflight
+CAP-070	A	PRESERVE	P13	Reboot checkpoint reconciliation after boot change
+CAP-071	A	PRESERVE	P13	Synchronous reboot-command failure persistence
+CAP-072	A	PRESERVE	P12	Diagnostic snapshot persistence
+CAP-073	A	PRESERVE	P12	Separate MCP/tunnel service snapshots
+CAP-074	A	PRESERVE	P12	Per-process RSS
+CAP-075	A	PRESERVE	P12	Per-process PSS
+CAP-076	A	PRESERVE	P12	Process age/cgroup membership
+CAP-077	A	PRESERVE	P12	MCP/tunnel cgroup memory separation
+CAP-078	A	PRESERVE	P12	cgroup memory events
+CAP-079	A	PRESERVE	P12	Host `/proc/meminfo` evidence
+CAP-080	A	PRESERVE	P12	Host CPU/memory/IO PSI evidence
+CAP-081	A	PRESERVE	P12	Diagnostic secret redaction
+CAP-082	A	PRESERVE	P12	Current MCP discovery/protocol probe in diagnostics
+CAP-083	A	PRESERVE	P12	Current tunnel health/readiness probe in diagnostics
+CAP-084	A	PRESERVE	P12	`local_mcp_5xx` classification
+CAP-085	A	PRESERVE	P12	`tunnel_control_plane_5xx` classification
+CAP-086	A	PRESERVE	P12	`tunnel_poll_timeout` classification
+CAP-087	A	PRESERVE	P12	MCP process-down/restart classification
+CAP-088	A	PRESERVE	P12	Memory-pressure classification
+CAP-089	A	PRESERVE	P12	Distinguish local MCP incident from tunnel/control-plane incident
+CAP-090	A	PRESERVE	P11	Exact MCP saturation signature `503 maximum HTTP session count reached`
+CAP-091	A	PRESERVE	P11	30-second admission guard
+CAP-092	A	PRESERVE	P11	120-second recovery cooldown
+CAP-093	A	PRESERVE	P11	Restart only on exact saturation signature
+CAP-094	A	PRESERVE	P11	Persisted admission-recovery evidence
+CAP-095	A	PRESERVE	P8	RO external-folder config in setup
+CAP-096	A	PRESERVE	P8	RW external-folder config in setup
+CAP-097	A	PRESERVE	P8	`access list`
+CAP-098	A	PRESERVE	P8	`access add-ro`
+CAP-099	A	PRESERVE	P8	`access add-rw`
+CAP-100	A	PRESERVE	P8	`access remove`
+CAP-101	A	PRESERVE	P8	`.workspace-mcp-access/<alias>` mountpoints
+CAP-102	A	PRESERVE	P8	RO via `BindReadOnlyPaths=`
+CAP-103	A	PRESERVE	P8	RW via `BindPaths=`
+CAP-104	A	PRESERVE	P8	`PrivateUsers=true` when extra mounts exist
+CAP-105	A	PRESERVE	P8	Access namespace preflight fails closed
+CAP-106	A	PRESERVE	P8	Access config change requires regenerated unit before start
+CAP-107	A	PRESERVE	P8	Extra folder alias/source validation
+CAP-108	A	PRESERVE	P8	Access-root ownership marker and protected cleanup
+CAP-109	A	PRESERVE	P8	Keep `.workspace-mcp-access` from dirtying Git
+CAP-110	A	PRESERVE	P8	Live user-systemd RO/RW enforcement test
+CAP-111	B	PRESERVE	P4/P7	WSL `GH_CONFIG_DIR` in MCP service
+CAP-112	B	PRESERVE	P4/P7	WSL `CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS` in MCP service
+CAP-113	B	PRESERVE	P10	Landlock access to WSL standalone Codex install
+CAP-114	B	PRESERVE	P9	GitHub CLI auth diagnostic
+CAP-115	B	PRESERVE	P9	Git identity diagnostic
+CAP-116	B	PRESERVE	P12	Time-aware tunnel-log classification
+CAP-117	C	DEFER	Post-MVP	Create/manage per-instance `GH_CONFIG_DIR`
+CAP-118	C	EXTERNAL	N/A	`gh auth login` / PAT onboarding
+CAP-119	C	DEFER	Post-MVP	Configure Git repo identity
+CAP-120	C	DEFER	Post-MVP	Configure repository credential helper / protocol
+CAP-121	C	DEFER	P15	Install/configure Codex CLI
+CAP-122	C	DEFER	P15	Install/configure `gh`
+CAP-123	C/D	DEFER	P15/Post-MVP	SSH/GPG-agent setup
+CAP-124	D	EXTERNAL	N/A	SSH private keys
+CAP-125	D	EXTERNAL	N/A	SSH known-host database
+CAP-126	D	EXTERNAL	N/A	Actual GitHub PAT/OAuth token
+CAP-127	D	EXTERNAL	N/A	Codex authentication/session data
+CAP-128	D	EXTERNAL	N/A	Tunnel `CONTROL_PLANE_API_KEY` value
+CAP-129	D	EXTERNAL	N/A	Host-specific global Git URL rewrite
+CAP-130	C/D	EXTERNAL	N/A	ChatGPT custom MCP app/plugin object

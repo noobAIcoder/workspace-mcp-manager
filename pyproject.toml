@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workspace-mcp-manager"
+version = "0.1.0"
+description = "Deterministic host-level lifecycle manager for coding-tools-mcp and tunnel-client instances"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "workspace-mcp-manager contributors"}]
+dependencies = []
+
+[project.scripts]
+workspace-mcp-manager = "workspace_mcp_manager.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
