@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -10,6 +11,7 @@ from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
 from .host import HostInspector
+from .host_apply import HostExecutionBridge, HostLifecycleWorker
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
 from .redaction import redact_object
@@ -30,12 +32,6 @@ def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
         separators=None if pretty else (",", ":"),
     )
     stream.write("\n")
-
-
-def _payload_exit_code(payload: Any) -> int:
-    if isinstance(payload, dict) and payload.get("ok") is False:
-        return 1
-    return 0
 
 
 def _load_declaration(path: Path) -> DesiredInstance:
@@ -78,11 +74,21 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument("instance_id")
     plan_cmd.add_argument("--pretty", action="store_true")
 
+    for command in ("apply", "start", "stop", "restart", "remove"):
+        item = instance_sub.add_parser(command)
+        item.add_argument("instance_id")
+        item.add_argument("--pretty", action="store_true")
+
     runtime = subparsers.add_parser("_runtime", help=argparse.SUPPRESS)
     runtime_sub = runtime.add_subparsers(dest="command", required=True)
     for command in ("tunnel", "admission-guard"):
         item = runtime_sub.add_parser(command)
         item.add_argument("instance_id")
+    runtime_plan = runtime_sub.add_parser("plan")
+    runtime_plan.add_argument("instance_id")
+    runtime_lifecycle = runtime_sub.add_parser("lifecycle")
+    runtime_lifecycle.add_argument("action", choices=("apply", "start", "stop", "restart", "remove"))
+    runtime_lifecycle.add_argument("instance_id")
     return parser
 
 
@@ -145,9 +151,12 @@ def _run_instance(
         bundle = ResourceGenerator(paths).generate(desired)
         return {"ok": True, **bundle.to_dict(include_content=args.include_content)}
     if args.command == "plan":
-        desired = registry.get(args.instance_id)
-        plan = ReconciliationPlanner(paths, registry).plan(desired)
-        return {"ok": plan.valid, **plan.to_dict()}
+        # P6 plan executes through the user-systemd host boundary. This gives
+        # the planner authoritative access to legacy systemd/tunnel identity
+        # metadata without broadening coding-tools-mcp Landlock roots.
+        return HostExecutionBridge(paths).run_plan(args.instance_id)
+    if args.command in {"apply", "start", "stop", "restart", "remove"}:
+        return HostExecutionBridge(paths).run_lifecycle(args.command, args.instance_id)
     raise AssertionError(args.command)
 
 
@@ -155,14 +164,19 @@ def _run_runtime(
     args: argparse.Namespace,
     registry: InstanceRegistry,
     paths: ManagerPaths,
-) -> None:
+) -> dict[str, Any] | None:
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":
         run_tunnel(desired, paths)
-        return
+        return None
     if args.command == "admission-guard":
         run_admission_guard(desired, paths)
-        return
+        return None
+    if args.command == "plan":
+        plan = ReconciliationPlanner(paths, registry).plan(desired)
+        return {"ok": plan.valid, **plan.to_dict()}
+    if args.command == "lifecycle":
+        return HostLifecycleWorker(paths, registry).run(args.action, args.instance_id)
     raise AssertionError(args.command)
 
 
@@ -171,15 +185,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         paths = ManagerPaths.for_current_user(registry_override=args.registry_dir)
+        registry = InstanceRegistry(paths.registry_dir)
         if args.area == "host":
             payload = _run_host(args, paths)
         elif args.area == "_runtime":
-            _run_runtime(args, InstanceRegistry(paths.registry_dir), paths)
-            return 0
+            payload = _run_runtime(args, registry, paths)
+            if payload is None:
+                return 0
         else:
-            payload = _run_instance(args, InstanceRegistry(paths.registry_dir), paths)
-        _emit(payload, pretty=args.pretty)
-        return _payload_exit_code(payload)
+            payload = _run_instance(args, registry, paths)
+        _emit(payload, pretty=getattr(args, "pretty", False))
+        if isinstance(payload, Mapping) and payload.get("ok") is False:
+            return 1
+        return 0
     except ManagerError as exc:
         _emit(exc.to_dict(), pretty=getattr(args, "pretty", False), stream=sys.stderr)
         return 2
@@ -187,4 +205,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
