@@ -1,6 +1,6 @@
 # P6 — Apply lifecycle status
 
-Status: **FINALIZATION IN PROGRESS — LIVE WSL QUALIFICATION REQUIRED**
+Status: **PASS — LIVE WSL QUALIFIED 2026-08-12**
 
 Base implementation checkpoint:
 
@@ -8,8 +8,9 @@ Base implementation checkpoint:
 34d013b  Implement P6 apply lifecycle
 ```
 
-P6 finalization consolidates subsequent live-qualification fixes before the gate
-is allowed to pass.
+Final live qualification completed successfully on the disposable `manager-qual`
+instance after the P6 qualification regressions below were corrected and covered
+by tests.
 
 ## Implemented lifecycle
 
@@ -169,6 +170,25 @@ Correction:
 - no manager-owned resources are deleted or normalized to resume;
 - regression coverage lives in `tests/test_qualification_script.py`.
 
+### P6-Q4 — present+stopped lifecycle omitted STOP execution
+
+Observed after first apply, readiness, authority, and NOOP qualification had
+succeeded. `instance stop` persisted desired `present+stopped`, but the runtime
+units remained active and qualification failed.
+
+Cause: the present-deployment execution path handled create/update/enable/start/
+restart but omitted planned `STOP` operations. STOP was previously executed only
+inside the absent-deployment remove path.
+
+Correction:
+
+- `present+stopped` executes planned STOP operations inside the existing locked,
+  freshly-planned, journaled apply transaction;
+- stop ordering is tunnel before MCP;
+- resources remain deployed and enabled;
+- regression coverage lives in `tests/test_lifecycle.py`;
+- detailed incident evidence is preserved in `reports/p6-q4-stop-regression.md`.
+
 ## NVM toolchain contract
 
 An MCP instance may use an NVM-managed Node version without sourcing `nvm.sh`.
@@ -195,26 +215,12 @@ TUNNEL_HEALTH=127.0.0.1:7373
 TUNNEL_PROFILE=workspace-mcp-manager-qual
 ```
 
-A current disposable tunnel ID MUST be supplied with `QUAL_TUNNEL_ID`. The
-qualification MUST NOT silently reuse the historical example tunnel ID.
+LeadBot, Vigilus, `manager`, and `wsl-reconcile` were not migration targets and
+were not modified during P6.
 
-LeadBot, Vigilus, `manager`, and `wsl-reconcile` are not migration targets in P6.
+## Qualified live gate
 
-## Live gate
-
-Run:
-
-```bash
-QUAL_TUNNEL_ID=tunnel_... bash scripts/qualify_p6_wsl.sh
-```
-
-If the current shell's `node` is not NVM-managed, also provide:
-
-```bash
-QUAL_NVM_BIN="$HOME/.nvm/versions/node/<version>/bin"
-```
-
-The gate executes:
+The host-side gate completed successfully with:
 
 ```text
 plan
@@ -235,19 +241,25 @@ plan
 → status
 ```
 
-The explicit `instance update` before recreate is required by the frozen domain
-contract: `remove` sets desired deployment to `absent`, while `apply` never
-changes desired state.
+The gate also verified:
 
-The script also verifies:
-
-- MCP discovery, tunnel health, and tunnel readiness;
+- MCP discovery healthy;
+- tunnel `/healthz` healthy;
+- tunnel `/readyz` healthy;
 - generated tunnel service uses `workspace-mcp-manager`, never legacy
   `workspace-mcp _run-tunnel`;
 - generated MCP service carries the NVM PATH and version-root admission;
 - second apply performs no managed-resource/systemd mutation;
-- state ownership and modes;
+- state ownership and modes are correct;
 - remove preserves shared resources and does not change other managed instances;
-- transaction journals and `applied.json` reflect successful convergence.
+- transaction journals and `applied.json` reflect successful convergence;
+- deterministic remove/recreate succeeds.
 
-P6 MUST NOT be marked PASS until this host-side gate succeeds completely.
+Final live result:
+
+```text
+P6_WSL_QUALIFICATION=PASS
+```
+
+P6 is complete. P7 MCP protocol qualification may begin; P8 remains out of scope
+until P7 is qualified.
