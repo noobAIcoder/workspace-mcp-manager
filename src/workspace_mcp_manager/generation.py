@@ -245,6 +245,15 @@ class ResourceGenerator:
                 "--fail",
                 "--silent",
                 "--show-error",
+                "--retry",
+                "30",
+                "--retry-delay",
+                "1",
+                "--retry-connrefused",
+                "--retry-max-time",
+                "30",
+                "--connect-timeout",
+                "1",
                 discovery_url,
             )
         )
