@@ -14,6 +14,7 @@ from .host import HostInspector
 from .host_apply import HostExecutionBridge, HostInstanceStatusService, HostLifecycleWorker
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
+from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object
 from .registry import InstanceRegistry
 from .runtime import run_admission_guard, run_tunnel
@@ -217,7 +218,10 @@ def _run_runtime(
         run_admission_guard(desired, paths)
         return None
     if args.command == "plan":
-        plan = ReconciliationPlanner(paths, registry).plan(desired)
+        generator = ResourceGenerator(paths)
+        bundle = generator.generate(desired)
+        plan = ReconciliationPlanner(paths, registry, generator=generator).plan(desired)
+        plan = project_recoverable_failed_first_apply(paths, desired, bundle, plan)
         return {"ok": plan.valid, **plan.to_dict()}
     if args.command == "status":
         return HostInstanceStatusService(paths, registry).status(args.instance_id)
