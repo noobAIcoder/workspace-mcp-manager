@@ -47,6 +47,25 @@ class GenerationTests(unittest.TestCase):
             self.assertIn('api_key: "env:CONTROL_PLANE_API_KEY"', profile)
             self.assertIn("tunnel_abc123", profile)
 
+    def test_nvm_toolchain_path_and_version_root_are_rendered(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = sample_instance()
+            nvm_root = "/home/operator/.nvm/versions/node/v24.16.0"
+            nvm_bin = f"{nvm_root}/bin"
+            raw["mcp"]["exec_path"] = f"{nvm_bin}:/home/operator/.local/bin:/usr/bin:/bin"
+            raw["mcp"]["external_roots"] = [nvm_root]
+            raw["access"] = {"read_only": [], "read_write": []}
+            raw["github"] = {"config_dir": None}
+            raw["recovery"]["admission_guard_enabled"] = False
+            desired = DesiredInstance.from_dict(raw)
+            bundle = ResourceGenerator(self._paths(root)).generate(desired)
+            resources = {item.resource_id: item for item in bundle.resources}
+            mcp = resources["mcp-unit"].content or ""
+            self.assertIn(f"PATH={nvm_bin}:/home/operator/.local/bin:/usr/bin:/bin", mcp)
+            self.assertIn(f"CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS={nvm_root}", mcp)
+            self.assertNotIn("nvm.sh", mcp)
+
     def test_guard_resources_are_conditional(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)

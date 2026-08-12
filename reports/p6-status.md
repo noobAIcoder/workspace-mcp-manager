@@ -1,16 +1,17 @@
 # P6 — Apply lifecycle status
 
-Status: **IMPLEMENTED, LIVE WSL QUALIFICATION REQUIRED**
+Status: **FINALIZATION IN PROGRESS — LIVE WSL QUALIFICATION REQUIRED**
 
-Base checkpoint expected by this overlay:
+Base implementation checkpoint:
 
 ```text
-a71313c  Implement P4 resource generation and P5 planning
+34d013b  Implement P6 apply lifecycle
 ```
 
-## Implemented
+P6 finalization consolidates subsequent live-qualification fixes before the gate
+is allowed to pass.
 
-P6 adds a narrow host-execution boundary based on transient user-systemd workers:
+## Implemented lifecycle
 
 ```text
 workspace-mcp-manager instance <operation>
@@ -33,31 +34,60 @@ instance start
 instance stop
 instance restart
 instance remove
+instance status
+instance logs
 ```
 
 The host worker performs:
 
-- a first P5 validation and a second fresh plan immediately before mutation;
 - host-side `systemd-analyze --user verify` for generated units;
+- a fresh authoritative reconciliation plan immediately before normal apply mutation;
 - deterministic file/directory application;
 - `systemctl --user daemon-reload`;
 - enable/start/restart/stop/disable in dependency-safe order;
 - readiness waits for MCP discovery plus tunnel `/healthz` and `/readyz`;
 - non-secret per-transaction journals;
+- mutation-attempt journal persistence before mutation execution;
 - `applied.json` only after successful post-apply convergence;
-- fail-safe rollback of generated resources and newly started/enabled units where feasible.
+- fail-safe rollback of generated resources and newly started/enabled units where feasible;
+- current ownership/residual-content revalidation before destructive mutation;
+- bounded/redacted transaction evidence on failures.
 
-`start`, `stop`, `restart`, and `remove` update the desired lifecycle target inside the host worker, so callers inside `coding-tools-mcp` do not need direct write access to the real manager registry.
+`start`, `stop`, `restart`, and `remove` update the desired lifecycle target inside
+the host worker, so callers inside `coding-tools-mcp` do not need direct write
+access to the real manager registry.
 
-## Security boundary
+## Failed-first-apply recovery
 
-The transient worker runs under the existing user systemd manager rather than inside the MCP Landlock execution sandbox. It receives only:
+The established failed `manager-qual` first apply may leave a manager-created
+state directory with known runtime logs but no surviving `.owner` marker.
 
-- the absolute manager executable;
-- the absolute registry directory;
-- the requested non-secret operation/instance ID.
+Recovery is allowed only when all of the following are true:
 
-Tunnel credentials remain external. The P6 worker does not copy credential values into desired state, journals, applied state, or generated source.
+- no `applied.json` exists;
+- the state directory has the expected type and mode;
+- the owner marker is absent;
+- a failed transaction proves successful creation of both the state directory
+  and owner marker during the failed apply;
+- every residual state entry is a recognized runtime log with the expected file
+  type.
+
+Recovery restores the missing ownership marker through a separately journaled
+recovery plan and preserves the runtime logs. Unknown residue fails closed.
+
+## NVM toolchain contract
+
+An MCP instance may use an NVM-managed Node version without sourcing `nvm.sh`.
+P6 qualification selects an explicit NVM version and requires:
+
+```text
+PATH includes:            ~/.nvm/versions/node/<version>/bin
+exec read/execute root:   ~/.nvm/versions/node/<version>
+```
+
+The selected `bin` must expose `node`, `npm`, `npx`, `corepack`, and `pnpm`.
+P6 proves host availability and generated service rendering; protocol execution
+is deferred to P7.
 
 ## Qualification target
 
@@ -69,34 +99,61 @@ WORKSPACE=/home/cloudtoor/repos/workspace-mcp-manager-qual
 MCP=127.0.0.1:7657
 TUNNEL_HEALTH=127.0.0.1:7373
 TUNNEL_PROFILE=workspace-mcp-manager-qual
-TUNNEL_ID=tunnel_6a78e290552c81918e1fa028923b3087
 ```
 
-The bootstrap-managed `manager`, `wsl-reconcile`, and LeadBot deployments are not migration targets in P6.
+A current disposable tunnel ID MUST be supplied with `QUAL_TUNNEL_ID`. The
+qualification MUST NOT silently reuse the historical example tunnel ID.
+
+LeadBot, Vigilus, `manager`, and `wsl-reconcile` are not migration targets in P6.
 
 ## Live gate
 
 Run:
 
 ```bash
-bash scripts/qualify_p6_wsl.sh
+QUAL_TUNNEL_ID=tunnel_... bash scripts/qualify_p6_wsl.sh
 ```
 
-If the historical qualification tunnel was deleted, pass a fresh dedicated tunnel with `QUAL_TUNNEL_ID=tunnel_...`; do not reuse a live instance tunnel.
+If the current shell's `node` is not NVM-managed, also provide:
 
-The script qualifies:
+```bash
+QUAL_NVM_BIN="$HOME/.nvm/versions/node/<version>/bin"
+```
+
+The gate executes:
 
 ```text
 plan
 → apply
-→ ready
+→ status
+→ NOOP apply
+→ status
 → stop
+→ status
 → start
+→ status
 → restart
+→ status
 → remove
-→ recreate identically
+→ status
+→ manager update back to present+running
+→ apply
+→ status
 ```
 
-It also verifies that the qualification tunnel unit is manager-owned and does not invoke the legacy `workspace-mcp _run-tunnel` wrapper.
+The explicit `instance update` before recreate is required by the frozen domain
+contract: `remove` sets desired deployment to `absent`, while `apply` never
+changes desired state.
 
-P6 MUST NOT be marked PASS until this host-side script succeeds.
+The script also verifies:
+
+- MCP discovery, tunnel health, and tunnel readiness;
+- generated tunnel service uses `workspace-mcp-manager`, never legacy
+  `workspace-mcp _run-tunnel`;
+- generated MCP service carries the NVM PATH and version-root admission;
+- second apply performs no managed-resource/systemd mutation;
+- state ownership and modes;
+- remove preserves shared resources and does not change other managed instances;
+- transaction journals and `applied.json` reflect successful convergence.
+
+P6 MUST NOT be marked PASS until this host-side gate succeeds completely.

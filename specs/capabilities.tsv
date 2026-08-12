@@ -129,3 +129,4 @@ CAP-127	D	EXTERNAL	N/A	Codex authentication/session data
 CAP-128	D	EXTERNAL	N/A	Tunnel `CONTROL_PLANE_API_KEY` value
 CAP-129	D	EXTERNAL	N/A	Host-specific global Git URL rewrite
 CAP-130	C/D	EXTERNAL	N/A	ChatGPT custom MCP app/plugin object
+CAP-131	C	PRESERVE	P4-P7	NVM-managed Node toolchain via explicit MCP PATH and read/execute version root

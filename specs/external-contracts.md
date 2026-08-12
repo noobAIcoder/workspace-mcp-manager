@@ -34,6 +34,34 @@ not expand the direct MCP file tools' workspace boundary.
 Desired `mcp.binary` and `tunnel.binary` values MUST be absolute POSIX paths.
 The manager does not defer binary resolution to a mutable service `PATH`.
 
+### NVM-managed Node toolchain
+
+An MCP instance MAY use a Node toolchain installed by NVM without sourcing an
+interactive shell or `nvm.sh`.
+
+For a selected NVM version such as:
+
+```text
+~/.nvm/versions/node/v24.16.0/
+```
+
+the desired declaration MUST make the toolchain explicit:
+
+```text
+mcp.exec_path      -> includes ~/.nvm/versions/node/<version>/bin
+mcp.external_roots -> includes ~/.nvm/versions/node/<version>
+```
+
+The external root MUST be the complete selected version root rather than only
+its `bin/` directory because executables/shims such as `npm`, `corepack`, and
+`pnpm` may resolve implementation files under the version's `lib/node_modules/`.
+
+The generated MCP service MUST preserve these explicit values in `PATH` and
+`CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS`. It MUST NOT depend on shell startup files or
+the `nvm` shell function. P6 host qualification MUST verify availability and
+rendering for `node`, `npm`, `npx`, `corepack`, and `pnpm`; execution through the
+MCP protocol remains part of P7 qualification.
+
 ### RO/RW external folders
 
 Legacy `workspace-mcp 0.4.0` exposes external folders by mounting them *inside*
@@ -115,4 +143,3 @@ Codex authentication/session data
 
 Only non-secret references such as `tunnel.env_file` or optional
 `github.config_dir` belong in desired state.
-

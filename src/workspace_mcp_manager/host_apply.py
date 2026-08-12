@@ -21,7 +21,7 @@ from .domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeT
 from .errors import ErrorCode, ManagerError
 from .generation import GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
 from .paths import ManagerPaths
-from .planning import PlanOperation, ReconciliationPlan, ReconciliationPlanner
+from .planning import HostResourceObserver, ObservationStatus, PlanOperation, ReconciliationPlan, ReconciliationPlanner
 from .redaction import redact_object, redact_text, sanitized_subprocess_env
 from .registry import InstanceRegistry
 
@@ -357,7 +357,7 @@ class HostApplyService:
         by_id = {resource.resource_id: resource for resource in bundle.resources}
         state_resource = by_id.get("state-dir")
         owner_resource = by_id.get("state-owner")
-        if state_resource is None or owner_resource is None:
+        if state_resource is None or owner_resource is None or owner_resource.content is None:
             return None
         state_dir = Path(state_resource.path)
         owner_path = Path(owner_resource.path)
@@ -367,13 +367,19 @@ class HostApplyService:
             return None
         if state_dir.is_symlink() or not state_dir.is_dir():
             return None
+        try:
+            metadata = state_dir.stat()
+        except OSError:
+            return None
+        if stat.S_IMODE(metadata.st_mode) != state_resource.mode:
+            return None
         supporting = self._supporting_failed_transaction(
             instance_id, state_dir=state_dir, owner_path=owner_path
         )
         if supporting is None:
             return None
         try:
-            entries = list(state_dir.iterdir())
+            entries = sorted(state_dir.iterdir(), key=lambda child: child.name)
         except OSError:
             return None
         for child in entries:
@@ -395,21 +401,34 @@ class HostApplyService:
             "started_at": utc_now(),
             "status": "running",
             "supporting_failed_transaction": supporting.name,
-            "removed_runtime_files": [child.name for child in entries],
+            "retained_runtime_files": [child.name for child in entries],
+            "plan": {
+                "valid": True,
+                "operations": [
+                    {
+                        "operation": "CREATE",
+                        "target": str(owner_path),
+                        "reason": "restore journal-proven ownership after failed first apply",
+                        "resource_id": "state-owner",
+                    }
+                ],
+            },
+            "attempted": [],
+            "executed": [],
         }
         self._write_journal(recovery_path, recovery)
         try:
-            for child in entries:
-                child.unlink()
-            state_dir.rmdir()
-        except OSError as exc:
+            self._attempt(recovery, recovery_path, "CREATE", str(owner_path))
+            _atomic_write(owner_path, owner_resource.content, mode=owner_resource.mode)
+            self._record(recovery, recovery_path, "CREATE", str(owner_path))
+        except Exception as exc:
             recovery["status"] = "failed"
             recovery["completed_at"] = utc_now()
             recovery["error"] = redact_text(str(exc))
             self._write_journal(recovery_path, recovery)
             raise ManagerError(
                 ErrorCode.IO_ERROR,
-                "failed to recover manager-owned residual state from an earlier failed apply",
+                "failed to restore manager ownership for residual first-apply state",
                 {"state_dir": str(state_dir), "recovery_journal": str(recovery_path)},
             ) from exc
         recovery["status"] = "succeeded"
@@ -418,6 +437,8 @@ class HostApplyService:
         return {
             "recovered": True,
             "state_dir": str(state_dir),
+            "restored_owner": str(owner_path),
+            "retained_runtime_files": [child.name for child in entries],
             "supporting_failed_transaction": supporting.name,
             "recovery_journal": str(recovery_path),
         }
@@ -434,8 +455,9 @@ class HostApplyService:
                 self.systemd.verify_generated_units(bundle)
 
             # First observation validates preconditions. A narrowly proven
-            # residual from an earlier failed first apply may be recovered here
-            # before the authoritative pre-mutation plan is computed.
+            # residual from an earlier failed first apply may restore its
+            # ownership marker before the authoritative pre-mutation plan is
+            # computed. Recovery has its own journaled recovery plan.
             initial = self.planner.plan(desired)
             residual_recovery: dict[str, Any] | None = None
             if not initial.valid:
@@ -461,6 +483,7 @@ class HostApplyService:
                 "started_at": utc_now(),
                 "status": "running",
                 "plan": plan.to_dict(),
+                "attempted": [],
                 "executed": [],
             }
             self._write_journal(journal_path, journal)
@@ -485,7 +508,10 @@ class HostApplyService:
                         {"remaining_operations": remaining},
                     )
 
+                applied_path = self.applied_root / f"{instance_id}.json"
+                self._attempt(journal, journal_path, "WRITE_APPLIED", str(applied_path))
                 self._write_applied(desired, bundle, transaction_id)
+                self._record(journal, journal_path, "WRITE_APPLIED", str(applied_path))
                 rollback.discard()
                 journal["status"] = "succeeded"
                 journal["completed_at"] = utc_now()
@@ -507,9 +533,24 @@ class HostApplyService:
                 journal["error"] = redact_text(str(exc))
                 journal["rollback"] = rollback_result
                 self._write_journal(journal_path, journal)
+                transaction_evidence = redact_object(
+                    {
+                        "transaction_id": transaction_id,
+                        "journal": str(journal_path),
+                        "attempted": journal.get("attempted", [])[-20:],
+                        "executed": journal.get("executed", [])[-20:],
+                        "rollback": rollback_result,
+                    }
+                )
                 if isinstance(exc, ManagerError):
-                    raise
-                raise ManagerError(ErrorCode.IO_ERROR, f"apply failed: {redact_text(str(exc))}") from exc
+                    details = dict(exc.details)
+                    details["transaction"] = transaction_evidence
+                    raise ManagerError(exc.code, exc.message, details) from exc
+                raise ManagerError(
+                    ErrorCode.IO_ERROR,
+                    f"apply failed: {redact_text(str(exc))}",
+                    {"transaction": transaction_evidence},
+                ) from exc
 
     def _execute(
         self,
@@ -535,16 +576,19 @@ class HostApplyService:
                 for item in file_ops
             )
             if unit_file_changed:
+                self._attempt(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
                 self.systemd.daemon_reload()
                 self._record(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
 
             for item in self._ordered_unit_ops(operations, {PlanOperation.ENABLE}, start_order=True):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
                 self.systemd.enable(item.target)
                 rollback.enabled_units.append(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
 
             for item in self._ordered_unit_ops(operations, {PlanOperation.START, PlanOperation.RESTART}, start_order=True):
                 was_active = self.systemd.is_active(item.target)
+                self._attempt(journal, journal_path, item.operation.value, item.target)
                 if item.operation is PlanOperation.START:
                     self.systemd.start(item.target)
                 else:
@@ -557,16 +601,23 @@ class HostApplyService:
                 units = self._core_runtime_units(bundle)
                 for unit in units:
                     was_active = self.systemd.is_active(unit)
+                    self._attempt(journal, journal_path, "FORCE_RESTART", unit)
                     self.systemd.restart(unit)
                     if not was_active:
                         rollback.started_units.append(unit)
                     self._record(journal, journal_path, "FORCE_RESTART", unit)
         else:
+            # Re-verify destructive ownership and residual contents immediately
+            # before the first stop/disable/remove mutation.
+            self._validate_destructive_operations(operations, by_id)
+
             # Stop and disable before deleting any unit/profile/state resource.
             for item in self._ordered_unit_ops(operations, {PlanOperation.STOP}, start_order=False):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
                 self.systemd.stop(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
             for item in self._ordered_unit_ops(operations, {PlanOperation.DISABLE}, start_order=False):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
                 self.systemd.disable(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
 
@@ -578,12 +629,99 @@ class HostApplyService:
             )
             self._remove_resource_operations(remove_ops, by_id, rollback, journal, journal_path)
             if unit_file_changed:
+                self._attempt(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
                 self.systemd.daemon_reload()
                 self._record(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
 
-    def _record(self, journal: dict[str, Any], journal_path: Path, operation: str, target: str) -> None:
-        journal["executed"].append({"operation": operation, "target": target, "at": utc_now()})
+    def _attempt(self, journal: dict[str, Any], journal_path: Path, operation: str, target: str) -> None:
+        journal.setdefault("attempted", []).append(
+            {"operation": operation, "target": target, "at": utc_now()}
+        )
         self._write_journal(journal_path, journal)
+
+    def _record(self, journal: dict[str, Any], journal_path: Path, operation: str, target: str) -> None:
+        journal.setdefault("executed", []).append(
+            {"operation": operation, "target": target, "at": utc_now()}
+        )
+        self._write_journal(journal_path, journal)
+
+    def _validate_destructive_operations(
+        self,
+        operations: Iterable[Any],
+        by_id: Mapping[str, GeneratedResource],
+    ) -> None:
+        operations = list(operations)
+        remove_items = [item for item in operations if item.operation is PlanOperation.REMOVE]
+        remove_resource_ids = {item.resource_id for item in remove_items}
+
+        for item in operations:
+            if item.operation not in {PlanOperation.STOP, PlanOperation.DISABLE}:
+                continue
+            if item.resource_id not in remove_resource_ids:
+                raise ManagerError(
+                    ErrorCode.RECONCILIATION_CONFLICT,
+                    f"refusing to mutate unit without verified manager ownership: {item.target}",
+                    {
+                        "operation": item.operation.value,
+                        "unit": item.target,
+                        "resource_id": item.resource_id,
+                    },
+                )
+
+        observer = HostResourceObserver()
+        for item in remove_items:
+            resource = by_id.get(item.resource_id or "")
+            if resource is None:
+                raise ManagerError(
+                    ErrorCode.IO_ERROR,
+                    f"plan references unknown generated resource: {item.resource_id}",
+                )
+            if getattr(resource, "remove_with_instance", True) is False:
+                continue
+            observation = observer.observe_resource(resource)
+            if observation.status not in {ObservationStatus.EXACT, ObservationStatus.DIFFERENT}:
+                raise ManagerError(
+                    ErrorCode.RECONCILIATION_CONFLICT,
+                    f"refusing destructive operation without current ownership evidence: {resource.path}",
+                    {
+                        "resource_id": resource.resource_id,
+                        "observation": observation.status.value,
+                        "detail": observation.detail,
+                    },
+                )
+
+        if not any(item.resource_id == "state-dir" for item in remove_items):
+            return
+        state_resource = by_id.get("state-dir")
+        if state_resource is None:
+            return
+        state_dir = Path(state_resource.path)
+        try:
+            entries = list(state_dir.iterdir())
+        except OSError as exc:
+            raise ManagerError(
+                ErrorCode.RECONCILIATION_CONFLICT,
+                f"cannot verify manager state directory before removal: {state_dir}",
+                {"detail": redact_text(str(exc))},
+            ) from exc
+        for child in entries:
+            if child.name == ".owner":
+                if child.is_symlink() or not child.is_file():
+                    raise ManagerError(
+                        ErrorCode.RECONCILIATION_CONFLICT,
+                        f"refusing removal with unexpected ownership-marker type: {child}",
+                    )
+                continue
+            if child.name not in RUNTIME_STATE_FILES:
+                raise ManagerError(
+                    ErrorCode.RECONCILIATION_CONFLICT,
+                    f"refusing removal with unknown manager-state content: {child}",
+                )
+            if child.is_symlink() or not child.is_file():
+                raise ManagerError(
+                    ErrorCode.RECONCILIATION_CONFLICT,
+                    f"refusing removal with unexpected runtime-state type: {child}",
+                )
 
     @staticmethod
     def _core_runtime_units(bundle: GeneratedBundle) -> list[str]:
@@ -642,6 +780,7 @@ class HostApplyService:
             path = Path(resource.path)
             if item.operation is PlanOperation.UPDATE and path.exists():
                 rollback.backup(path)
+            self._attempt(journal, journal_path, item.operation.value, str(path))
             if resource.kind is ResourceKind.DIRECTORY:
                 if not path.exists():
                     path.mkdir(parents=True, exist_ok=False, mode=resource.mode)
@@ -674,8 +813,8 @@ class HostApplyService:
                 continue
             resources.append((item, resource))
 
-        # Files first, then deepest directories. This keeps ownership markers in
-        # place until all destructive planning has already been validated.
+        # Files first, then deepest directories. Ownership and residual content
+        # were re-verified as one batch immediately before destructive mutation.
         resources.sort(
             key=lambda pair: (
                 1 if pair[1].kind is ResourceKind.DIRECTORY else 0,
@@ -686,6 +825,7 @@ class HostApplyService:
             path = Path(resource.path)
             if not path.exists() and not path.is_symlink():
                 continue
+            self._attempt(journal, journal_path, item.operation.value, str(path))
             if resource.kind is ResourceKind.DIRECTORY:
                 if path.is_symlink() or not path.is_dir():
                     raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, f"refusing to remove non-directory {path}")
@@ -750,10 +890,21 @@ class HostApplyService:
             ):
                 return
             time.sleep(0.5)
+        details: dict[str, Any] = {"last_observation": last}
+        if hasattr(self.systemd, "unit_snapshot"):
+            details["unit_status"] = {
+                mcp_unit: self.systemd.unit_snapshot(mcp_unit),
+                tunnel_unit: self.systemd.unit_snapshot(tunnel_unit),
+            }
+        if hasattr(self.systemd, "journal_tail"):
+            details["unit_journals"] = {
+                mcp_unit: self.systemd.journal_tail(mcp_unit, lines=80),
+                tunnel_unit: self.systemd.journal_tail(tunnel_unit, lines=80),
+            }
         raise ManagerError(
             ErrorCode.RECONCILIATION_CONFLICT,
             "instance did not become ready before timeout",
-            {"last_observation": last},
+            details,
         )
 
     def _write_applied(self, desired: DesiredInstance, bundle: GeneratedBundle, transaction_id: str) -> None:
