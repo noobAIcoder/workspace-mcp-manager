@@ -15,6 +15,7 @@ pass() { printf '[PASS] %s\n' "$*"; }
 section() { printf '\n== %s ==\n' "$*"; }
 
 cd "$REPO"
+export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 
 section "preflight"
 test -d "$QUAL_WORKSPACE" || fail "qualification workspace missing: $QUAL_WORKSPACE"

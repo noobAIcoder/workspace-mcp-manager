@@ -34,6 +34,12 @@ def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
     stream.write("\n")
 
 
+
+def _payload_exit_code(payload: Any) -> int:
+    if isinstance(payload, Mapping) and payload.get("ok") is False:
+        return 1
+    return 0
+
 def _load_declaration(path: Path) -> DesiredInstance:
     try:
         text = path.read_text(encoding="utf-8", errors="strict")
@@ -195,9 +201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             payload = _run_instance(args, registry, paths)
         _emit(payload, pretty=getattr(args, "pretty", False))
-        if isinstance(payload, Mapping) and payload.get("ok") is False:
-            return 1
-        return 0
+        return _payload_exit_code(payload)
     except ManagerError as exc:
         _emit(exc.to_dict(), pretty=getattr(args, "pretty", False), stream=sys.stderr)
         return 2
