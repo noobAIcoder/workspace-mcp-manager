@@ -44,6 +44,11 @@ class GenerationTests(unittest.TestCase):
             self.assertIn("GH_CONFIG_DIR=", mcp)
             self.assertIn("Requires=coding-tools-mcp-sample.service", tunnel)
             self.assertIn("Restart=always", tunnel)
+            self.assertIn('"--retry" "30"', tunnel)
+            self.assertIn('"--retry-delay" "1"', tunnel)
+            self.assertIn('"--retry-connrefused"', tunnel)
+            self.assertIn('"--retry-max-time" "30"', tunnel)
+            self.assertIn('"--connect-timeout" "1"', tunnel)
             self.assertIn('api_key: "env:CONTROL_PLANE_API_KEY"', profile)
             self.assertIn("tunnel_abc123", profile)
 
