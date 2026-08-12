@@ -11,7 +11,7 @@ from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
 from .host import HostInspector
-from .host_apply import HostExecutionBridge, HostLifecycleWorker
+from .host_apply import HostExecutionBridge, HostInstanceStatusService, HostLifecycleWorker
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
 from .redaction import redact_object
@@ -34,11 +34,11 @@ def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
     stream.write("\n")
 
 
-
 def _payload_exit_code(payload: Any) -> int:
     if isinstance(payload, Mapping) and payload.get("ok") is False:
         return 1
     return 0
+
 
 def _load_declaration(path: Path) -> DesiredInstance:
     try:
@@ -80,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument("instance_id")
     plan_cmd.add_argument("--pretty", action="store_true")
 
+    status_cmd = instance_sub.add_parser("status")
+    status_cmd.add_argument("instance_id")
+    status_cmd.add_argument("--pretty", action="store_true")
+
+    logs_cmd = instance_sub.add_parser("logs")
+    logs_cmd.add_argument("instance_id")
+    logs_cmd.add_argument("--lines", type=int, default=100)
+    logs_cmd.add_argument("--pretty", action="store_true")
+
     for command in ("apply", "start", "stop", "restart", "remove"):
         item = instance_sub.add_parser(command)
         item.add_argument("instance_id")
@@ -90,8 +99,21 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("tunnel", "admission-guard"):
         item = runtime_sub.add_parser(command)
         item.add_argument("instance_id")
+    runtime_registry = runtime_sub.add_parser("registry-write")
+    runtime_registry.add_argument("action", choices=("create", "update"))
+    runtime_sub.add_parser("list")
+    runtime_show = runtime_sub.add_parser("show")
+    runtime_show.add_argument("instance_id")
+    runtime_render = runtime_sub.add_parser("render")
+    runtime_render.add_argument("instance_id")
+    runtime_render.add_argument("--include-content", action="store_true")
     runtime_plan = runtime_sub.add_parser("plan")
     runtime_plan.add_argument("instance_id")
+    runtime_status = runtime_sub.add_parser("status")
+    runtime_status.add_argument("instance_id")
+    runtime_logs = runtime_sub.add_parser("logs")
+    runtime_logs.add_argument("instance_id")
+    runtime_logs.add_argument("--lines", type=int, default=100)
     runtime_lifecycle = runtime_sub.add_parser("lifecycle")
     runtime_lifecycle.add_argument("action", choices=("apply", "start", "stop", "restart", "remove"))
     runtime_lifecycle.add_argument("instance_id")
@@ -114,6 +136,7 @@ def _run_instance(
     registry: InstanceRegistry,
     paths: ManagerPaths,
 ) -> dict[str, Any]:
+    bridge = HostExecutionBridge(paths)
     if args.command in {"validate", "create", "update"}:
         desired = _load_declaration(args.file)
         if args.command == "validate":
@@ -123,10 +146,39 @@ def _run_instance(
                 "fingerprint": desired.fingerprint(),
                 "desired": desired.to_dict(),
             }
-        path = registry.create(desired) if args.command == "create" else registry.update(desired)
+        # Registry state lives under the real account home. Persist it through
+        # the same narrow user-systemd host boundary as lifecycle operations so
+        # MCP callers do not require broad home-directory write access.
+        return bridge.run_registry_write(args.command, desired)
+    if args.command == "list":
+        return bridge.run_list()
+    if args.command == "show":
+        return bridge.run_show(args.instance_id)
+    if args.command == "render":
+        return bridge.run_render(args.instance_id, include_content=args.include_content)
+    if args.command == "plan":
+        return bridge.run_plan(args.instance_id)
+    if args.command == "status":
+        return bridge.run_status(args.instance_id)
+    if args.command == "logs":
+        return bridge.run_logs(args.instance_id, lines=args.lines)
+    if args.command in {"apply", "start", "stop", "restart", "remove"}:
+        return bridge.run_lifecycle(args.command, args.instance_id)
+    raise AssertionError(args.command)
+
+
+def _run_runtime(
+    args: argparse.Namespace,
+    registry: InstanceRegistry,
+    paths: ManagerPaths,
+) -> dict[str, Any] | None:
+    if args.command == "registry-write":
+        text = sys.stdin.read()
+        desired = DesiredInstance.from_json(text)
+        path = registry.create(desired) if args.action == "create" else registry.update(desired)
         return {
             "ok": True,
-            "action": args.command,
+            "action": args.action,
             "instance_id": desired.instance_id.value,
             "fingerprint": desired.fingerprint(),
             "path": str(path),
@@ -156,21 +208,7 @@ def _run_instance(
         desired = registry.get(args.instance_id)
         bundle = ResourceGenerator(paths).generate(desired)
         return {"ok": True, **bundle.to_dict(include_content=args.include_content)}
-    if args.command == "plan":
-        # P6 plan executes through the user-systemd host boundary. This gives
-        # the planner authoritative access to legacy systemd/tunnel identity
-        # metadata without broadening coding-tools-mcp Landlock roots.
-        return HostExecutionBridge(paths).run_plan(args.instance_id)
-    if args.command in {"apply", "start", "stop", "restart", "remove"}:
-        return HostExecutionBridge(paths).run_lifecycle(args.command, args.instance_id)
-    raise AssertionError(args.command)
 
-
-def _run_runtime(
-    args: argparse.Namespace,
-    registry: InstanceRegistry,
-    paths: ManagerPaths,
-) -> dict[str, Any] | None:
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":
         run_tunnel(desired, paths)
@@ -181,6 +219,10 @@ def _run_runtime(
     if args.command == "plan":
         plan = ReconciliationPlanner(paths, registry).plan(desired)
         return {"ok": plan.valid, **plan.to_dict()}
+    if args.command == "status":
+        return HostInstanceStatusService(paths, registry).status(args.instance_id)
+    if args.command == "logs":
+        return HostInstanceStatusService(paths, registry).logs(args.instance_id, lines=args.lines)
     if args.command == "lifecycle":
         return HostLifecycleWorker(paths, registry).run(args.action, args.instance_id)
     raise AssertionError(args.command)

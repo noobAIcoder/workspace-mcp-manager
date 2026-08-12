@@ -82,12 +82,17 @@ def _run(
     timeout: float = 30.0,
     env: Mapping[str, str] | None = None,
     check: bool = True,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     safe_env = dict(env) if env is not None else sanitized_subprocess_env(os.environ)
+    io_kwargs: dict[str, Any]
+    if input_text is None:
+        io_kwargs = {"stdin": subprocess.DEVNULL}
+    else:
+        io_kwargs = {"input": input_text}
     try:
         completed = subprocess.run(
             list(argv),
-            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -95,6 +100,7 @@ def _run(
             timeout=timeout,
             check=False,
             env=safe_env,
+            **io_kwargs,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ManagerError(ErrorCode.IO_ERROR, f"command failed to execute: {argv[0]}: {exc}") from exc
@@ -113,22 +119,100 @@ class SystemdUserAdapter:
         self.state_root = state_root
 
     def daemon_reload(self) -> None:
-        _run(["systemctl", "--user", "daemon-reload"])
+        completed = _run(["systemctl", "--user", "daemon-reload"], check=False)
+        if completed.returncode != 0:
+            raise ManagerError(
+                ErrorCode.IO_ERROR,
+                "systemd user daemon-reload failed",
+                {
+                    "exit_code": completed.returncode,
+                    "detail": redact_text((completed.stderr or completed.stdout).strip())[-2000:],
+                },
+            )
+
+    def _unit_action(self, action: str, unit: str) -> None:
+        completed = _run(["systemctl", "--user", action, unit], check=False)
+        if completed.returncode == 0:
+            return
+        raise ManagerError(
+            ErrorCode.IO_ERROR,
+            f"systemctl --user {action} failed for {unit}",
+            {
+                "action": action,
+                "unit": unit,
+                "exit_code": completed.returncode,
+                "detail": redact_text((completed.stderr or completed.stdout).strip())[-2000:],
+                "unit_status": self.unit_snapshot(unit),
+                "journal": self.journal_tail(unit, lines=80),
+            },
+        )
 
     def enable(self, unit: str) -> None:
-        _run(["systemctl", "--user", "enable", unit])
+        self._unit_action("enable", unit)
 
     def disable(self, unit: str) -> None:
-        _run(["systemctl", "--user", "disable", unit])
+        self._unit_action("disable", unit)
 
     def start(self, unit: str) -> None:
-        _run(["systemctl", "--user", "start", unit])
+        self._unit_action("start", unit)
 
     def stop(self, unit: str) -> None:
-        _run(["systemctl", "--user", "stop", unit])
+        self._unit_action("stop", unit)
 
     def restart(self, unit: str) -> None:
-        _run(["systemctl", "--user", "restart", unit])
+        self._unit_action("restart", unit)
+
+    def unit_snapshot(self, unit: str) -> dict[str, Any]:
+        completed = _run(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                unit,
+                "-p",
+                "LoadState",
+                "-p",
+                "UnitFileState",
+                "-p",
+                "ActiveState",
+                "-p",
+                "SubState",
+                "-p",
+                "MainPID",
+                "-p",
+                "ExecMainCode",
+                "-p",
+                "ExecMainStatus",
+            ],
+            check=False,
+        )
+        values: dict[str, Any] = {"unit": unit, "query_exit_code": completed.returncode}
+        for line in completed.stdout.splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                values[key] = value
+        if completed.returncode != 0 and completed.stderr.strip():
+            values["error"] = redact_text(completed.stderr.strip())[-1000:]
+        return values
+
+    def journal_tail(self, unit: str, *, lines: int = 100) -> str:
+        bounded_lines = max(1, min(int(lines), 500))
+        completed = _run(
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                unit,
+                "--no-pager",
+                "-n",
+                str(bounded_lines),
+                "-o",
+                "short-iso",
+            ],
+            check=False,
+        )
+        text = completed.stdout if completed.stdout else completed.stderr
+        return redact_text(text.strip())[-20000:]
 
     def is_active(self, unit: str) -> bool:
         completed = _run(["systemctl", "--user", "is-active", "--quiet", unit], check=False)
@@ -648,26 +732,173 @@ class HostLifecycleWorker:
         return self.apply_service.apply(instance_id, force_restart=force_restart, action=action)
 
 
+class HostInstanceStatusService:
+    """Read-only host-side status/log service for a declared instance."""
+
+    def __init__(
+        self,
+        paths: ManagerPaths,
+        registry: InstanceRegistry,
+        *,
+        generator: ResourceGenerator | None = None,
+        planner: ReconciliationPlanner | None = None,
+        systemd: SystemdUserAdapter | None = None,
+    ) -> None:
+        self.paths = paths
+        self.registry = registry
+        self.generator = generator or ResourceGenerator(paths)
+        self.planner = planner or ReconciliationPlanner(paths, registry, generator=self.generator)
+        self.systemd = systemd or SystemdUserAdapter(state_root=paths.state_root)
+
+    def status(self, instance_id: str) -> dict[str, Any]:
+        desired = self.registry.get(instance_id)
+        bundle = self.generator.generate(desired)
+        plan = self.planner.plan(desired)
+        units: dict[str, Any] = {}
+        for resource in bundle.resources:
+            if resource.unit_name:
+                units[resource.resource_id] = self.systemd.unit_snapshot(resource.unit_name)
+
+        endpoints = {
+            "mcp_discovery": {
+                "url": f"http://{desired.mcp.host}:{desired.mcp.port}/.well-known/mcp.json",
+            },
+            "tunnel_health": {
+                "url": f"http://{desired.tunnel.health_host}:{desired.tunnel.health_port}/healthz",
+            },
+            "tunnel_ready": {
+                "url": f"http://{desired.tunnel.health_host}:{desired.tunnel.health_port}/readyz",
+            },
+        }
+        for item in endpoints.values():
+            item["http_status"] = _http_status(str(item["url"]))
+
+        applied_path = self.paths.state_root / "applied" / f"{instance_id}.json"
+        applied: dict[str, Any] | None = None
+        if applied_path.is_file():
+            try:
+                decoded = json.loads(applied_path.read_text(encoding="utf-8", errors="strict"))
+                if isinstance(decoded, dict):
+                    applied = decoded
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                applied = {"error": "applied state is unreadable"}
+
+        transaction_dir = self.paths.state_root / "transactions" / instance_id
+        transactions: list[str] = []
+        if transaction_dir.is_dir():
+            try:
+                transactions = [path.name for path in sorted(transaction_dir.glob("*.json"))[-10:]]
+            except OSError:
+                transactions = []
+
+        return {
+            "ok": plan.valid,
+            "instance_id": instance_id,
+            "desired_fingerprint": desired.fingerprint(),
+            "lifecycle": desired.lifecycle.to_dict(),
+            "plan": plan.to_dict(),
+            "units": units,
+            "endpoints": endpoints,
+            "applied": applied,
+            "recent_transactions": transactions,
+        }
+
+    def logs(self, instance_id: str, *, lines: int = 100) -> dict[str, Any]:
+        desired = self.registry.get(instance_id)
+        bundle = self.generator.generate(desired)
+        unit_logs: dict[str, str] = {}
+        for resource in bundle.resources:
+            if resource.unit_name:
+                unit_logs[resource.unit_name] = self.systemd.journal_tail(resource.unit_name, lines=lines)
+
+        state_dir = self.paths.state_root / "instances" / instance_id
+        file_logs: dict[str, str] = {}
+        for name in ("mcp.log", "tunnel.log", "tunnel-supervisor.log", "admission-guard.log"):
+            path = state_dir / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                file_logs[name] = f"<unreadable: {exc}>"
+                continue
+            file_logs[name] = redact_text("\n".join(text.splitlines()[-max(1, min(lines, 500)):]))[-20000:]
+
+        return {
+            "ok": True,
+            "instance_id": instance_id,
+            "lines": max(1, min(lines, 500)),
+            "journals": unit_logs,
+            "files": file_logs,
+        }
+
+
 class HostExecutionBridge:
-    """Dispatch a manager operation through a transient user-systemd worker."""
+    """Dispatch manager host/registry operations through transient user-systemd workers.
+
+    The bridge is the single boundary used by MCP-facing CLI operations that
+    need access to the real account registry, generated systemd resources, or
+    other manager-owned host state. Desired declarations contain no secrets, so
+    registry create/update payloads are safely streamed over stdin rather than
+    exposed as command-line arguments.
+    """
 
     def __init__(self, paths: ManagerPaths) -> None:
         self.paths = paths
 
+    def run_registry_write(self, action: str, desired: DesiredInstance) -> dict[str, Any]:
+        if action not in {"create", "update"}:
+            raise ManagerError(ErrorCode.IO_ERROR, f"unsupported registry action: {action}")
+        return self._run_json(
+            ["_runtime", "registry-write", action],
+            input_text=desired.canonical_json() + "\n",
+            unit_fragment=f"registry-{action}-{desired.instance_id.value}",
+        )
+
+    def run_list(self) -> dict[str, Any]:
+        return self._run_json(["_runtime", "list"], unit_fragment="list")
+
+    def run_show(self, instance_id: str) -> dict[str, Any]:
+        return self._run_json(["_runtime", "show", instance_id], unit_fragment=f"show-{instance_id}")
+
+    def run_render(self, instance_id: str, *, include_content: bool = False) -> dict[str, Any]:
+        args = ["_runtime", "render", instance_id]
+        if include_content:
+            args.append("--include-content")
+        return self._run_json(args, unit_fragment=f"render-{instance_id}")
+
     def run_lifecycle(self, action: str, instance_id: str) -> dict[str, Any]:
-        return self._run_json(["_runtime", "lifecycle", action, instance_id])
+        return self._run_json(
+            ["_runtime", "lifecycle", action, instance_id],
+            unit_fragment=f"{action}-{instance_id}",
+        )
 
     def run_plan(self, instance_id: str) -> dict[str, Any]:
-        return self._run_json(["_runtime", "plan", instance_id])
+        return self._run_json(["_runtime", "plan", instance_id], unit_fragment=f"plan-{instance_id}")
 
-    def _run_json(self, runtime_args: Sequence[str]) -> dict[str, Any]:
+    def run_status(self, instance_id: str) -> dict[str, Any]:
+        return self._run_json(["_runtime", "status", instance_id], unit_fragment=f"status-{instance_id}")
+
+    def run_logs(self, instance_id: str, *, lines: int = 100) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "logs", instance_id, "--lines", str(lines)],
+            unit_fragment=f"logs-{instance_id}",
+        )
+
+    def _run_json(
+        self,
+        runtime_args: Sequence[str],
+        *,
+        input_text: str | None = None,
+        unit_fragment: str | None = None,
+    ) -> dict[str, Any]:
         if not self.paths.manager_executable.is_file() or not os.access(self.paths.manager_executable, os.X_OK):
             raise ManagerError(
                 ErrorCode.IO_ERROR,
                 f"manager executable is not installed/executable: {self.paths.manager_executable}",
             )
-        instance_fragment = runtime_args[-1] if runtime_args else "operation"
-        unit_name = f"workspace-mcp-manager-host-{_safe_unit_fragment(instance_fragment)}-{uuid.uuid4().hex[:8]}"
+        fragment = unit_fragment or (runtime_args[-1] if runtime_args else "operation")
+        unit_name = f"workspace-mcp-manager-host-{_safe_unit_fragment(fragment)}-{uuid.uuid4().hex[:8]}"
         argv = [
             "systemd-run",
             "--user",
@@ -683,7 +914,7 @@ class HostExecutionBridge:
             str(self.paths.registry_dir),
             *runtime_args,
         ]
-        completed = _run(argv, timeout=180.0, check=False)
+        completed = _run(argv, timeout=180.0, check=False, input_text=input_text)
         stdout = completed.stdout.strip()
         stderr = redact_text(completed.stderr.strip())
         payload: dict[str, Any] | None = None

@@ -10,10 +10,11 @@ from unittest.mock import patch
 
 from workspace_mcp_manager.domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from workspace_mcp_manager.generation import ResourceGenerator
-from workspace_mcp_manager.host_apply import HostExecutionBridge, HostLifecycleWorker
+from workspace_mcp_manager.host_apply import HostExecutionBridge, HostLifecycleWorker, SystemdUserAdapter
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.planning import PlanOperation, ReconciliationPlan
 from workspace_mcp_manager.registry import InstanceRegistry
+from workspace_mcp_manager.errors import ManagerError
 
 from tests.helpers import sample_instance
 
@@ -154,6 +155,75 @@ class HostApplyTests(unittest.TestCase):
             self.assertIn("--pipe", argv)
             self.assertIn(str(paths.manager_executable), argv)
             self.assertEqual(argv[-4:], ["_runtime", "lifecycle", "apply", "qual"])
+
+    def test_bridge_registry_operations_use_host_worker_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            paths.manager_executable.parent.mkdir(parents=True)
+            paths.manager_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            os.chmod(paths.manager_executable, 0o755)
+            desired = desired_for(root)
+            bridge = HostExecutionBridge(paths)
+            payload = {"ok": True, "instance_id": "qual"}
+            with patch("workspace_mcp_manager.host_apply._run") as run:
+                from subprocess import CompletedProcess
+
+                run.return_value = CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+                result = bridge.run_registry_write("create", desired)
+            self.assertEqual(result, payload)
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[-3:], ["_runtime", "registry-write", "create"])
+            self.assertEqual(run.call_args.kwargs["input_text"], desired.canonical_json() + "\n")
+            self.assertNotIn(desired.canonical_json(), " ".join(argv))
+
+    def test_bridge_registry_queries_use_host_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            paths.manager_executable.parent.mkdir(parents=True)
+            paths.manager_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            os.chmod(paths.manager_executable, 0o755)
+            bridge = HostExecutionBridge(paths)
+            with patch.object(bridge, "_run_json", return_value={"ok": True}) as run_json:
+                bridge.run_list()
+                run_json.assert_called_with(["_runtime", "list"], unit_fragment="list")
+                bridge.run_show("qual")
+                run_json.assert_called_with(["_runtime", "show", "qual"], unit_fragment="show-qual")
+                bridge.run_render("qual", include_content=True)
+                run_json.assert_called_with(
+                    ["_runtime", "render", "qual", "--include-content"],
+                    unit_fragment="render-qual",
+                )
+
+    def test_bridge_status_and_logs_use_host_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            paths.manager_executable.parent.mkdir(parents=True)
+            paths.manager_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            os.chmod(paths.manager_executable, 0o755)
+            bridge = HostExecutionBridge(paths)
+            with patch.object(bridge, "_run_json", return_value={"ok": True}) as run_json:
+                bridge.run_status("qual")
+                run_json.assert_called_with(["_runtime", "status", "qual"])
+                bridge.run_logs("qual", lines=77)
+                run_json.assert_called_with(["_runtime", "logs", "qual", "--lines", "77"])
+
+    def test_systemd_start_failure_contains_unit_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = SystemdUserAdapter(state_root=Path(directory))
+            from subprocess import CompletedProcess
+            failure = CompletedProcess([], 1, "", "start failed")
+            with patch("workspace_mcp_manager.host_apply._run", return_value=failure), \
+                 patch.object(adapter, "unit_snapshot", return_value={"ActiveState": "failed"}), \
+                 patch.object(adapter, "journal_tail", return_value="journal evidence"):
+                with self.assertRaises(ManagerError) as caught:
+                    adapter.start("tunnel-client-qual.service")
+            details = caught.exception.details
+            self.assertEqual(details["unit"], "tunnel-client-qual.service")
+            self.assertEqual(details["unit_status"]["ActiveState"], "failed")
+            self.assertIn("journal evidence", details["journal"])
 
     def test_invalid_plan_is_not_mutated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
