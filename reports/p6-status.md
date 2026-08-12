@@ -145,6 +145,30 @@ Correction:
 - regression coverage lives in `tests/test_generation.py` and
   `tests/test_cli_host_boundary.py`.
 
+### P6-Q3 — authority assertion mismatched quoted ExecStart
+
+After Q2 was corrected, live qualification reached and passed first apply,
+readiness, and status, then stopped at:
+
+```text
+== generated service authority and NVM toolchain ==
+```
+
+Cause: the harness searched for the contiguous text `_runtime tunnel`, while the
+generated deterministic systemd command quotes every argument separately and
+therefore renders `"_runtime" "tunnel"`.
+
+Correction:
+
+- the authority assertion now matches the actual quoted argument contract;
+- assertion failures use explicit `fail` diagnostics rather than bare `grep`
+  exits under `set -e`;
+- the harness may resume after a harness-only failure only when `applied.json`
+  proves `present+running` with owned resources and the expected state marker,
+  units, and tunnel profile still exist;
+- no manager-owned resources are deleted or normalized to resume;
+- regression coverage lives in `tests/test_qualification_script.py`.
+
 ## NVM toolchain contract
 
 An MCP instance may use an NVM-managed Node version without sourcing `nvm.sh`.
