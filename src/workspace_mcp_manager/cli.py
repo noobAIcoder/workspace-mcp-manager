@@ -11,7 +11,8 @@ from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
 from .host import HostInspector
-from .host_apply import HostExecutionBridge, HostInstanceStatusService, HostLifecycleWorker
+from .host_apply import HostExecutionBridge, HostInstanceStatusService
+from .lifecycle import HostLifecycleWorker
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
 from .recovery_planning import project_recoverable_failed_first_apply
