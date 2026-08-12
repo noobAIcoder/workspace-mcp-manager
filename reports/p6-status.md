@@ -75,6 +75,41 @@ Recovery is allowed only when all of the following are true:
 Recovery restores the missing ownership marker through a separately journaled
 recovery plan and preserves the runtime logs. Unknown residue fails closed.
 
+Read-only `instance plan` uses the same evidence requirements to project only this
+specific residue into a valid recovery plan. It does not create the ownership
+marker or delete logs. Generic missing/foreign ownership remains a conflict.
+
+## Live qualification regressions
+
+### P6-Q1 — pre-apply plan blocked proven recovery residue
+
+Observed during live `manager-qual` qualification after pure tests were green:
+
+```text
+plan -> CONFLICT
+state-dir -> ownership marker is missing
+state-owner -> CREATE
+no units deployed
+no applied.json
+known mcp.log + tunnel-supervisor.log remain
+failed transaction evidence exists
+```
+
+Cause: recovery recognition existed only inside `apply`, while the required
+qualification sequence starts with read-only `plan`. The preceding plan therefore
+blocked the apply that knew how to recover the exact residue.
+
+Correction:
+
+- read-only planning recognizes only journal-proven failed-first-apply residue;
+- the state-directory ownership conflict is projected to a recovery `NOOP`;
+- creation of `.owner` remains visible in the plan;
+- `apply` still performs the actual ownership restoration under the instance lock
+  and recomputes a fresh normal plan before subsequent mutation;
+- unknown residual content, missing failed-transaction evidence, or existing
+  `applied.json` still fail closed;
+- regression coverage lives in `tests/test_recovery_planning.py`.
+
 ## NVM toolchain contract
 
 An MCP instance may use an NVM-managed Node version without sourcing `nvm.sh`.
