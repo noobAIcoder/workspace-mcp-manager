@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -83,6 +83,26 @@ class CliHostBoundaryTests(unittest.TestCase):
             self.assertEqual(payload["error"]["code"], "IO_ERROR")
             self.assertEqual(payload["error"]["details"]["unit"], "tunnel-client-sample.service")
             self.assertEqual(payload["error"]["details"]["unit_status"]["ActiveState"], "failed")
+
+    def test_service_runtime_manager_error_remains_process_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            error_output = StringIO()
+            failure = ManagerError(
+                ErrorCode.IO_ERROR,
+                "synthetic tunnel runtime failure",
+                {"profile": "workspace-mcp-sample"},
+            )
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli._run_runtime", side_effect=failure), \
+                 redirect_stderr(error_output):
+                rc = main(["_runtime", "tunnel", "sample"])
+            self.assertEqual(rc, 2)
+            payload = json.loads(error_output.getvalue())
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["error"]["code"], "IO_ERROR")
+            self.assertEqual(payload["error"]["details"]["profile"], "workspace-mcp-sample")
 
     def test_public_status_semantic_false_returns_one(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
