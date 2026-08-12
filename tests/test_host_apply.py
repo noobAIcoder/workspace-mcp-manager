@@ -10,7 +10,13 @@ from unittest.mock import patch
 
 from workspace_mcp_manager.domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from workspace_mcp_manager.generation import ResourceGenerator
-from workspace_mcp_manager.host_apply import HostExecutionBridge, HostLifecycleWorker, SystemdUserAdapter
+from workspace_mcp_manager.host_apply import (
+    HostApplyService,
+    HostExecutionBridge,
+    HostLifecycleWorker,
+    SystemdUserAdapter,
+    _RollbackState,
+)
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.planning import PlanOperation, ReconciliationPlan
 from workspace_mcp_manager.registry import InstanceRegistry
@@ -206,9 +212,9 @@ class HostApplyTests(unittest.TestCase):
             bridge = HostExecutionBridge(paths)
             with patch.object(bridge, "_run_json", return_value={"ok": True}) as run_json:
                 bridge.run_status("qual")
-                run_json.assert_called_with(["_runtime", "status", "qual"])
+                run_json.assert_called_with(["_runtime", "status", "qual"], unit_fragment="status-qual")
                 bridge.run_logs("qual", lines=77)
-                run_json.assert_called_with(["_runtime", "logs", "qual", "--lines", "77"])
+                run_json.assert_called_with(["_runtime", "logs", "qual", "--lines", "77"], unit_fragment="logs-qual")
 
     def test_systemd_start_failure_contains_unit_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -251,6 +257,120 @@ class HostApplyTests(unittest.TestCase):
             )
             with self.assertRaises(ManagerError):
                 service.apply("qual")
+
+    def test_failed_first_apply_residue_is_recovered_with_transaction_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            desired = desired_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            generator = ResourceGenerator(paths)
+            bundle = generator.generate(desired)
+            by_id = {resource.resource_id: resource for resource in bundle.resources}
+            state_dir = Path(by_id["state-dir"].path)
+            owner_path = Path(by_id["state-owner"].path)
+            state_dir.mkdir(parents=True, mode=0o700)
+            (state_dir / "mcp.log").write_text("", encoding="utf-8")
+            (state_dir / "tunnel-supervisor.log").write_text("manager log\n", encoding="utf-8")
+
+            transaction_dir = paths.state_root / "transactions" / "qual"
+            transaction_dir.mkdir(parents=True)
+            (transaction_dir / "failed.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "instance_id": "qual",
+                        "executed": [
+                            {"operation": "CREATE", "target": str(state_dir)},
+                            {"operation": "CREATE", "target": str(owner_path)},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            service = HostApplyService(paths, registry, generator=generator, systemd=FakeSystemd())
+            result = service._recover_failed_first_apply_state("qual", bundle)
+
+            self.assertIsNotNone(result)
+            self.assertTrue(result["recovered"])
+            self.assertFalse(state_dir.exists())
+            self.assertTrue(Path(result["recovery_journal"]).is_file())
+
+    def test_failed_first_apply_residue_with_unknown_content_is_not_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            desired = desired_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            generator = ResourceGenerator(paths)
+            bundle = generator.generate(desired)
+            by_id = {resource.resource_id: resource for resource in bundle.resources}
+            state_dir = Path(by_id["state-dir"].path)
+            owner_path = Path(by_id["state-owner"].path)
+            state_dir.mkdir(parents=True, mode=0o700)
+            (state_dir / "unexpected.txt").write_text("do not remove", encoding="utf-8")
+
+            transaction_dir = paths.state_root / "transactions" / "qual"
+            transaction_dir.mkdir(parents=True)
+            (transaction_dir / "failed.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "instance_id": "qual",
+                        "executed": [
+                            {"operation": "CREATE", "target": str(state_dir)},
+                            {"operation": "CREATE", "target": str(owner_path)},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            service = HostApplyService(paths, registry, generator=generator, systemd=FakeSystemd())
+            result = service._recover_failed_first_apply_state("qual", bundle)
+
+            self.assertIsNone(result)
+            self.assertTrue((state_dir / "unexpected.txt").is_file())
+
+    def test_rollback_removes_known_logs_before_new_state_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            owner = state_dir / ".owner"
+            owner.write_text("workspace-mcp-manager-instance=qual\n", encoding="utf-8")
+            (state_dir / "mcp.log").write_text("", encoding="utf-8")
+            (state_dir / "tunnel-supervisor.log").write_text("log\n", encoding="utf-8")
+            rollback = _RollbackState()
+            rollback.created_paths.extend([state_dir, owner])
+            rollback.created_state_dirs.append(state_dir)
+
+            rollback.restore()
+
+            self.assertFalse(state_dir.exists())
+
+    def test_rollback_preserves_owner_when_unknown_state_content_remains(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            owner = state_dir / ".owner"
+            owner.write_text("workspace-mcp-manager-instance=qual\n", encoding="utf-8")
+            (state_dir / "mcp.log").write_text("", encoding="utf-8")
+            (state_dir / "unexpected.txt").write_text("preserve", encoding="utf-8")
+            rollback = _RollbackState()
+            rollback.created_paths.extend([state_dir, owner])
+            rollback.created_state_dirs.append(state_dir)
+
+            rollback.restore()
+
+            self.assertTrue(state_dir.is_dir())
+            self.assertTrue(owner.is_file())
+            self.assertTrue((state_dir / "unexpected.txt").is_file())
+            self.assertFalse((state_dir / "mcp.log").exists())
 
 
 if __name__ == "__main__":

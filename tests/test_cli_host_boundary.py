@@ -50,6 +50,31 @@ class CliHostBoundaryTests(unittest.TestCase):
             self.assertEqual(desired.instance_id.value, "sample")
             self.assertEqual(json.loads(output.getvalue())["instance_id"], "sample")
 
+    def test_internal_runtime_semantic_false_is_transport_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            output = StringIO()
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli._run_runtime", return_value={"ok": False, "instance_id": "sample"}), \
+                 redirect_stdout(output):
+                rc = main(["_runtime", "status", "sample"])
+            self.assertEqual(rc, 0)
+            self.assertFalse(json.loads(output.getvalue())["ok"])
+
+    def test_public_status_semantic_false_returns_one(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            output = StringIO()
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(output):
+                bridge_type.return_value.run_status.return_value = {"ok": False, "instance_id": "sample"}
+                rc = main(["instance", "status", "sample"])
+            self.assertEqual(rc, 1)
+            self.assertFalse(json.loads(output.getvalue())["ok"])
+
     def test_list_show_and_render_use_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

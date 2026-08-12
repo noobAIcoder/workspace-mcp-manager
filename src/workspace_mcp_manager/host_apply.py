@@ -29,6 +29,12 @@ from .registry import InstanceRegistry
 JOURNAL_SCHEMA_VERSION = 1
 APPLIED_SCHEMA_VERSION = 1
 DEFAULT_READINESS_TIMEOUT_SECONDS = 30.0
+RUNTIME_STATE_FILES = frozenset({
+    "mcp.log",
+    "tunnel.log",
+    "tunnel-supervisor.log",
+    "admission-guard.log",
+})
 
 
 def utc_now() -> str:
@@ -308,6 +314,114 @@ class HostApplyService:
             {"plan": plan.to_dict(), "conflicts": conflicts},
         )
 
+    def _supporting_failed_transaction(
+        self,
+        instance_id: str,
+        *,
+        state_dir: Path,
+        owner_path: Path,
+    ) -> Path | None:
+        transaction_dir = self.journal_root / instance_id
+        if not transaction_dir.is_dir():
+            return None
+        try:
+            candidates = sorted(transaction_dir.glob("*.json"), reverse=True)
+        except OSError:
+            return None
+        for path in candidates:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            if payload.get("status") != "failed" or payload.get("instance_id") != instance_id:
+                continue
+            executed = payload.get("executed")
+            if not isinstance(executed, list):
+                continue
+            created_targets = {
+                str(item.get("target"))
+                for item in executed
+                if isinstance(item, Mapping) and item.get("operation") == "CREATE"
+            }
+            if str(state_dir) in created_targets and str(owner_path) in created_targets:
+                return path
+        return None
+
+    def _recover_failed_first_apply_state(
+        self,
+        instance_id: str,
+        bundle: GeneratedBundle,
+    ) -> dict[str, Any] | None:
+        by_id = {resource.resource_id: resource for resource in bundle.resources}
+        state_resource = by_id.get("state-dir")
+        owner_resource = by_id.get("state-owner")
+        if state_resource is None or owner_resource is None:
+            return None
+        state_dir = Path(state_resource.path)
+        owner_path = Path(owner_resource.path)
+        if (self.applied_root / f"{instance_id}.json").exists():
+            return None
+        if not state_dir.exists() or owner_path.exists():
+            return None
+        if state_dir.is_symlink() or not state_dir.is_dir():
+            return None
+        supporting = self._supporting_failed_transaction(
+            instance_id, state_dir=state_dir, owner_path=owner_path
+        )
+        if supporting is None:
+            return None
+        try:
+            entries = list(state_dir.iterdir())
+        except OSError:
+            return None
+        for child in entries:
+            if child.name not in RUNTIME_STATE_FILES:
+                return None
+            if child.is_symlink() or not child.is_file():
+                return None
+
+        recovery_id = (
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
+            f"recovery-{uuid.uuid4().hex[:8]}"
+        )
+        recovery_path = self._journal_path(instance_id, recovery_id)
+        recovery: dict[str, Any] = {
+            "schema_version": JOURNAL_SCHEMA_VERSION,
+            "transaction_id": recovery_id,
+            "instance_id": instance_id,
+            "action": "recover-failed-first-apply",
+            "started_at": utc_now(),
+            "status": "running",
+            "supporting_failed_transaction": supporting.name,
+            "removed_runtime_files": [child.name for child in entries],
+        }
+        self._write_journal(recovery_path, recovery)
+        try:
+            for child in entries:
+                child.unlink()
+            state_dir.rmdir()
+        except OSError as exc:
+            recovery["status"] = "failed"
+            recovery["completed_at"] = utc_now()
+            recovery["error"] = redact_text(str(exc))
+            self._write_journal(recovery_path, recovery)
+            raise ManagerError(
+                ErrorCode.IO_ERROR,
+                "failed to recover manager-owned residual state from an earlier failed apply",
+                {"state_dir": str(state_dir), "recovery_journal": str(recovery_path)},
+            ) from exc
+        recovery["status"] = "succeeded"
+        recovery["completed_at"] = utc_now()
+        self._write_journal(recovery_path, recovery)
+        return {
+            "recovered": True,
+            "state_dir": str(state_dir),
+            "supporting_failed_transaction": supporting.name,
+            "recovery_journal": str(recovery_path),
+        }
+
     def apply(self, instance_id: str, *, force_restart: bool = False, action: str = "apply") -> dict[str, Any]:
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
@@ -319,9 +433,17 @@ class HostApplyService:
             if desired.lifecycle.deployment is DeploymentTarget.PRESENT:
                 self.systemd.verify_generated_units(bundle)
 
-            # First observation validates preconditions. The second observation
-            # happens immediately before the first mutation and is authoritative.
+            # First observation validates preconditions. A narrowly proven
+            # residual from an earlier failed first apply may be recovered here
+            # before the authoritative pre-mutation plan is computed.
             initial = self.planner.plan(desired)
+            residual_recovery: dict[str, Any] | None = None
+            if not initial.valid:
+                residual_recovery = self._recover_failed_first_apply_state(
+                    instance_id, bundle
+                )
+                if residual_recovery is not None:
+                    initial = self.planner.plan(desired)
             if not initial.valid:
                 raise self._conflict(initial)
             plan = self.planner.plan(desired)
@@ -376,6 +498,7 @@ class HostApplyService:
                     "transaction_id": transaction_id,
                     "desired_fingerprint": desired.fingerprint(),
                     "journal": str(journal_path),
+                    "residual_recovery": residual_recovery,
                 }
             except Exception as exc:
                 rollback_result = self._rollback(rollback)
@@ -523,6 +646,8 @@ class HostApplyService:
                 if not path.exists():
                     path.mkdir(parents=True, exist_ok=False, mode=resource.mode)
                     rollback.created_paths.append(path)
+                    if resource.resource_id == "state-dir":
+                        rollback.created_state_dirs.append(path)
                 os.chmod(path, resource.mode)
             else:
                 if resource.content is None:
@@ -581,14 +706,8 @@ class HostApplyService:
         # manager-owned per-instance state directory. They are not declarative
         # resources, but retaining them would make a legitimate remove unable
         # to converge. Unknown files/directories still fail closed.
-        allowed = {
-            "mcp.log",
-            "tunnel.log",
-            "tunnel-supervisor.log",
-            "admission-guard.log",
-        }
         for child in list(path.iterdir()):
-            if child.name not in allowed:
+            if child.name not in RUNTIME_STATE_FILES:
                 continue
             if child.is_symlink() or not child.is_file():
                 raise ManagerError(
@@ -958,6 +1077,7 @@ class _RollbackState:
         self.root = Path(tempfile.mkdtemp(prefix="workspace-mcp-manager-rollback-"))
         self.backups: list[tuple[Path, Path, int]] = []
         self.created_paths: list[Path] = []
+        self.created_state_dirs: list[Path] = []
         self.removed_directories: list[tuple[Path, int]] = []
         self.started_units: list[str] = []
         self.enabled_units: list[str] = []
@@ -981,8 +1101,30 @@ class _RollbackState:
         for path, mode in reversed(self.removed_directories):
             if not path.exists():
                 path.mkdir(parents=True, exist_ok=False, mode=mode)
+        preserve_owner_parents: set[Path] = set()
+        for state_dir in self.created_state_dirs:
+            if not state_dir.is_dir() or state_dir.is_symlink():
+                continue
+            try:
+                entries = list(state_dir.iterdir())
+            except OSError:
+                preserve_owner_parents.add(state_dir)
+                continue
+            for child in entries:
+                if child.name == ".owner":
+                    continue
+                if child.name not in RUNTIME_STATE_FILES or child.is_symlink() or not child.is_file():
+                    preserve_owner_parents.add(state_dir)
+                    continue
+                try:
+                    child.unlink()
+                except OSError:
+                    preserve_owner_parents.add(state_dir)
+
         for path in reversed(self.created_paths):
             try:
+                if path.name == ".owner" and path.parent in preserve_owner_parents:
+                    continue
                 if path.is_dir() and not path.is_symlink():
                     if not any(path.iterdir()):
                         path.rmdir()

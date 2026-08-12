@@ -240,6 +240,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = _run_runtime(args, registry, paths)
             if payload is None:
                 return 0
+            # _runtime is an internal JSON transport over the transient
+            # user-systemd host boundary. A successfully serialized semantic
+            # result (including ok=false) is transport success; the outer
+            # public CLI maps ok=false to exit 1 after receiving the payload.
+            _emit(payload, pretty=getattr(args, "pretty", False))
+            return 0
         else:
             payload = _run_instance(args, registry, paths)
         _emit(payload, pretty=getattr(args, "pretty", False))
