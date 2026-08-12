@@ -244,10 +244,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = _run_runtime(args, registry, paths)
             if payload is None:
                 return 0
-            # _runtime is an internal JSON transport over the transient
-            # user-systemd host boundary. A successfully serialized semantic
-            # result (including ok=false) is transport success; the outer
-            # public CLI maps ok=false to exit 1 after receiving the payload.
+            # JSON-producing _runtime commands are an internal transport over
+            # the transient user-systemd host boundary. A successfully
+            # serialized semantic result (including ok=false) is transport
+            # success; the outer public CLI maps ok=false to exit 1.
             _emit(payload, pretty=getattr(args, "pretty", False))
             return 0
         else:
@@ -255,11 +255,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(payload, pretty=getattr(args, "pretty", False))
         return _payload_exit_code(payload)
     except ManagerError as exc:
-        if getattr(args, "area", None) == "_runtime":
-            # _runtime is a JSON transport. ManagerError is a semantic result,
-            # not a process/transport failure, so serialize it to stdout and
-            # return transport success for the outer host bridge to preserve the
-            # structured code/details. The public CLI still maps ok=false to 1.
+        runtime_json_transport = (
+            getattr(args, "area", None) == "_runtime"
+            and getattr(args, "command", None) not in {"tunnel", "admission-guard"}
+        )
+        if runtime_json_transport:
+            # ManagerError from a JSON worker is a semantic result, not a
+            # process/transport failure. Preserve the structured code/details
+            # for HostExecutionBridge. Service runtimes keep nonzero exits.
             _emit(exc.to_dict(), pretty=getattr(args, "pretty", False))
             return 0
         _emit(exc.to_dict(), pretty=getattr(args, "pretty", False), stream=sys.stderr)
