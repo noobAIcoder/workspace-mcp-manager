@@ -368,9 +368,12 @@ class HostResourceObserver:
                         if key == "WorkingDirectory" and value.strip():
                             record["workspace_path"] = value.strip()
                         elif key == "ExecStart":
-                            match = re.search(r"(?:^|\s)--port\s+([0-9]+)(?:\s|$)", value)
-                            if match:
-                                record["mcp_port"] = match.group(1)
+                            host_match = re.search(r"(?:^|\s)--host\s+(\S+)(?:\s|$)", value)
+                            if host_match:
+                                record["mcp_host"] = host_match.group(1)
+                            port_match = re.search(r"(?:^|\s)--port\s+([0-9]+)(?:\s|$)", value)
+                            if port_match:
+                                record["mcp_port"] = port_match.group(1)
             result.append(record)
         return result
 
@@ -537,6 +540,10 @@ class ReconciliationPlanner:
         listeners = self.observer.listeners()
         result: list[PlanItem] = []
         unit_by_id = {resource.resource_id: resource for resource in bundle.resources if resource.unit_name}
+        identities = {
+            record.get("unit_name", ""): record
+            for record in self.observer.managed_identity_scan().records
+        }
         checks = (
             ("mcp-unit", desired.mcp.host, desired.mcp.port, "MCP listener"),
             ("tunnel-unit", desired.tunnel.health_host, desired.tunnel.health_port, "tunnel health listener"),
@@ -547,7 +554,25 @@ class ReconciliationPlanner:
             resource = unit_by_id[resource_id]
             unit = self.observer.observe_unit(resource.unit_name or "")
             observed_resource = self.observer.observe_resource(resource)
-            if not (unit.loaded and unit.active and observed_resource.status is ObservationStatus.EXACT):
+            owned_listener = (
+                unit.loaded
+                and unit.active
+                and observed_resource.status is ObservationStatus.EXACT
+            )
+            if (
+                not owned_listener
+                and resource_id == "mcp-unit"
+                and unit.loaded
+                and unit.active
+                and observed_resource.status is ObservationStatus.DIFFERENT
+            ):
+                current = identities.get(resource.unit_name or "", {})
+                owned_listener = (
+                    current.get("instance_id") == desired.instance_id.value
+                    and current.get("mcp_host") == host
+                    and current.get("mcp_port") == str(port)
+                )
+            if not owned_listener:
                 result.append(
                     PlanItem(
                         PlanOperation.CONFLICT,
