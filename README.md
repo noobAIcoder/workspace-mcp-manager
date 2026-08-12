@@ -16,9 +16,13 @@ M0 implements the non-host-mutating foundation:
 3. read-only host inspection;
 4. the persistent desired-state registry.
 
-P4/P5 add deterministic resource rendering and reconciliation planning. They
-still do **not** write systemd units, start/stop services, create tunnels, or
-adopt legacy instances.
+P4/P5 add deterministic resource rendering and reconciliation planning.
+
+P6 adds the authoritative host-side apply lifecycle through transient user-systemd
+workers. P6 is live-qualified on the disposable `manager-qual` instance, including
+apply/NOOP apply/stop/start/restart/remove/recreate, ownership, rollback/recovery,
+transaction evidence, MCP discovery, tunnel health/readiness, and deterministic
+NVM-managed Node toolchain rendering.
 
 ## Run from source
 
@@ -30,7 +34,7 @@ PYTHONPATH=src python3 -m workspace_mcp_manager --registry-dir examples/registry
 PYTHONPATH=src python3 -m workspace_mcp_manager --registry-dir examples/registry instance plan manager-qual --pretty
 ```
 
-Run the M0 tests without third-party dependencies:
+Run the pure test suite without third-party dependencies:
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests -v
@@ -61,15 +65,28 @@ workspace-mcp-manager instance list
 workspace-mcp-manager instance show <id>
 workspace-mcp-manager instance render <id>
 workspace-mcp-manager instance plan <id>
+workspace-mcp-manager instance status <id>
+workspace-mcp-manager instance logs <id>
+workspace-mcp-manager instance apply <id>
+workspace-mcp-manager instance start <id>
+workspace-mcp-manager instance stop <id>
+workspace-mcp-manager instance restart <id>
+workspace-mcp-manager instance remove <id>
 ```
 
-Lifecycle mutation (`apply`, `start`, `stop`, `remove`, `delete`) remains
-deferred until P6. `plan` is explicitly non-mutating.
+`plan` remains explicitly non-mutating. Lifecycle mutations execute through the
+manager's narrow host-worker boundary and never require manual systemd/profile
+editing.
 
-P5 also feature-gates runtime capabilities that belong to later phases. A
+P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-For automation, successful/valid results return exit 0, structured results with
-`ok=false` return exit 1, and `ManagerError` failures return exit 2.
+P7 is the next gate: MCP protocol and permission qualification against the
+manager-owned disposable instance. P8 RO/RW access lifecycle remains deferred
+until P7 passes.
 
+For automation, successful/valid public results return exit 0, structured public
+results with `ok=false` return exit 1, and public `ManagerError` failures return
+exit 2. Internal JSON host-worker commands use transport-success semantics so
+structured semantic failures are preserved across the host boundary.
