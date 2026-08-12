@@ -110,6 +110,41 @@ Correction:
   `applied.json` still fail closed;
 - regression coverage lives in `tests/test_recovery_planning.py`.
 
+### P6-Q2 — tunnel start raced MCP discovery readiness
+
+Observed on the next live first-apply attempt after Q1 recovery succeeded:
+
+```text
+coding-tools-mcp-manager-qual.service -> systemd started
+tunnel-client-manager-qual.service -> ExecStartPre curl connection refused
+systemctl start tunnel -> failed
+rollback -> PASS
+no applied.json
+```
+
+Cause: `After=`/`Requires=` order systemd activation but do not prove that the
+MCP HTTP listener is accepting discovery requests. The generated tunnel unit
+performed a single immediate discovery `curl`, so a normal MCP startup delay was
+misclassified as a hard tunnel-start failure.
+
+The same incident also showed that a structured `ManagerError` produced by the
+transient JSON worker exited process status `2`; `HostExecutionBridge` therefore
+wrapped it as generic `host worker failed` and embedded the useful JSON in
+escaped stderr.
+
+Correction:
+
+- generated tunnel `ExecStartPre` uses bounded `curl` retry-on-connection-refused
+  semantics before launching the tunnel runtime;
+- generated resource fingerprint evidence was updated;
+- JSON-producing `_runtime` worker commands serialize `ManagerError` to stdout
+  and return transport success so the public bridge preserves structured
+  code/details and maps semantic `ok=false` normally;
+- `_runtime tunnel` and `_runtime admission-guard` remain real systemd service
+  processes and retain nonzero exits on failure;
+- regression coverage lives in `tests/test_generation.py` and
+  `tests/test_cli_host_boundary.py`.
+
 ## NVM toolchain contract
 
 An MCP instance may use an NVM-managed Node version without sourcing `nvm.sh`.
