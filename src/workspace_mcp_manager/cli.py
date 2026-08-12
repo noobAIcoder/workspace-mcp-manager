@@ -255,6 +255,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(payload, pretty=getattr(args, "pretty", False))
         return _payload_exit_code(payload)
     except ManagerError as exc:
+        if getattr(args, "area", None) == "_runtime":
+            # _runtime is a JSON transport. ManagerError is a semantic result,
+            # not a process/transport failure, so serialize it to stdout and
+            # return transport success for the outer host bridge to preserve the
+            # structured code/details. The public CLI still maps ok=false to 1.
+            _emit(exc.to_dict(), pretty=getattr(args, "pretty", False))
+            return 0
         _emit(exc.to_dict(), pretty=getattr(args, "pretty", False), stream=sys.stderr)
         return 2
 
