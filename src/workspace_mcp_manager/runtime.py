@@ -246,7 +246,17 @@ def _probe_admission(desired: DesiredInstance) -> dict[str, Any]:
             }
     except urllib.error.HTTPError as exc:
         text, oversized = _read_bounded_response(exc)
-        exact = exc.code == 503 and not oversized and text == SATURATION_BODY
+        error_message: str | None = None
+        if text is not None and not oversized:
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, Mapping):
+                error = payload.get("error")
+                if isinstance(error, Mapping) and isinstance(error.get("message"), str):
+                    error_message = error["message"]
+        exact = exc.code == 503 and error_message == SATURATION_BODY
         return {
             "classification": "saturation" if exact else "http_error",
             "http_status": int(exc.code),

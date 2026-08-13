@@ -191,7 +191,14 @@ for attempt in range(1, 513):
             sessions.write_text("\n".join(opened) + "\n", encoding="utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read(4097).decode("utf-8", errors="replace").strip()
-        if exc.code == 503 and body == "maximum HTTP session count reached":
+        try:
+            error_payload = json.loads(body)
+        except json.JSONDecodeError:
+            error_payload = None
+        message = None
+        if isinstance(error_payload, dict) and isinstance(error_payload.get("error"), dict):
+            message = error_payload["error"].get("message")
+        if exc.code == 503 and message == "maximum HTTP session count reached":
             print(f"P11_SATURATION_SIGNATURE=PASS sessions={len(opened)}")
             raise SystemExit(0)
         raise SystemExit(f"unexpected admission failure status={exc.code} body={body!r}")

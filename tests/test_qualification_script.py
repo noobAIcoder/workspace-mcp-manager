@@ -94,6 +94,7 @@ class P11QualificationScriptTests(unittest.TestCase):
         self.assertIn('OnUnitActiveSec=30s', text)
         self.assertIn('maximum HTTP session count reached', text)
         self.assertIn('exc.code == 503', text)
+        self.assertIn('error_payload["error"].get("message")', text)
         self.assertIn('The timer, not this script, must perform the first recovery.', text)
         self.assertIn('restart_attempt_count', text)
         self.assertIn('cooldown_suppression_count', text)

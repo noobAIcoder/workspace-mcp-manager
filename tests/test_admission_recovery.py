@@ -100,7 +100,11 @@ class AdmissionRecoveryTests(unittest.TestCase):
             503,
             "busy",
             {},
-            io.BytesIO((SATURATION_BODY + "\n").encode("utf-8")),
+            io.BytesIO(
+                json.dumps(
+                    {"error": {"code": -32000, "message": SATURATION_BODY}, "id": 1, "jsonrpc": "2.0"}
+                ).encode("utf-8")
+            ),
         )
         with patch("workspace_mcp_manager.runtime.urllib.request.urlopen", side_effect=exact):
             result = _probe_admission(desired)
@@ -112,7 +116,11 @@ class AdmissionRecoveryTests(unittest.TestCase):
             503,
             "busy",
             {},
-            io.BytesIO((SATURATION_BODY + "!").encode("utf-8")),
+            io.BytesIO(
+                json.dumps(
+                    {"error": {"code": -32000, "message": SATURATION_BODY + "!"}, "id": 1, "jsonrpc": "2.0"}
+                ).encode("utf-8")
+            ),
         )
         with patch("workspace_mcp_manager.runtime.urllib.request.urlopen", side_effect=near):
             result = _probe_admission(desired)
@@ -126,7 +134,11 @@ class AdmissionRecoveryTests(unittest.TestCase):
             502,
             "bad gateway",
             {},
-            io.BytesIO(SATURATION_BODY.encode("utf-8")),
+            io.BytesIO(
+                json.dumps(
+                    {"error": {"code": -32000, "message": SATURATION_BODY}, "id": 1, "jsonrpc": "2.0"}
+                ).encode("utf-8")
+            ),
         )
         with patch("workspace_mcp_manager.runtime.urllib.request.urlopen", side_effect=failure):
             result = _probe_admission(desired)

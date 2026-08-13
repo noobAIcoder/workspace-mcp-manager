@@ -49,12 +49,11 @@ Healthy admission is HTTP 200. If a healthy initialize returns an
 `Mcp-Session-Id`, the guard MUST issue MCP `DELETE` for that session before
 returning so the guard does not itself consume session capacity.
 
-The **only** recovery signature is the conjunction:
+The **only** recovery signature is the semantic conjunction:
 
 ```text
 HTTP status == 503
-response body, after CR/LF/outer-whitespace trimming, ==
-"maximum HTTP session count reached"
+JSON-RPC error.message == "maximum HTTP session count reached"
 ```
 
 Together this is the preserved signature:
@@ -63,8 +62,11 @@ Together this is the preserved signature:
 503 maximum HTTP session count reached
 ```
 
-Substring matches are forbidden. HTTP 503 with any other body is not a match.
-The same body under another status code is not a match.
+The live WSL server serializes this as a JSON-RPC error object (observed error
+code `-32000`). Matching is on the HTTP status and exact JSON-RPC error message,
+not on raw JSON formatting or a substring of the response body. HTTP 503 with
+another error message is not a match. The same message under another HTTP status
+is not a match. Plaintext/non-JSON bodies are not a match.
 
 ## Non-recovery observations
 
