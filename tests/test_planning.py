@@ -403,6 +403,10 @@ class PlanningTests(unittest.TestCase):
             self.assertFalse(
                 any(item.operation is PlanOperation.REMOVE and item.target == profile_dir for item in operations)
             )
+            launcher = str(paths.account_home / ".local/bin/sample-mcp")
+            self.assertTrue(
+                any(item.operation is PlanOperation.REMOVE and item.target == launcher for item in operations)
+            )
 
 
 if __name__ == "__main__":

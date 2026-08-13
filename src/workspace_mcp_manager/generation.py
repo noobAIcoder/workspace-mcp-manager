@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -122,6 +123,65 @@ class ResourceGenerator:
 
     def _unit_path(self, name: str) -> Path:
         return self.paths.user_unit_dir / name
+
+    def _launcher_path(self, desired: DesiredInstance) -> Path:
+        return self.paths.account_home / ".local" / "bin" / f"{desired.instance_id.value}-mcp"
+
+    def _render_launcher(self, desired: DesiredInstance) -> str:
+        iid = desired.instance_id.value
+        manager = shlex.quote(str(self.paths.manager_executable))
+        registry = shlex.quote(str(self.paths.registry_dir))
+        instance = shlex.quote(iid)
+        return "\n".join(
+            [
+                "#!/bin/sh",
+                _owner_marker(iid).rstrip("\n"),
+                "set -eu",
+                f"MANAGER={manager}",
+                f"REGISTRY={registry}",
+                f"INSTANCE={instance}",
+                "usage() {",
+                "  cat <<EOF",
+                f"Usage: {iid}-mcp <command> [args]",
+                "Commands:",
+                "  show render plan status logs git diagnose apply start stop restart remove",
+                "  access <list|add-ro|add-rw|remove> ...",
+                "  codex <start|status|output|cancel> ...",
+                "EOF",
+                "}",
+                'command=${1-}',
+                'case "$command" in',
+                "  ''|-h|--help|help)",
+                "    usage",
+                "    exit 0",
+                "    ;;",
+                "  show|render|plan|status|logs|git|diagnose|apply|start|stop|restart|remove)",
+                "    shift",
+                '    exec "$MANAGER" --registry-dir "$REGISTRY" instance "$command" "$INSTANCE" "$@"',
+                "    ;;",
+                "  access)",
+                "    shift",
+                '    action=${1-}',
+                '    case "$action" in list|add-ro|add-rw|remove) ;; *) usage >&2; exit 2 ;; esac',
+                "    shift",
+                '    exec "$MANAGER" --registry-dir "$REGISTRY" access "$action" "$INSTANCE" "$@"',
+                "    ;;",
+                "  codex)",
+                "    shift",
+                '    action=${1-}',
+                '    case "$action" in start|status|output|cancel) ;; *) usage >&2; exit 2 ;; esac',
+                "    shift",
+                '    exec "$MANAGER" --registry-dir "$REGISTRY" codex "$action" "$INSTANCE" "$@"',
+                "    ;;",
+                "  *)",
+                f"    printf '%s\\n' '{iid}-mcp: unsupported command' >&2",
+                "    usage >&2",
+                "    exit 2",
+                "    ;;",
+                "esac",
+                "",
+            ]
+        )
 
     def _runtime_command(self, desired: DesiredInstance, action: str) -> str:
         values = (
@@ -363,6 +423,14 @@ class ResourceGenerator:
                 str(self._profile_path(desired)),
                 0o600,
                 content=self._render_profile(desired),
+                ownership_token=marker,
+            ),
+            GeneratedResource(
+                "launcher",
+                ResourceKind.FILE,
+                str(self._launcher_path(desired)),
+                0o755,
+                content=self._render_launcher(desired),
                 ownership_token=marker,
             ),
         ]

@@ -171,6 +171,20 @@ class P15QualificationScriptTests(unittest.TestCase):
         self.assertIn("P15_WSL_QUALIFICATION=PASS", text)
 
 
+class P16QualificationScriptTests(unittest.TestCase):
+    def test_p16_harness_qualifies_owned_launcher_and_dispatch(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p16_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('LAUNCHER="$HOME/.local/bin/$INSTANCE_ID-mcp"', text)
+        self.assertIn('# workspace-mcp-manager-instance=$INSTANCE_ID', text)
+        self.assertIn('"$LAUNCHER" status', text)
+        self.assertIn('"$LAUNCHER" plan', text)
+        self.assertIn('"$LAUNCHER" access list', text)
+        self.assertIn('"$LAUNCHER" host', text)
+        self.assertIn("P16_LAUNCHER_RESOURCE=PASS", text)
+        self.assertIn("P16_WSL_QUALIFICATION=PASS", text)
+
+
 class P12QualificationScriptTests(unittest.TestCase):
     def test_p12_harness_uses_persisted_snapshots_and_real_tunnel_history(self) -> None:
         root = Path(__file__).resolve().parents[1]
