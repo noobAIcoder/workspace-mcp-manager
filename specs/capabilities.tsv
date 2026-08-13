@@ -111,7 +111,7 @@ CAP-109	A	PRESERVE	P8	Keep `.workspace-mcp-access` from dirtying Git
 CAP-110	A	PRESERVE	P8	Live user-systemd RO/RW enforcement test
 CAP-111	B	PRESERVE	P4/P7	WSL `GH_CONFIG_DIR` in MCP service
 CAP-112	B	PRESERVE	P4/P7	WSL `CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS` in MCP service
-CAP-113	B	PRESERVE	P10	Landlock access to WSL standalone Codex install
+CAP-113	B	PRESERVE	P10	Landlock access to configured WSL Codex installation
 CAP-114	B	PRESERVE	P9	GitHub CLI auth diagnostic
 CAP-115	B	PRESERVE	P9	Git identity diagnostic
 CAP-116	B	PRESERVE	P12	Time-aware tunnel-log classification

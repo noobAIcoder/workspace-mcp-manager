@@ -17,7 +17,7 @@ P10 owns:
 - status, bounded output, and cancellation;
 - strict request-to-instance/workspace binding;
 - independence from the initiating MCP request;
-- qualification that the WSL standalone Codex executable is admitted by the
+- qualification that the configured WSL Codex executable is admitted by the
   configured MCP execution environment.
 
 P10 does **not** install Codex, authenticate Codex, migrate Codex sessions, or
@@ -57,21 +57,22 @@ under the same effective execution environment used by the worker.
 A missing or nonfunctional executable is a host dependency failure. P10 MUST
 fail closed and MUST NOT install, upgrade, relink, or substitute Codex.
 
-## WSL standalone contract
+## WSL configured-installation contract
 
-The reconciled WSL authority uses a standalone Codex entrypoint. For live P10
-qualification:
+The reconciled WSL authority is the Codex executable selected by the instance's
+declared `mcp.exec_path`; P10 does not pin an installation mechanism. For live
+P10 qualification:
 
-1. the standalone entrypoint directory MUST be present in
-   `desired.mcp.exec_path`;
-2. the executable/package roots required to execute that entrypoint MUST be
+1. `command -v codex` under `desired.mcp.exec_path` MUST resolve an executable;
+2. a non-system executable/package root required to run that entrypoint MUST be
    represented by the existing `mcp.external_roots` mechanism;
-3. `command -v codex` through MCP `exec_command` MUST resolve the intended WSL
-   standalone entrypoint rather than an unrelated npm/Windows installation;
+3. real MCP `exec_command` MUST resolve the same configured Codex entrypoint,
+   not a Windows/app installation outside the declared PATH;
 4. `codex --version` through the configured environment MUST succeed.
 
-Installation/repair remains P15 even if this gate detects a missing standalone
-release.
+Changing from one supported Codex installation mechanism to another is a host
+configuration change, not a P10 implementation change. Installation/repair
+remains P15/external.
 
 ## Worker environment
 
@@ -247,8 +248,8 @@ Pure verification MUST cover:
 9. bounded stdout/stderr tail output;
 10. cancellation persistence.
 
-Live WSL qualification MUST additionally prove with the intended standalone
-Codex installation:
+Live WSL qualification MUST additionally prove with the configured Codex
+installation:
 
 1. MCP resolution and `codex --version`;
 2. one successful read job;
@@ -260,5 +261,6 @@ Codex installation:
 8. no Codex auth/session material is present in manager evidence;
 9. final manager plan/apply and P7-P9 smoke remain healthy.
 
-P10 MUST NOT be marked PASS while the intended WSL standalone Codex executable
-is missing or fails its version preflight.
+P10 MUST NOT be marked PASS while the Codex executable selected by the declared
+execution PATH is missing, outside the admitted roots, or fails version
+preflight.

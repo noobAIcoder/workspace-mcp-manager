@@ -63,13 +63,16 @@ class P9QualificationScriptTests(unittest.TestCase):
 
 
 class P10QualificationScriptTests(unittest.TestCase):
-    def test_p10_harness_fails_before_mutation_when_standalone_codex_is_unavailable(self) -> None:
+    def test_p10_harness_uses_configured_path_and_fails_before_jobs_when_codex_is_unavailable(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "scripts/qualify_p10_wsl.sh").read_text(encoding="utf-8")
         blocked = text.index("P10_EXTERNAL_CODEX_BLOCKED=version-preflight")
-        mutation = text.index('"$MANAGER" instance update "$UPDATED"')
-        self.assertLess(blocked, mutation)
-        self.assertIn('CODEX_ENTRY="${CODEX_ENTRY:-$CODEX_BIN_DIR/codex}"', text)
+        first_job = text.index("READ_JOB=")
+        self.assertLess(blocked, first_job)
+        self.assertIn('EXPECTED_PATH=', text)
+        self.assertIn('CODEX_ENTRY="$(PATH="$EXPECTED_PATH" command -v codex || true)"', text)
+        self.assertIn('configured Codex path is outside declared external roots', text)
+        self.assertNotIn('CODEX_STANDALONE_ROOT', text)
         self.assertIn('CAP-121', (root / "specs/p10-codex-jobs.md").read_text(encoding="utf-8"))
 
     def test_p10_harness_qualifies_detached_read_write_cancel_and_restore(self) -> None:
@@ -79,7 +82,8 @@ class P10QualificationScriptTests(unittest.TestCase):
         self.assertIn('start_job write', text)
         self.assertIn('codex cancel', text)
         self.assertIn('instance restart', text)
-        self.assertIn('instance update "$BASELINE"', text)
+        self.assertIn('FINAL_FINGERPRINT=', text)
+        self.assertIn('P10 qualification changed desired-state fingerprint', text)
         self.assertIn('P10_WSL_QUALIFICATION=PASS', text)
 
 

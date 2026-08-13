@@ -4,88 +4,77 @@ set -euo pipefail
 INSTANCE_ID="${INSTANCE_ID:-manager-qual}"
 WORKSPACE="${WORKSPACE:-/home/cloudtoor/repos/workspace-mcp-manager-qual}"
 MANAGER="${MANAGER:-$HOME/.local/bin/workspace-mcp-manager}"
-CODEX_BIN_DIR="${CODEX_BIN_DIR:-$HOME/.local/lib/codex-wsl/bin}"
-CODEX_ENTRY="${CODEX_ENTRY:-$CODEX_BIN_DIR/codex}"
-CODEX_WRAPPER_ROOT="${CODEX_WRAPPER_ROOT:-$HOME/.local/lib/codex-wsl}"
-CODEX_STANDALONE_ROOT="${CODEX_STANDALONE_ROOT:-$HOME/.codex/packages/standalone}"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
 
-json_field() {
-  python3 -c 'import json,sys; d=json.load(sys.stdin); print(d'"$1"')'
-}
-
 if [ ! -x "$MANAGER" ]; then
   fail "manager executable is unavailable: $MANAGER"
 fi
 
-if [ ! -x "$CODEX_ENTRY" ]; then
-  printf 'P10_EXTERNAL_CODEX_BLOCKED=missing-executable\n' >&2
-  printf 'codex_entry=%s\n' "$CODEX_ENTRY" >&2
-  exit 2
-fi
-
-if ! CODEX_HOME="$HOME/.codex" "$CODEX_ENTRY" --version >/tmp/workspace-mcp-p10-codex-version.$$ 2>&1; then
-  printf 'P10_EXTERNAL_CODEX_BLOCKED=version-preflight\n' >&2
-  sed -n '1,20p' /tmp/workspace-mcp-p10-codex-version.$$ >&2 || true
-  rm -f /tmp/workspace-mcp-p10-codex-version.$$
-  exit 2
-fi
-rm -f /tmp/workspace-mcp-p10-codex-version.$$
-
 TMP_ROOT="$(mktemp -d -t workspace-mcp-p10-XXXXXX)"
-BASELINE="$TMP_ROOT/baseline.json"
-UPDATED="$TMP_ROOT/updated.json"
-RESTORE_NEEDED=0
+SHOW_JSON="$TMP_ROOT/show.json"
+VERSION_OUTPUT="$TMP_ROOT/codex-version.txt"
 
 cleanup() {
   local rc=$?
   rm -f "$WORKSPACE/.p10-codex-write-check"
-  if [ "$RESTORE_NEEDED" -eq 1 ] && [ -f "$BASELINE" ]; then
-    "$MANAGER" instance update "$BASELINE" >/dev/null 2>&1 || true
-    "$MANAGER" instance apply "$INSTANCE_ID" >/dev/null 2>&1 || true
-  fi
   rm -rf "$TMP_ROOT"
   return "$rc"
 }
 trap cleanup EXIT
 
-"$MANAGER" instance show "$INSTANCE_ID" >"$TMP_ROOT/show.json"
-python3 - "$TMP_ROOT/show.json" "$BASELINE" <<'PY'
+"$MANAGER" instance show "$INSTANCE_ID" >"$SHOW_JSON"
+BASELINE_FINGERPRINT="$(python3 - "$SHOW_JSON" <<'PY'
 import json, pathlib, sys
-source = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-pathlib.Path(sys.argv[2]).write_text(
-    json.dumps(source["desired"], indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
+print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["fingerprint"])
 PY
+)"
+EXPECTED_PATH="$(python3 - "$SHOW_JSON" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["desired"]["mcp"]["exec_path"])
+PY
+)"
+CODEX_ENTRY="$(PATH="$EXPECTED_PATH" command -v codex || true)"
 
-python3 - "$BASELINE" "$UPDATED" "$CODEX_BIN_DIR" "$CODEX_WRAPPER_ROOT" "$CODEX_STANDALONE_ROOT" <<'PY'
+if [ -z "$CODEX_ENTRY" ] || [ ! -x "$CODEX_ENTRY" ]; then
+  printf 'P10_EXTERNAL_CODEX_BLOCKED=missing-configured-executable\n' >&2
+  printf 'configured_path=%s\n' "$EXPECTED_PATH" >&2
+  exit 2
+fi
+
+if ! HOME="$HOME" CODEX_HOME="$HOME/.codex" PATH="$EXPECTED_PATH" "$CODEX_ENTRY" --version >"$VERSION_OUTPUT" 2>&1; then
+  printf 'P10_EXTERNAL_CODEX_BLOCKED=version-preflight\n' >&2
+  sed -n '1,20p' "$VERSION_OUTPUT" >&2 || true
+  exit 2
+fi
+
+python3 - "$SHOW_JSON" "$CODEX_ENTRY" <<'PY'
 import json, os, pathlib, sys
-raw = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-bin_dir, wrapper_root, standalone_root = sys.argv[3:6]
-parts = [p for p in raw["mcp"]["exec_path"].split(os.pathsep) if p]
-parts = [bin_dir, *[p for p in parts if p != bin_dir]]
-raw["mcp"]["exec_path"] = os.pathsep.join(parts)
-roots = list(raw["mcp"]["external_roots"])
-for root in (wrapper_root, standalone_root):
-    if root not in roots:
-        roots.append(root)
-raw["mcp"]["external_roots"] = roots
-pathlib.Path(sys.argv[2]).write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
 
-"$MANAGER" instance update "$UPDATED" >/dev/null
-RESTORE_NEEDED=1
-"$MANAGER" instance apply "$INSTANCE_ID" >/dev/null
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+desired = payload["desired"]
+entry = pathlib.Path(sys.argv[2])
+resolved = pathlib.Path(os.path.realpath(entry))
+roots = [pathlib.Path(os.path.realpath(p)) for p in desired["mcp"]["external_roots"]]
+system_roots = tuple(pathlib.Path(p) for p in ("/usr", "/bin", "/sbin", "/lib", "/lib64"))
+
+def under(path, root):
+    return path == root or root in path.parents
+
+for candidate in (entry, resolved):
+    if any(under(candidate, root) for root in system_roots):
+        continue
+    if not any(under(candidate, root) for root in roots):
+        raise SystemExit(
+            f"configured Codex path is outside declared external roots: {candidate}"
+        )
+PY
 
 UNIT="$HOME/.config/systemd/user/coding-tools-mcp-$INSTANCE_ID.service"
-grep -F "PATH=$CODEX_BIN_DIR:" "$UNIT" >/dev/null || fail "standalone Codex bin is missing from generated MCP PATH"
-grep -F "$CODEX_WRAPPER_ROOT" "$UNIT" >/dev/null || fail "Codex wrapper root is missing from MCP external roots"
-grep -F "$CODEX_STANDALONE_ROOT" "$UNIT" >/dev/null || fail "Codex standalone root is missing from MCP external roots"
+grep -F "PATH=$EXPECTED_PATH" "$UNIT" >/dev/null || fail "generated MCP PATH differs from desired mcp.exec_path"
 
 start_job() {
   local mode=$1 prompt=$2 json
@@ -130,6 +119,9 @@ ELAPSED=$(( $(date +%s) - START_SECONDS ))
 
 "$MANAGER" instance plan "$INSTANCE_ID" >/dev/null
 "$MANAGER" instance apply "$INSTANCE_ID" >/dev/null
+
+FINAL_FINGERPRINT="$("$MANAGER" instance show "$INSTANCE_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])')"
+[ "$FINAL_FINGERPRINT" = "$BASELINE_FINGERPRINT" ] || fail "P10 qualification changed desired-state fingerprint"
 
 cleanup
 trap - EXIT
