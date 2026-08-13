@@ -130,6 +130,7 @@ class P13QualificationScriptTests(unittest.TestCase):
         self.assertIn("P13_AUTHORIZATION_FAILURE_PERSISTENCE=PASS", text)
         self.assertIn("P13_SYNCHRONOUS_REQUEST_FAILURE_PERSISTENCE=PASS", text)
         self.assertIn('host reboot-check', text)
+        self.assertIn('PATH="$EXPECTED_PATH" command -v codex', text)
         self.assertIn("P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS", text)
 
 

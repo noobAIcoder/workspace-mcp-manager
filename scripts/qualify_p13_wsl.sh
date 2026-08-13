@@ -54,6 +54,11 @@ import json, pathlib, sys
 print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["fingerprint"])
 PY
 )"
+EXPECTED_PATH="$(python3 - "$SHOW_JSON" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["desired"]["mcp"]["exec_path"])
+PY
+)"
 python3 - "$PLAN_JSON" <<'PY'
 import json, pathlib, sys
 p = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -195,8 +200,9 @@ FINAL_FINGERPRINT="$("$MANAGER" instance show "$INSTANCE_ID" | python3 -c 'impor
 curl -fsS "http://127.0.0.1:7657/.well-known/mcp.json" >/dev/null
 [ "$(curl -fsS "http://127.0.0.1:7373/healthz")" = live ] || fail "tunnel health regression"
 [ "$(curl -fsS "http://127.0.0.1:7373/readyz")" = ready ] || fail "tunnel readiness regression"
-command -v codex >/dev/null
-codex --version >/dev/null
+CODEX_ENTRY="$(PATH="$EXPECTED_PATH" command -v codex || true)"
+[ -x "$CODEX_ENTRY" ] || fail "Codex is unavailable on desired mcp.exec_path"
+HOME="$HOME" CODEX_HOME="$HOME/.codex" PATH="$EXPECTED_PATH" "$CODEX_ENTRY" --version >/dev/null
 "$MANAGER" instance diagnose "$INSTANCE_ID" --since-seconds 60 >/dev/null
 
 printf 'P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS\n'
