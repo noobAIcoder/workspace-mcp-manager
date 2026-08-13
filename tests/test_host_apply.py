@@ -221,6 +221,8 @@ class HostApplyTests(unittest.TestCase):
                 run_json.assert_called_with(["_runtime", "status", "qual"], unit_fragment="status-qual")
                 bridge.run_logs("qual", lines=77)
                 run_json.assert_called_with(["_runtime", "logs", "qual", "--lines", "77"], unit_fragment="logs-qual")
+                bridge.run_git("qual")
+                run_json.assert_called_with(["_runtime", "git", "qual"], unit_fragment="git-qual")
                 bridge.run_access("add-ro", "qual", alias="docs", path="/srv/shared/docs")
                 run_json.assert_called_with(
                     ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],

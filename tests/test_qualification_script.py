@@ -42,5 +42,24 @@ class P8QualificationScriptTests(unittest.TestCase):
         self.assertIn('grep -F \'"operation":"REMOVE"\'', text)
 
 
+class P9QualificationScriptTests(unittest.TestCase):
+    def test_p9_harness_uses_temporary_remote_and_cleans_it(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p9_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('git -C "$WORKSPACE" remote add "$REMOTE_NAME" "$REMOTE_URL"', text)
+        self.assertIn('git -C "$WORKSPACE" remote remove "$REMOTE_NAME"', text)
+        self.assertIn('workspace-mcp-manager instance git "$INSTANCE_ID"', text)
+        self.assertIn("P9_HOST_QUALIFICATION=PASS", text)
+
+    def test_p9_harness_checks_real_home_path_remote_and_auth(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p9_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('payload.get("environment", {}).get("home") == real_home', text)
+        self.assertIn('payload.get("environment", {}).get("path") == expected_path', text)
+        self.assertIn('remote.get("reachable") is True', text)
+        self.assertIn('github.get("authenticated") is True', text)
+        self.assertIn('"url" not in remote', text)
+
+
 if __name__ == "__main__":
     unittest.main()

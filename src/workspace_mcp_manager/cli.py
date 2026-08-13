@@ -11,6 +11,7 @@ from .access import AccessManager
 from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
+from .git_diagnostics import GitDiagnosticService
 from .host import HostInspector
 from .host_apply import HostExecutionBridge, HostInstanceStatusService
 from .lifecycle import HostLifecycleWorker
@@ -92,6 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
     logs_cmd.add_argument("--lines", type=int, default=100)
     logs_cmd.add_argument("--pretty", action="store_true")
 
+    git_cmd = instance_sub.add_parser("git")
+    git_cmd.add_argument("instance_id")
+    git_cmd.add_argument("--pretty", action="store_true")
+
     for command in ("apply", "start", "stop", "restart", "remove"):
         item = instance_sub.add_parser(command)
         item.add_argument("instance_id")
@@ -133,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs = runtime_sub.add_parser("logs")
     runtime_logs.add_argument("instance_id")
     runtime_logs.add_argument("--lines", type=int, default=100)
+    runtime_git = runtime_sub.add_parser("git")
+    runtime_git.add_argument("instance_id")
     runtime_access = runtime_sub.add_parser("access")
     runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove"))
     runtime_access.add_argument("instance_id")
@@ -186,6 +193,8 @@ def _run_instance(
         return bridge.run_status(args.instance_id)
     if args.command == "logs":
         return bridge.run_logs(args.instance_id, lines=args.lines)
+    if args.command == "git":
+        return bridge.run_git(args.instance_id)
     if args.command in {"apply", "start", "stop", "restart", "remove"}:
         return bridge.run_lifecycle(args.command, args.instance_id)
     raise AssertionError(args.command)
@@ -280,6 +289,8 @@ def _run_runtime(
         return HostInstanceStatusService(paths, registry).status(args.instance_id)
     if args.command == "logs":
         return HostInstanceStatusService(paths, registry).logs(args.instance_id, lines=args.lines)
+    if args.command == "git":
+        return GitDiagnosticService(paths).run(desired)
     if args.command == "lifecycle":
         return HostLifecycleWorker(paths, registry).run(args.action, args.instance_id)
     raise AssertionError(args.command)

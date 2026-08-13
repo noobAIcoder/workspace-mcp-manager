@@ -117,7 +117,7 @@ class CliHostBoundaryTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertFalse(json.loads(output.getvalue())["ok"])
 
-    def test_list_show_and_render_use_host_bridge(self) -> None:
+    def test_list_show_render_and_git_use_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paths = paths_for(root)
@@ -127,13 +127,16 @@ class CliHostBoundaryTests(unittest.TestCase):
                 bridge.run_list.return_value = {"ok": True, "instances": []}
                 bridge.run_show.return_value = {"ok": True, "instance_id": "sample"}
                 bridge.run_render.return_value = {"ok": True, "instance_id": "sample", "resources": []}
+                bridge.run_git.return_value = {"ok": True, "instance_id": "sample", "repository": {"present": True}}
                 with redirect_stdout(StringIO()):
                     self.assertEqual(main(["instance", "list"]), 0)
                     self.assertEqual(main(["instance", "show", "sample"]), 0)
                     self.assertEqual(main(["instance", "render", "sample"]), 0)
+                    self.assertEqual(main(["instance", "git", "sample"]), 0)
                 bridge.run_list.assert_called_once_with()
                 bridge.run_show.assert_called_once_with("sample")
                 bridge.run_render.assert_called_once_with("sample", include_content=False)
+                bridge.run_git.assert_called_once_with("sample")
 
 
 if __name__ == "__main__":

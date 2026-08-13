@@ -55,6 +55,11 @@ class CliTests(unittest.TestCase):
         removed = parser.parse_args(["access", "remove", "manager-qual", "docs"])
         self.assertEqual((removed.command, removed.alias), ("remove", "docs"))
 
+    def test_instance_git_command_parses_p9_diagnostic(self) -> None:
+        args = build_parser().parse_args(["instance", "git", "manager-qual", "--pretty"])
+        self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))
+        self.assertTrue(args.pretty)
+
 
 if __name__ == "__main__":
     unittest.main()

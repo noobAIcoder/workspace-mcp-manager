@@ -1248,6 +1248,9 @@ class HostExecutionBridge:
             unit_fragment=f"logs-{instance_id}",
         )
 
+    def run_git(self, instance_id: str) -> dict[str, Any]:
+        return self._run_json(["_runtime", "git", instance_id], unit_fragment=f"git-{instance_id}")
+
     def run_access(
         self,
         action: str,
