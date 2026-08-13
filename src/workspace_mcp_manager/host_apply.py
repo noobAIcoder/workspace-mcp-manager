@@ -1276,6 +1276,12 @@ class HostExecutionBridge:
     def run_git(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(["_runtime", "git", instance_id], unit_fragment=f"git-{instance_id}")
 
+    def run_diagnose(self, instance_id: str, *, since_seconds: int = 900) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "diagnose", instance_id, "--since-seconds", str(since_seconds)],
+            unit_fragment=f"diagnose-{instance_id}",
+        )
+
     def run_codex_start(self, mode: str, instance_id: str, *, prompt: str) -> dict[str, Any]:
         if mode not in {"read", "write"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported Codex mode: {mode}")

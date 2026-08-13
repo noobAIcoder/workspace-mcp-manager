@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 from .access import AccessManager
 from .codex_jobs import CodexJobManager
+from .diagnostics import DEFAULT_SINCE_SECONDS, ResilienceDiagnosticService
 from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
@@ -98,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     git_cmd.add_argument("instance_id")
     git_cmd.add_argument("--pretty", action="store_true")
 
+    diagnose_cmd = instance_sub.add_parser("diagnose")
+    diagnose_cmd.add_argument("instance_id")
+    diagnose_cmd.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
+    diagnose_cmd.add_argument("--pretty", action="store_true")
+
     for command in ("apply", "start", "stop", "restart", "remove"):
         item = instance_sub.add_parser(command)
         item.add_argument("instance_id")
@@ -164,6 +170,9 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs.add_argument("--lines", type=int, default=100)
     runtime_git = runtime_sub.add_parser("git")
     runtime_git.add_argument("instance_id")
+    runtime_diagnose = runtime_sub.add_parser("diagnose")
+    runtime_diagnose.add_argument("instance_id")
+    runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
     runtime_access = runtime_sub.add_parser("access")
     runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove"))
     runtime_access.add_argument("instance_id")
@@ -235,6 +244,8 @@ def _run_instance(
         return bridge.run_logs(args.instance_id, lines=args.lines)
     if args.command == "git":
         return bridge.run_git(args.instance_id)
+    if args.command == "diagnose":
+        return bridge.run_diagnose(args.instance_id, since_seconds=args.since_seconds)
     if args.command in {"apply", "start", "stop", "restart", "remove"}:
         return bridge.run_lifecycle(args.command, args.instance_id)
     raise AssertionError(args.command)
@@ -369,6 +380,8 @@ def _run_runtime(
         return HostInstanceStatusService(paths, registry).logs(args.instance_id, lines=args.lines)
     if args.command == "git":
         return GitDiagnosticService(paths).run(desired)
+    if args.command == "diagnose":
+        return ResilienceDiagnosticService(paths).run(desired, since_seconds=args.since_seconds)
     if args.command == "lifecycle":
         return HostLifecycleWorker(paths, registry).run(args.action, args.instance_id)
     raise AssertionError(args.command)

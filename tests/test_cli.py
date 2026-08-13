@@ -60,6 +60,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))
         self.assertTrue(args.pretty)
 
+    def test_instance_diagnose_command_parses_p12_window(self) -> None:
+        args = build_parser().parse_args(
+            ["instance", "diagnose", "manager-qual", "--since-seconds", "321", "--pretty"]
+        )
+        self.assertEqual((args.area, args.command, args.instance_id), ("instance", "diagnose", "manager-qual"))
+        self.assertEqual(args.since_seconds, 321)
+        self.assertTrue(args.pretty)
+
     def test_codex_command_surface_parses_p10_operations(self) -> None:
         parser = build_parser()
         started = parser.parse_args(

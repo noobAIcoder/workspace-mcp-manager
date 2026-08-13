@@ -128,15 +128,18 @@ class CliHostBoundaryTests(unittest.TestCase):
                 bridge.run_show.return_value = {"ok": True, "instance_id": "sample"}
                 bridge.run_render.return_value = {"ok": True, "instance_id": "sample", "resources": []}
                 bridge.run_git.return_value = {"ok": True, "instance_id": "sample", "repository": {"present": True}}
+                bridge.run_diagnose.return_value = {"ok": True, "instance_id": "sample", "snapshot": {}}
                 with redirect_stdout(StringIO()):
                     self.assertEqual(main(["instance", "list"]), 0)
                     self.assertEqual(main(["instance", "show", "sample"]), 0)
                     self.assertEqual(main(["instance", "render", "sample"]), 0)
                     self.assertEqual(main(["instance", "git", "sample"]), 0)
+                    self.assertEqual(main(["instance", "diagnose", "sample", "--since-seconds", "77"]), 0)
                 bridge.run_list.assert_called_once_with()
                 bridge.run_show.assert_called_once_with("sample")
                 bridge.run_render.assert_called_once_with("sample", include_content=False)
                 bridge.run_git.assert_called_once_with("sample")
+                bridge.run_diagnose.assert_called_once_with("sample", since_seconds=77)
 
     def test_public_codex_commands_use_host_bridge_and_prompt_stdin_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
