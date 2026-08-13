@@ -37,6 +37,12 @@ through the host boundary, generated user-systemd units mount sources under
 applied-state evidence, and both namespace preflight and live plugin enforcement
 are qualified on `manager-qual`.
 
+P9 adds non-mutating per-instance Git/GitHub diagnostics through the same host
+boundary. The manager detects the repository and working-tree state, probes a
+configured remote with `ls-remote`, diagnoses Git identity and GitHub CLI auth,
+forces the real account HOME for credential resolution, and uses the same
+configured execution PATH rendered into the MCP service.
+
 ## Run from source
 
 ```sh
@@ -80,6 +86,7 @@ workspace-mcp-manager instance render <id>
 workspace-mcp-manager instance plan <id>
 workspace-mcp-manager instance status <id>
 workspace-mcp-manager instance logs <id>
+workspace-mcp-manager instance git <id>
 workspace-mcp-manager instance apply <id>
 workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
@@ -100,8 +107,7 @@ P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-P7 and P8 are complete and live-qualified. P9 remains out of scope until the
-next execution session explicitly begins it.
+P7, P8, and P9 are complete and live-qualified. P10 is the next gate.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
