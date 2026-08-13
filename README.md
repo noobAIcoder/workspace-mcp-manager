@@ -83,6 +83,17 @@ on WSL before checkpoint creation or sudo/systemctl execution. A future optional
 Windows-side listener may provide WSL restart without enabling WSL interop.
 Native-Linux physical reboot remains a separate host acceptance gate.
 
+P14 replaces the legacy cleanup toggle with an explicit ownership-gated cleanup
+surface. `cleanup audit` is read-only and recognizes legacy
+`workspace-mcp` configs, tunnel profiles, MCP/tunnel user units, per-instance
+launchers, and bounded legacy state logs. `cleanup execute <id>` requires one
+explicit target, revalidates every ownership marker immediately before mutation,
+stops/disables only the exact legacy units, removes only proven per-instance
+residue, and preserves shared binaries plus credential/runtime files. Live WSL
+qualification used only the synthetic `p14-legacy-qual` instance and proved the
+existing `leadbot`, `manager`, and `wsl-reconcile` legacy deployments remained
+unchanged.
+
 ## Run from source
 
 ```sh
@@ -122,6 +133,9 @@ workspace-mcp-manager host reboot-check
 workspace-mcp-reboot --check
 workspace-mcp-reboot
 
+workspace-mcp-manager cleanup audit [<legacy-id>]
+workspace-mcp-manager cleanup execute <legacy-id>
+
 workspace-mcp-manager instance validate <file>
 workspace-mcp-manager instance create <file>
 workspace-mcp-manager instance update <file>
@@ -157,7 +171,9 @@ editing.
 P7 through P12 are complete and live-qualified. P13 implementation and pure
 verification are complete. Its WSL platform gate is qualified to fail closed as
 unsupported; WSL restart is deferred. Native-Linux physical reboot acceptance
-has not yet been run for the greenfield manager. P14 has not started.
+has not yet been run for the greenfield manager. P14 implementation, pure
+verification, and synthetic WSL legacy-cleanup qualification are complete. P15
+has not started.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
