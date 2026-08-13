@@ -43,6 +43,14 @@ configured remote with `ls-remote`, diagnoses Git identity and GitHub CLI auth,
 forces the real account HOME for credential resolution, and uses the same
 configured execution PATH rendered into the MCP service.
 
+P10 implements durable detached Codex jobs through transient user-systemd
+workers. Jobs resolve Codex only from the instance's declared MCP execution
+PATH, preserve read-only/workspace-write modes, persist request/status/result
+and separate stdout/stderr logs, support bounded output and cancellation, and
+survive the initiating MCP request. P10 implementation/pure verification is
+complete; live WSL qualification remains blocked until the externally managed
+standalone Codex payload is restored.
+
 ## Run from source
 
 ```sh
@@ -97,6 +105,11 @@ workspace-mcp-manager access list <id>
 workspace-mcp-manager access add-ro <id> <alias> <path>
 workspace-mcp-manager access add-rw <id> <alias> <path>
 workspace-mcp-manager access remove <id> <alias>
+
+workspace-mcp-manager codex start <id> --mode read|write (--prompt <text> | --prompt-stdin)
+workspace-mcp-manager codex status <id> <job-id>
+workspace-mcp-manager codex output <id> <job-id> [--limit-bytes N]
+workspace-mcp-manager codex cancel <id> <job-id>
 ```
 
 `plan` remains explicitly non-mutating. Lifecycle mutations execute through the
@@ -107,7 +120,9 @@ P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-P7, P8, and P9 are complete and live-qualified. P10 is the next gate.
+P7, P8, and P9 are complete and live-qualified. P10 implementation is complete
+and pushed, but the P10 live gate is blocked by the missing WSL standalone
+Codex payload. P11 remains out of scope until P10 live qualification passes.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
