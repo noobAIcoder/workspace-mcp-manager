@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .access import stale_applied_access_resources
+from .admission_recovery import stale_applied_guard_resources
 from .domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from .errors import ErrorCode, ManagerError
 from .generation import GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
@@ -35,6 +36,7 @@ RUNTIME_STATE_FILES = frozenset({
     "tunnel.log",
     "tunnel-supervisor.log",
     "admission-guard.log",
+    "admission-recovery.json",
 })
 
 
@@ -640,6 +642,10 @@ class HostApplyService:
         by_id = {resource.resource_id: resource for resource in bundle.resources}
         for resource in stale_applied_access_resources(self.paths, desired, bundle):
             by_id.setdefault(resource.resource_id, resource)
+        stale_guard_resources = stale_applied_guard_resources(self.paths, desired, bundle)
+        for resource in stale_guard_resources:
+            by_id.setdefault(resource.resource_id, resource)
+        stale_guard_ids = {resource.resource_id for resource in stale_guard_resources}
         operations = list(plan.operations)
         present = desired.lifecycle.deployment is DeploymentTarget.PRESENT
 
@@ -695,10 +701,29 @@ class HostApplyService:
                         rollback.started_units.append(unit)
                     self._record(journal, journal_path, "FORCE_RESTART", unit)
 
+            stale_guard_ops = [item for item in operations if item.resource_id in stale_guard_ids]
+            for item in self._ordered_unit_ops(stale_guard_ops, {PlanOperation.STOP}, start_order=False):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
+                self.systemd.stop(item.target)
+                self._record(journal, journal_path, item.operation.value, item.target)
+            for item in self._ordered_unit_ops(stale_guard_ops, {PlanOperation.DISABLE}, start_order=False):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
+                self.systemd.disable(item.target)
+                self._record(journal, journal_path, item.operation.value, item.target)
+
             remove_ops = [item for item in operations if item.operation is PlanOperation.REMOVE]
             if remove_ops:
                 self._validate_destructive_operations(remove_ops, by_id)
+                unit_file_removed = any(
+                    item.resource_id in by_id
+                    and by_id[item.resource_id].kind is ResourceKind.SYSTEMD_UNIT
+                    for item in remove_ops
+                )
                 self._remove_resource_operations(remove_ops, by_id, rollback, journal, journal_path)
+                if unit_file_removed:
+                    self._attempt(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
+                    self.systemd.daemon_reload()
+                    self._record(journal, journal_path, "DAEMON_RELOAD", "systemd --user")
         else:
             # Re-verify destructive ownership and residual contents immediately
             # before the first stop/disable/remove mutation.

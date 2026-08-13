@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .access import stale_applied_access_resources
+from .admission_recovery import stale_applied_guard_resources
 from .domain import DeploymentTarget, DesiredInstance, RuntimeTarget
 from .errors import ManagerError
 from .generation import OWNER_PREFIX, GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
@@ -721,6 +722,84 @@ class ReconciliationPlanner:
                 )
         return operations
 
+    def _stale_guard_operations(
+        self,
+        desired: DesiredInstance,
+        bundle: GeneratedBundle,
+    ) -> list[PlanItem]:
+        try:
+            resources = stale_applied_guard_resources(self.paths, desired, bundle)
+        except ManagerError as exc:
+            return [
+                PlanItem(
+                    PlanOperation.CONFLICT,
+                    str(self.paths.state_root / "applied" / f"{desired.instance_id.value}.json"),
+                    exc.message,
+                    resource_id="admission-guard-ownership",
+                )
+            ]
+        operations: list[PlanItem] = []
+        for resource in resources:
+            observation = self.observer.observe_resource(resource)
+            if observation.status is ObservationStatus.ABSENT:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.NOOP,
+                        resource.path,
+                        "obsolete admission-guard resource is already absent",
+                        resource.resource_id,
+                    )
+                )
+                continue
+            if observation.status is not ObservationStatus.EXACT:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.CONFLICT,
+                        resource.path,
+                        f"obsolete admission-guard resource cannot be safely removed: {observation.detail}",
+                        resource.resource_id,
+                    )
+                )
+                continue
+            if not resource.unit_name:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.CONFLICT,
+                        resource.path,
+                        "obsolete admission-guard resource has no systemd unit identity",
+                        resource.resource_id,
+                    )
+                )
+                continue
+            unit = self.observer.observe_unit(resource.unit_name)
+            if unit.active:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.STOP,
+                        resource.unit_name,
+                        "obsolete admission-guard unit must stop before removal",
+                        resource.resource_id,
+                    )
+                )
+            if unit.enabled:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.DISABLE,
+                        resource.unit_name,
+                        "obsolete admission-guard unit must be disabled before removal",
+                        resource.resource_id,
+                    )
+                )
+            operations.append(
+                PlanItem(
+                    PlanOperation.REMOVE,
+                    resource.path,
+                    "obsolete manager-owned admission-guard resource must be removed",
+                    resource.resource_id,
+                )
+            )
+        return operations
+
     def _unit_operations(
         self,
         desired: DesiredInstance,
@@ -778,25 +857,19 @@ class ReconciliationPlanner:
             operations.extend(self._host_preconditions(desired))
             operations.extend(self._managed_host_conflicts(desired))
             operations.extend(self._listener_conflicts(desired, bundle))
-            if desired.recovery.admission_guard_enabled:
-                operations.append(
-                    PlanItem(
-                        PlanOperation.CONFLICT,
-                        "recovery.admission_guard_enabled",
-                        "admission recovery runtime is intentionally deferred to P11",
-                        resource_id="admission-guard-runtime",
-                    )
-                )
         file_ops, changed = self._file_operations(desired, bundle)
         stale_access_ops = self._stale_access_operations(desired, bundle)
+        stale_guard_ops = self._stale_guard_operations(desired, bundle)
         unit_ops = self._unit_operations(desired, bundle, changed)
         if desired.lifecycle.deployment is DeploymentTarget.PRESENT:
             operations.extend(file_ops)
             operations.extend(unit_ops)
+            operations.extend(stale_guard_ops)
             operations.extend(stale_access_ops)
         else:
             operations.extend(unit_ops)
             operations.extend(file_ops)
+            operations.extend(stale_guard_ops)
             operations.extend(stale_access_ops)
         warnings: list[str] = []
         valid = not any(item.operation is PlanOperation.CONFLICT for item in operations)

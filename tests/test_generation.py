@@ -87,9 +87,14 @@ class GenerationTests(unittest.TestCase):
             root = Path(temp)
             raw = sample_instance()
             desired = DesiredInstance.from_dict(raw)
-            enabled = {item.resource_id for item in ResourceGenerator(self._paths(root)).generate(desired).resources}
+            generated = ResourceGenerator(self._paths(root)).generate(desired).resources
+            enabled = {item.resource_id for item in generated}
             self.assertIn("admission-guard-unit", enabled)
             self.assertIn("admission-guard-timer", enabled)
+            timer = next(item.content or "" for item in generated if item.resource_id == "admission-guard-timer")
+            self.assertIn("OnBootSec=30s", timer)
+            self.assertIn("OnUnitActiveSec=30s", timer)
+            self.assertIn("AccuracySec=1s", timer)
             raw["recovery"]["admission_guard_enabled"] = False
             desired = DesiredInstance.from_dict(raw)
             disabled = {item.resource_id for item in ResourceGenerator(self._paths(root)).generate(desired).resources}

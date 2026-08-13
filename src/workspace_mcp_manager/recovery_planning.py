@@ -17,6 +17,7 @@ RUNTIME_STATE_FILES = frozenset(
         "tunnel.log",
         "tunnel-supervisor.log",
         "admission-guard.log",
+        "admission-recovery.json",
     }
 )
 

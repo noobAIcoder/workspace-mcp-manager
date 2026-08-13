@@ -87,5 +87,26 @@ class P10QualificationScriptTests(unittest.TestCase):
         self.assertIn('P10_WSL_QUALIFICATION=PASS', text)
 
 
+class P11QualificationScriptTests(unittest.TestCase):
+    def test_p11_harness_requires_exact_signature_and_timer_recovery(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p11_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('OnUnitActiveSec=30s', text)
+        self.assertIn('maximum HTTP session count reached', text)
+        self.assertIn('exc.code == 503', text)
+        self.assertIn('The timer, not this script, must perform the first recovery.', text)
+        self.assertIn('restart_attempt_count', text)
+        self.assertIn('cooldown_suppression_count', text)
+
+    def test_p11_harness_restores_baseline_and_checks_noop(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p11_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('instance update "$BASELINE"', text)
+        self.assertIn('P11 qualification changed the final desired fingerprint', text)
+        self.assertIn('final P11 plan is not NOOP', text)
+        self.assertIn('guard timer remains after disabling P11', text)
+        self.assertIn('P11_WSL_QUALIFICATION=PASS', text)
+
+
 if __name__ == "__main__":
     unittest.main()

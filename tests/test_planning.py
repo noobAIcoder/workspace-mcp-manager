@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import unittest
 
 from workspace_mcp_manager.domain import DesiredInstance
@@ -25,9 +26,11 @@ class FakeObserver(HostResourceObserver):
         self,
         statuses: dict[str, ObservationStatus] | None = None,
         identities: list[dict[str, str]] | None = None,
+        units: dict[str, UnitObservation] | None = None,
     ) -> None:
         self.statuses = statuses or {}
         self.identities = identities or []
+        self.units = units or {}
 
     def observe_resource(self, resource):  # type: ignore[override]
         status = self.statuses.get(resource.resource_id, ObservationStatus.ABSENT)
@@ -44,7 +47,7 @@ class FakeObserver(HostResourceObserver):
         return ResourceObservation(ObservationStatus.EXACT, "exact")
 
     def observe_unit(self, unit_name: str) -> UnitObservation:
-        return UnitObservation(False, False, False)
+        return self.units.get(unit_name, UnitObservation(False, False, False))
 
     def listeners(self) -> set[str]:
         return set()
@@ -87,7 +90,7 @@ class PlanningTests(unittest.TestCase):
             self.assertIn(PlanOperation.ENABLE, operations)
             self.assertIn(PlanOperation.START, operations)
 
-    def test_admission_guard_runtime_is_gated_until_p11(self) -> None:
+    def test_admission_guard_runtime_is_available_in_p11(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)
             paths = self._paths(root)
@@ -95,13 +98,117 @@ class PlanningTests(unittest.TestCase):
             registry = InstanceRegistry(paths.registry_dir)
             registry.create(desired)
             plan = ReconciliationPlanner(paths, registry, observer=FakeObserver()).plan(desired)
+            self.assertTrue(plan.valid)
+            self.assertFalse(any(item.resource_id == "admission-guard-runtime" for item in plan.operations))
+
+    def test_disabling_applied_guard_plans_stop_disable_and_remove(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = self._paths(root)
+            enabled = DesiredInstance.from_dict(sample_instance())
+            generator = ResourceGenerator(paths)
+            guard_resources = [
+                resource
+                for resource in generator.generate(enabled).resources
+                if resource.resource_id in {"admission-guard-unit", "admission-guard-timer"}
+            ]
+            paths.user_unit_dir.mkdir(parents=True, exist_ok=True)
+            for resource in guard_resources:
+                Path(resource.path).write_text(resource.content or "", encoding="utf-8")
+                Path(resource.path).chmod(resource.mode)
+            applied = paths.state_root / "applied/sample.json"
+            applied.parent.mkdir(parents=True, exist_ok=True)
+            applied.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "instance_id": "sample",
+                        "owned_resources": [
+                            {
+                                "resource_id": resource.resource_id,
+                                "kind": resource.kind.value,
+                                "path": resource.path,
+                                "fingerprint": resource.fingerprint(),
+                            }
+                            for resource in guard_resources
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            raw = sample_instance()
+            raw["recovery"]["admission_guard_enabled"] = False
+            disabled = DesiredInstance.from_dict(raw)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(disabled)
+            statuses = {resource.resource_id: ObservationStatus.EXACT for resource in guard_resources}
+            units = {
+                resource.unit_name: UnitObservation(True, True, True)
+                for resource in guard_resources
+                if resource.unit_name
+            }
+            plan = ReconciliationPlanner(
+                paths,
+                registry,
+                generator=generator,
+                observer=FakeObserver(statuses=statuses, units=units),
+            ).plan(disabled)
+            self.assertTrue(plan.valid)
+            for resource in guard_resources:
+                operations = {
+                    item.operation
+                    for item in plan.operations
+                    if item.resource_id == resource.resource_id
+                }
+                self.assertEqual(
+                    operations,
+                    {PlanOperation.STOP, PlanOperation.DISABLE, PlanOperation.REMOVE},
+                )
+
+    def test_modified_applied_guard_fails_closed_on_disable(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = self._paths(root)
+            enabled = DesiredInstance.from_dict(sample_instance())
+            generator = ResourceGenerator(paths)
+            resource = next(
+                item
+                for item in generator.generate(enabled).resources
+                if item.resource_id == "admission-guard-unit"
+            )
+            path = Path(resource.path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text((resource.content or "") + "# modified\n", encoding="utf-8")
+            path.chmod(resource.mode)
+            applied = paths.state_root / "applied/sample.json"
+            applied.parent.mkdir(parents=True, exist_ok=True)
+            applied.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "instance_id": "sample",
+                        "owned_resources": [
+                            {
+                                "resource_id": resource.resource_id,
+                                "kind": resource.kind.value,
+                                "path": resource.path,
+                                "fingerprint": resource.fingerprint(),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            raw = sample_instance()
+            raw["recovery"]["admission_guard_enabled"] = False
+            disabled = DesiredInstance.from_dict(raw)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(disabled)
+            plan = ReconciliationPlanner(paths, registry, generator=generator, observer=FakeObserver()).plan(disabled)
             self.assertFalse(plan.valid)
             self.assertTrue(
-                any(
-                    item.resource_id == "admission-guard-runtime"
-                    and "deferred to P11" in item.reason
-                    for item in plan.operations
-                )
+                any(item.resource_id == "admission-guard-ownership" for item in plan.operations)
             )
 
     def test_foreign_resource_is_conflict(self) -> None:
