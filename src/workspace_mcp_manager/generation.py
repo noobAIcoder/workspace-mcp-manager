@@ -202,8 +202,9 @@ class ResourceGenerator:
         ]
         for folder, read_only in folders:
             directive = "BindReadOnlyPaths" if read_only else "BindPaths"
-            definition = f"{folder.path}:{access_root / folder.alias}:rbind"
-            access_lines.append(f"{directive}={systemd_quote(definition)}")
+            source = systemd_path(folder.path)
+            target = systemd_path(str(access_root / folder.alias))
+            access_lines.append(f"{directive}={source}:{target}:rbind")
         if access_lines:
             environment_lines.append("PrivateUsers=true")
             environment_lines.extend(access_lines)

@@ -38,8 +38,16 @@ class GenerationTests(unittest.TestCase):
             self.assertIn("Restart=on-failure", mcp)
             self.assertIn("KillMode=mixed", mcp)
             self.assertIn("PrivateUsers=true", mcp)
-            self.assertIn("BindReadOnlyPaths=", mcp)
-            self.assertIn("BindPaths=", mcp)
+            self.assertIn(
+                "BindReadOnlyPaths=/srv/shared/docs:/srv/workspaces/sample/.workspace-mcp-access/docs:rbind",
+                mcp,
+            )
+            self.assertIn(
+                "BindPaths=/srv/shared/scratch:/srv/workspaces/sample/.workspace-mcp-access/scratch_rw:rbind",
+                mcp,
+            )
+            self.assertNotIn('BindReadOnlyPaths="', mcp)
+            self.assertNotIn('BindPaths="', mcp)
             self.assertIn("CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS=", mcp)
             self.assertIn("GH_CONFIG_DIR=", mcp)
             self.assertIn("Requires=coding-tools-mcp-sample.service", tunnel)
