@@ -59,6 +59,16 @@ only the local MCP unit when HTTP 503 carries the exact JSON-RPC error message
 `manager-qual` qualified the exact-signature restart, dependent tunnel recovery,
 cooldown suppression, and reversible guard enable/disable lifecycle.
 
+P12 adds persisted non-mutating resilience snapshots. `instance diagnose`
+captures separate MCP/tunnel service, process, cgroup and memory evidence;
+host meminfo/PSI; current MCP discovery/initialize with session cleanup; current
+tunnel health/readiness; and time-windowed structured tunnel-log evidence. It
+keeps local MCP 5xx, tunnel control-plane 5xx/poll timeout, process-restart, and
+memory-pressure classifications in explicit independent incident domains.
+Controlled live qualification on `manager-qual` proved current healthy evidence,
+retained real poll-timeout history, local MCP saturation classification without
+service restart, snapshot redaction/persistence, and final NOOP convergence.
+
 ## Run from source
 
 ```sh
@@ -103,6 +113,7 @@ workspace-mcp-manager instance plan <id>
 workspace-mcp-manager instance status <id>
 workspace-mcp-manager instance logs <id>
 workspace-mcp-manager instance git <id>
+workspace-mcp-manager instance diagnose <id> [--since-seconds N]
 workspace-mcp-manager instance apply <id>
 workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
@@ -124,8 +135,8 @@ workspace-mcp-manager codex cancel <id> <job-id>
 manager's narrow host-worker boundary and never require manual systemd/profile
 editing.
 
-P7, P8, P9, P10, and P11 are complete and live-qualified. P12 remains out of
-scope until its execution session explicitly begins.
+P7, P8, P9, P10, P11, and P12 are complete and live-qualified. P13 remains out
+of scope until its execution session explicitly begins.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
