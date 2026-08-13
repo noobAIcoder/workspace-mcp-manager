@@ -112,5 +112,28 @@ class P11QualificationScriptTests(unittest.TestCase):
         self.assertIn('P11_WSL_QUALIFICATION=PASS', text)
 
 
+class P12QualificationScriptTests(unittest.TestCase):
+    def test_p12_harness_uses_persisted_snapshots_and_real_tunnel_history(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p12_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('instance diagnose "$INSTANCE_ID" --since-seconds "$SHORT_WINDOW"', text)
+        self.assertIn('instance diagnose "$INSTANCE_ID" --since-seconds "$LONG_WINDOW"', text)
+        self.assertIn('tunnel_poll_timeout', text)
+        self.assertIn('long window contains no poll timeout older than short window', text)
+        self.assertNotIn('tunnel.log" >>', text)
+
+    def test_p12_harness_saturates_locally_without_restart_and_cleans_sessions(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p12_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('maximum HTTP session count reached', text)
+        self.assertIn('P12_LOCAL_SATURATION=PASS', text)
+        self.assertIn('local_mcp_5xx', text)
+        self.assertIn('diagnostic restarted MCP', text)
+        self.assertIn('diagnostic restarted tunnel', text)
+        self.assertIn('delete_sessions "$SESSIONS"', text)
+        self.assertIn('final manager plan is not all NOOP', text)
+        self.assertIn('P12_RESILIENCE_DIAGNOSTICS_QUALIFICATION=PASS', text)
+
+
 if __name__ == "__main__":
     unittest.main()
