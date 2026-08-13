@@ -228,6 +228,38 @@ class HostApplyTests(unittest.TestCase):
                     ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],
                     unit_fragment="access-add-ro-qual",
                 )
+                bridge.run_codex_start("read", "qual", prompt="inspect only")
+                run_json.assert_called_with(
+                    ["_runtime", "codex-start", "read", "qual"],
+                    input_text="inspect only",
+                    unit_fragment="codex-read-qual",
+                )
+                bridge.run_codex_status("qual", "20260813T010203Z-abcdef123456")
+                run_json.assert_called_with(
+                    ["_runtime", "codex-status", "qual", "20260813T010203Z-abcdef123456"],
+                    unit_fragment="codex-status-qual",
+                )
+                bridge.run_codex_output(
+                    "qual",
+                    "20260813T010203Z-abcdef123456",
+                    limit_bytes=10,
+                )
+                run_json.assert_called_with(
+                    [
+                        "_runtime",
+                        "codex-output",
+                        "qual",
+                        "20260813T010203Z-abcdef123456",
+                        "--limit-bytes",
+                        "10",
+                    ],
+                    unit_fragment="codex-output-qual",
+                )
+                bridge.run_codex_cancel("qual", "20260813T010203Z-abcdef123456")
+                run_json.assert_called_with(
+                    ["_runtime", "codex-cancel", "qual", "20260813T010203Z-abcdef123456"],
+                    unit_fragment="codex-cancel-qual",
+                )
 
     def test_systemd_start_failure_contains_unit_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

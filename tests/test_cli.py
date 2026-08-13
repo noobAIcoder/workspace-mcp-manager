@@ -60,6 +60,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))
         self.assertTrue(args.pretty)
 
+    def test_codex_command_surface_parses_p10_operations(self) -> None:
+        parser = build_parser()
+        started = parser.parse_args(
+            ["codex", "start", "manager-qual", "--mode", "read", "--prompt", "inspect only", "--pretty"]
+        )
+        self.assertEqual(
+            (started.area, started.command, started.instance_id, started.mode, started.prompt),
+            ("codex", "start", "manager-qual", "read", "inspect only"),
+        )
+        output = parser.parse_args(
+            ["codex", "output", "manager-qual", "20260813T010203Z-abcdef123456", "--limit-bytes", "99"]
+        )
+        self.assertEqual(output.limit_bytes, 99)
+        cancelled = parser.parse_args(
+            ["codex", "cancel", "manager-qual", "20260813T010203Z-abcdef123456"]
+        )
+        self.assertEqual(cancelled.command, "cancel")
+
 
 if __name__ == "__main__":
     unittest.main()

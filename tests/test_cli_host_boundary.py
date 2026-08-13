@@ -138,6 +138,40 @@ class CliHostBoundaryTests(unittest.TestCase):
                 bridge.run_render.assert_called_once_with("sample", include_content=False)
                 bridge.run_git.assert_called_once_with("sample")
 
+    def test_public_codex_commands_use_host_bridge_and_prompt_stdin_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_codex_start.return_value = {"ok": True, "job_id": "job"}
+                bridge.run_codex_status.return_value = {"ok": True, "job_id": "job", "state": "running"}
+                bridge.run_codex_output.return_value = {"ok": True, "job_id": "job", "content": "x"}
+                bridge.run_codex_cancel.return_value = {"ok": True, "job_id": "job", "state": "cancelled"}
+                self.assertEqual(main(["codex", "start", "sample", "--mode", "read", "--prompt", "inspect"]), 0)
+                self.assertEqual(main(["codex", "status", "sample", "job"]), 0)
+                self.assertEqual(main(["codex", "output", "sample", "job", "--limit-bytes", "9"]), 0)
+                self.assertEqual(main(["codex", "cancel", "sample", "job"]), 0)
+            bridge.run_codex_start.assert_called_once_with("read", "sample", prompt="inspect")
+            bridge.run_codex_status.assert_called_once_with("sample", "job")
+            bridge.run_codex_output.assert_called_once_with("sample", "job", limit_bytes=9)
+            bridge.run_codex_cancel.assert_called_once_with("sample", "job")
+
+    def test_codex_worker_runtime_error_remains_process_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            output = StringIO()
+            failure = ManagerError(ErrorCode.IO_ERROR, "synthetic codex worker failure")
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli._run_runtime", side_effect=failure), \
+                 redirect_stderr(output):
+                rc = main(["_runtime", "codex-worker", "sample", "20260813T010203Z-abcdef123456"])
+            self.assertEqual(rc, 2)
+            self.assertEqual(json.loads(output.getvalue())["error"]["code"], "IO_ERROR")
+
 
 if __name__ == "__main__":
     unittest.main()

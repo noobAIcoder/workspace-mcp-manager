@@ -1251,6 +1251,46 @@ class HostExecutionBridge:
     def run_git(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(["_runtime", "git", instance_id], unit_fragment=f"git-{instance_id}")
 
+    def run_codex_start(self, mode: str, instance_id: str, *, prompt: str) -> dict[str, Any]:
+        if mode not in {"read", "write"}:
+            raise ManagerError(ErrorCode.IO_ERROR, f"unsupported Codex mode: {mode}")
+        return self._run_json(
+            ["_runtime", "codex-start", mode, instance_id],
+            input_text=prompt,
+            unit_fragment=f"codex-{mode}-{instance_id}",
+        )
+
+    def run_codex_status(self, instance_id: str, job_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "codex-status", instance_id, job_id],
+            unit_fragment=f"codex-status-{instance_id}",
+        )
+
+    def run_codex_output(
+        self,
+        instance_id: str,
+        job_id: str,
+        *,
+        limit_bytes: int = 4096,
+    ) -> dict[str, Any]:
+        return self._run_json(
+            [
+                "_runtime",
+                "codex-output",
+                instance_id,
+                job_id,
+                "--limit-bytes",
+                str(limit_bytes),
+            ],
+            unit_fragment=f"codex-output-{instance_id}",
+        )
+
+    def run_codex_cancel(self, instance_id: str, job_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "codex-cancel", instance_id, job_id],
+            unit_fragment=f"codex-cancel-{instance_id}",
+        )
+
     def run_access(
         self,
         action: str,

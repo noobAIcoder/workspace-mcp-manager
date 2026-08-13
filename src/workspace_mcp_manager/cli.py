@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .access import AccessManager
+from .codex_jobs import CodexJobManager
 from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
@@ -102,6 +103,29 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("instance_id")
         item.add_argument("--pretty", action="store_true")
 
+    codex = subparsers.add_parser("codex")
+    codex_sub = codex.add_subparsers(dest="command", required=True)
+    codex_start = codex_sub.add_parser("start")
+    codex_start.add_argument("instance_id")
+    codex_start.add_argument("--mode", choices=("read", "write"), required=True)
+    prompt_group = codex_start.add_mutually_exclusive_group(required=True)
+    prompt_group.add_argument("--prompt")
+    prompt_group.add_argument("--prompt-stdin", action="store_true")
+    codex_start.add_argument("--pretty", action="store_true")
+    codex_status = codex_sub.add_parser("status")
+    codex_status.add_argument("instance_id")
+    codex_status.add_argument("job_id")
+    codex_status.add_argument("--pretty", action="store_true")
+    codex_output = codex_sub.add_parser("output")
+    codex_output.add_argument("instance_id")
+    codex_output.add_argument("job_id")
+    codex_output.add_argument("--limit-bytes", type=int, default=4096)
+    codex_output.add_argument("--pretty", action="store_true")
+    codex_cancel = codex_sub.add_parser("cancel")
+    codex_cancel.add_argument("instance_id")
+    codex_cancel.add_argument("job_id")
+    codex_cancel.add_argument("--pretty", action="store_true")
+
     access = subparsers.add_parser("access")
     access_sub = access.add_subparsers(dest="command", required=True)
     access_list = access_sub.add_parser("list")
@@ -145,6 +169,22 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_access.add_argument("instance_id")
     runtime_access.add_argument("alias", nargs="?")
     runtime_access.add_argument("path", nargs="?")
+    runtime_codex_start = runtime_sub.add_parser("codex-start")
+    runtime_codex_start.add_argument("mode", choices=("read", "write"))
+    runtime_codex_start.add_argument("instance_id")
+    runtime_codex_status = runtime_sub.add_parser("codex-status")
+    runtime_codex_status.add_argument("instance_id")
+    runtime_codex_status.add_argument("job_id")
+    runtime_codex_output = runtime_sub.add_parser("codex-output")
+    runtime_codex_output.add_argument("instance_id")
+    runtime_codex_output.add_argument("job_id")
+    runtime_codex_output.add_argument("--limit-bytes", type=int, default=4096)
+    runtime_codex_cancel = runtime_sub.add_parser("codex-cancel")
+    runtime_codex_cancel.add_argument("instance_id")
+    runtime_codex_cancel.add_argument("job_id")
+    runtime_codex_worker = runtime_sub.add_parser("codex-worker")
+    runtime_codex_worker.add_argument("instance_id")
+    runtime_codex_worker.add_argument("job_id")
     runtime_lifecycle = runtime_sub.add_parser("lifecycle")
     runtime_lifecycle.add_argument("action", choices=("apply", "start", "stop", "restart", "remove"))
     runtime_lifecycle.add_argument("instance_id")
@@ -210,6 +250,24 @@ def _run_access(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]
     )
 
 
+def _run_codex(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
+    bridge = HostExecutionBridge(paths)
+    if args.command == "start":
+        prompt = args.prompt if args.prompt is not None else sys.stdin.read()
+        return bridge.run_codex_start(args.mode, args.instance_id, prompt=prompt)
+    if args.command == "status":
+        return bridge.run_codex_status(args.instance_id, args.job_id)
+    if args.command == "output":
+        return bridge.run_codex_output(
+            args.instance_id,
+            args.job_id,
+            limit_bytes=args.limit_bytes,
+        )
+    if args.command == "cancel":
+        return bridge.run_codex_cancel(args.instance_id, args.job_id)
+    raise AssertionError(args.command)
+
+
 def _run_runtime(
     args: argparse.Namespace,
     registry: InstanceRegistry,
@@ -272,6 +330,26 @@ def _run_runtime(
             return access.remove(args.instance_id, alias=args.alias)
         raise AssertionError(args.action)
 
+    if args.command == "codex-start":
+        return CodexJobManager(paths, registry).start(
+            args.instance_id,
+            mode=args.mode,
+            prompt=sys.stdin.read(),
+        )
+    if args.command == "codex-status":
+        return CodexJobManager(paths, registry).status(args.instance_id, args.job_id)
+    if args.command == "codex-output":
+        return CodexJobManager(paths, registry).output(
+            args.instance_id,
+            args.job_id,
+            limit_bytes=args.limit_bytes,
+        )
+    if args.command == "codex-cancel":
+        return CodexJobManager(paths, registry).cancel(args.instance_id, args.job_id)
+    if args.command == "codex-worker":
+        CodexJobManager(paths, registry).run_worker(args.instance_id, args.job_id)
+        return None
+
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":
         run_tunnel(desired, paths)
@@ -306,6 +384,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = _run_host(args, paths)
         elif args.area == "access":
             payload = _run_access(args, paths)
+        elif args.area == "codex":
+            payload = _run_codex(args, paths)
         elif args.area == "_runtime":
             payload = _run_runtime(args, registry, paths)
             if payload is None:
@@ -323,7 +403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ManagerError as exc:
         runtime_json_transport = (
             getattr(args, "area", None) == "_runtime"
-            and getattr(args, "command", None) not in {"tunnel", "admission-guard"}
+            and getattr(args, "command", None) not in {"tunnel", "admission-guard", "codex-worker"}
         )
         if runtime_json_transport:
             # ManagerError from a JSON worker is a semantic result, not a
