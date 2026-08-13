@@ -105,6 +105,32 @@ class CliTests(unittest.TestCase):
         self.assertEqual((execute.area, execute.command, execute.instance_id), ("cleanup", "execute", "legacy-qual"))
         self.assertTrue(execute.pretty)
 
+    def test_host_tools_command_surface_parses_p15_audits(self) -> None:
+        parser = build_parser()
+        audit = parser.parse_args(["host", "tools", "audit", "--pretty"])
+        self.assertEqual((audit.area, audit.command, audit.tool_action), ("host", "tools", "audit"))
+        agents = parser.parse_args(["host", "tools", "agents", "audit"])
+        self.assertEqual((agents.tool_action, agents.action), ("agents", "audit"))
+
+    def test_host_tools_command_surface_parses_p15_codex_and_gh(self) -> None:
+        parser = build_parser()
+        codex = parser.parse_args(
+            [
+                "host",
+                "tools",
+                "codex",
+                "--node-root",
+                "/home/operator/.nvm/versions/node/v24.15.0",
+                "--version",
+                "0.147.0",
+            ]
+        )
+        self.assertEqual((codex.tool_action, codex.version), ("codex", "0.147.0"))
+        gh = parser.parse_args(
+            ["host", "tools", "gh", "--source", "/tmp/gh", "--sha256", "a" * 64]
+        )
+        self.assertEqual((gh.tool_action, gh.source, gh.sha256), ("gh", "/tmp/gh", "a" * 64))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -156,6 +156,21 @@ class P14QualificationScriptTests(unittest.TestCase):
         self.assertIn('ops[:4] == ["STOP", "STOP", "DISABLE", "DISABLE"]', text)
 
 
+class P15QualificationScriptTests(unittest.TestCase):
+    def test_p15_harness_has_isolated_toolkit_and_final_gates(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p15_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn("P15_REAL_TOOLKIT_CHECK=PASS", text)
+        self.assertIn("P15_TOOLKIT_INITIAL_INSTALL=PASS", text)
+        self.assertIn("P15_TOOLKIT_NOOP=PASS", text)
+        self.assertIn("P15_TOOLKIT_ATOMIC_SWITCH=PASS", text)
+        self.assertIn('--prefix "$ISO_PREFIX"', text)
+        self.assertIn('host tools audit', text)
+        self.assertIn("P15_TOOLING_STATE=PASS", text)
+        self.assertIn("P15_FINAL_CONVERGENCE=PASS", text)
+        self.assertIn("P15_WSL_QUALIFICATION=PASS", text)
+
+
 class P12QualificationScriptTests(unittest.TestCase):
     def test_p12_harness_uses_persisted_snapshots_and_real_tunnel_history(self) -> None:
         root = Path(__file__).resolve().parents[1]

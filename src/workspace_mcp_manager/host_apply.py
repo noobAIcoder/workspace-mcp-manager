@@ -1282,6 +1282,15 @@ class HostExecutionBridge:
             unit_fragment=f"diagnose-{instance_id}",
         )
 
+    def run_tooling(self, runtime_args: Sequence[str], *, unit_fragment: str) -> dict[str, Any]:
+        if (
+            len(runtime_args) < 2
+            or runtime_args[0] != "_runtime"
+            or not runtime_args[1].startswith("tools-")
+        ):
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "invalid tooling host-boundary request")
+        return self._run_json(list(runtime_args), unit_fragment=unit_fragment)
+
     def run_reboot(self, *, reason: str) -> dict[str, Any]:
         return self._run_json(
             ["_runtime", "reboot-request"],

@@ -25,6 +25,7 @@ from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object
 from .registry import InstanceRegistry
 from .runtime import run_admission_guard, run_tunnel
+from .tooling import ToolingService
 
 
 def _emit(value: Any, *, pretty: bool, stream: Any | None = None) -> None:
@@ -71,6 +72,23 @@ def build_parser() -> argparse.ArgumentParser:
     host_reboot.add_argument("--pretty", action="store_true")
     host_reboot_check = host_sub.add_parser("reboot-check")
     host_reboot_check.add_argument("--pretty", action="store_true")
+    host_tools = host_sub.add_parser("tools")
+    host_tools_sub = host_tools.add_subparsers(dest="tool_action", required=True)
+    host_tools_audit = host_tools_sub.add_parser("audit")
+    host_tools_audit.add_argument("--pretty", action="store_true")
+    host_tools_agents = host_tools_sub.add_parser("agents")
+    host_tools_agents.add_argument("action", choices=("audit", "configure"))
+    host_tools_agents.add_argument("--pretty", action="store_true")
+    host_tools_codex = host_tools_sub.add_parser("codex")
+    host_tools_codex.add_argument("--node-root", required=True)
+    host_tools_codex.add_argument("--version")
+    host_tools_codex.add_argument("--upgrade", action="store_true")
+    host_tools_codex.add_argument("--pretty", action="store_true")
+    host_tools_gh = host_tools_sub.add_parser("gh")
+    host_tools_gh.add_argument("--source")
+    host_tools_gh.add_argument("--sha256")
+    host_tools_gh.add_argument("--upgrade", action="store_true")
+    host_tools_gh.add_argument("--pretty", action="store_true")
 
     instance = subparsers.add_parser("instance")
     instance_sub = instance.add_subparsers(dest="command", required=True)
@@ -191,6 +209,17 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_cleanup.add_argument("instance_id", nargs="?")
     runtime_sub.add_parser("reboot-request")
     runtime_sub.add_parser("reboot-check")
+    runtime_sub.add_parser("tools-audit")
+    runtime_tools_agents = runtime_sub.add_parser("tools-agents")
+    runtime_tools_agents.add_argument("action", choices=("audit", "configure"))
+    runtime_tools_codex = runtime_sub.add_parser("tools-codex")
+    runtime_tools_codex.add_argument("node_root")
+    runtime_tools_codex.add_argument("--version")
+    runtime_tools_codex.add_argument("--upgrade", action="store_true")
+    runtime_tools_gh = runtime_sub.add_parser("tools-gh")
+    runtime_tools_gh.add_argument("--source")
+    runtime_tools_gh.add_argument("--sha256")
+    runtime_tools_gh.add_argument("--upgrade", action="store_true")
     runtime_diagnose = runtime_sub.add_parser("diagnose")
     runtime_diagnose.add_argument("instance_id")
     runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
@@ -226,6 +255,32 @@ def _run_host(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
         return HostExecutionBridge(paths).run_reboot(reason=args.reason)
     if args.command == "reboot-check":
         return HostExecutionBridge(paths).run_reboot_check()
+    if args.command == "tools":
+        bridge = HostExecutionBridge(paths)
+        if args.tool_action == "audit":
+            return bridge.run_tooling(["_runtime", "tools-audit"], unit_fragment="tools-audit")
+        if args.tool_action == "agents":
+            return bridge.run_tooling(
+                ["_runtime", "tools-agents", args.action],
+                unit_fragment=f"tools-agents-{args.action}",
+            )
+        if args.tool_action == "codex":
+            runtime_args = ["_runtime", "tools-codex", args.node_root]
+            if args.version is not None:
+                runtime_args.extend(["--version", args.version])
+            if args.upgrade:
+                runtime_args.append("--upgrade")
+            return bridge.run_tooling(runtime_args, unit_fragment="tools-codex")
+        if args.tool_action == "gh":
+            runtime_args = ["_runtime", "tools-gh"]
+            if args.source is not None:
+                runtime_args.extend(["--source", args.source])
+            if args.sha256 is not None:
+                runtime_args.extend(["--sha256", args.sha256])
+            if args.upgrade:
+                runtime_args.append("--upgrade")
+            return bridge.run_tooling(runtime_args, unit_fragment="tools-gh")
+        raise AssertionError(args.tool_action)
     inspector = HostInspector(paths)
     if args.command == "inspect":
         return inspector.inspect()
@@ -394,6 +449,19 @@ def _run_runtime(
         return RebootService(paths, registry).request(reason=sys.stdin.read())
     if args.command == "reboot-check":
         return RebootService(paths, registry).check()
+    if args.command == "tools-audit":
+        return ToolingService(paths).audit()
+    if args.command == "tools-agents":
+        service = ToolingService(paths)
+        return service.agents_audit() if args.action == "audit" else service.agents_configure()
+    if args.command == "tools-codex":
+        return ToolingService(paths).codex(
+            node_root=args.node_root,
+            version=args.version,
+            upgrade=args.upgrade,
+        )
+    if args.command == "tools-gh":
+        return ToolingService(paths).gh(source=args.source, sha256=args.sha256, upgrade=args.upgrade)
     if args.command == "cleanup":
         service = LegacyCleanupService(paths, registry)
         if args.action == "audit":

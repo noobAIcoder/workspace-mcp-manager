@@ -156,6 +156,54 @@ class CliHostBoundaryTests(unittest.TestCase):
             bridge.run_reboot.assert_called_once_with(reason="maintenance")
             bridge.run_reboot_check.assert_called_once_with()
 
+    def test_public_host_tools_use_generic_host_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_tooling.return_value = {"ok": True}
+                self.assertEqual(main(["host", "tools", "audit"]), 0)
+                self.assertEqual(main(["host", "tools", "agents", "audit"]), 0)
+                self.assertEqual(
+                    main(
+                        [
+                            "host",
+                            "tools",
+                            "codex",
+                            "--node-root",
+                            "/home/operator/.nvm/versions/node/v24.15.0",
+                            "--version",
+                            "0.147.0",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(main(["host", "tools", "gh"]), 0)
+            self.assertEqual(
+                bridge.run_tooling.call_args_list,
+                [
+                    unittest.mock.call(["_runtime", "tools-audit"], unit_fragment="tools-audit"),
+                    unittest.mock.call(
+                        ["_runtime", "tools-agents", "audit"],
+                        unit_fragment="tools-agents-audit",
+                    ),
+                    unittest.mock.call(
+                        [
+                            "_runtime",
+                            "tools-codex",
+                            "/home/operator/.nvm/versions/node/v24.15.0",
+                            "--version",
+                            "0.147.0",
+                        ],
+                        unit_fragment="tools-codex",
+                    ),
+                    unittest.mock.call(["_runtime", "tools-gh"], unit_fragment="tools-gh"),
+                ],
+            )
+
     def test_public_cleanup_commands_use_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

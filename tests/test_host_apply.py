@@ -236,6 +236,8 @@ class HostApplyTests(unittest.TestCase):
                 )
                 bridge.run_reboot_check()
                 run_json.assert_called_with(["_runtime", "reboot-check"], unit_fragment="reboot-check")
+                bridge.run_tooling(["_runtime", "tools-audit"], unit_fragment="tools-audit")
+                run_json.assert_called_with(["_runtime", "tools-audit"], unit_fragment="tools-audit")
                 bridge.run_cleanup("audit")
                 run_json.assert_called_with(
                     ["_runtime", "cleanup", "audit"],
@@ -251,6 +253,9 @@ class HostApplyTests(unittest.TestCase):
                     ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],
                     unit_fragment="access-add-ro-qual",
                 )
+
+            with self.assertRaisesRegex(ManagerError, "invalid tooling"):
+                bridge.run_tooling(["tools-audit"], unit_fragment="bad")
                 bridge.run_codex_start("read", "qual", prompt="inspect only")
                 run_json.assert_called_with(
                     ["_runtime", "codex-start", "read", "qual"],
