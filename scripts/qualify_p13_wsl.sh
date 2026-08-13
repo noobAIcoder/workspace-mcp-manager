@@ -81,7 +81,7 @@ set +e
 "$MANAGER" host reboot --reason "P13 WSL unsupported-platform qualification" >"$TMP_ROOT/wsl-reboot.json"
 WSL_REBOOT_RC=$?
 set -e
-[ "$WSL_REBOOT_RC" -eq 2 ] || fail "WSL host reboot did not return ManagerError exit 2"
+[ "$WSL_REBOOT_RC" -eq 1 ] || fail "WSL host reboot did not return structured semantic-failure exit 1"
 python3 - "$TMP_ROOT/wsl-reboot.json" <<'PY'
 import json, pathlib, sys
 p = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))

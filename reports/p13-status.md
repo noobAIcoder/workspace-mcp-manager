@@ -76,7 +76,7 @@ deferred and must not require WSL command interop.
 Final host-side source gate after P13 implementation and qualification fixes:
 
 ```text
-Ran 156 tests
+Ran 158 tests
 OK
 
 bash -n scripts/qualify_p13_wsl.sh   PASS
@@ -188,6 +188,30 @@ only because its transient shell did not inherit the NVM Codex PATH. The P10
 smoke now resolves Codex using the instance's declared `mcp.exec_path`.
 
 R3 then passed end-to-end.
+
+### P13-Q3 — WSL support-policy revision
+
+The accepted platform policy was revised after qualification: WSL reboot
+execution is deferred rather than waiting for sudo authorization. P13 now
+detects WSL and rejects both valid bridge forms before sudo/systemctl; public
+`host reboot` rejects WSL before checkpoint creation. The native-Linux
+checkpoint/reconciliation state machine remains exercised with the explicit
+WSL detector disabled only inside isolated integration helpers.
+
+The revised live WSL gate returned:
+
+```text
+P13_REAL_BRIDGE_CHECK_RC=69
+P13_WSL_REBOOT_UNSUPPORTED=PASS
+P13_AUTHORIZATION_FAILURE_PERSISTENCE=PASS
+P13_SYNCHRONOUS_REQUEST_FAILURE_PERSISTENCE=PASS
+P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS
+P13_WSL_REBOOT=DEFERRED
+P13_NATIVE_LINUX_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN
+```
+
+No reboot checkpoint remained after qualification and no WSL restart was
+attempted.
 
 ## Final WSL baseline
 
