@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from workspace_mcp_manager.domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
+from workspace_mcp_manager.access import stale_applied_access_resources
 from workspace_mcp_manager.errors import ErrorCode, ManagerError
 from workspace_mcp_manager.generation import ResourceGenerator
 from workspace_mcp_manager.host_apply import (
@@ -33,6 +34,9 @@ class FakeSystemd:
 
     def verify_generated_units(self, _bundle) -> None:
         self.calls.append(("verify", None))
+
+    def preflight_access_namespace(self, _desired) -> None:
+        self.calls.append(("access-preflight", None))
 
     def daemon_reload(self) -> None:
         self.calls.append(("daemon-reload", None))
@@ -215,6 +219,11 @@ class HostApplyTests(unittest.TestCase):
                 run_json.assert_called_with(["_runtime", "status", "qual"], unit_fragment="status-qual")
                 bridge.run_logs("qual", lines=77)
                 run_json.assert_called_with(["_runtime", "logs", "qual", "--lines", "77"], unit_fragment="logs-qual")
+                bridge.run_access("add-ro", "qual", alias="docs", path="/srv/shared/docs")
+                run_json.assert_called_with(
+                    ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],
+                    unit_fragment="access-add-ro-qual",
+                )
 
     def test_systemd_start_failure_contains_unit_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -566,6 +575,163 @@ class HostApplyTests(unittest.TestCase):
             executed = [item["operation"] for item in persisted["executed"]]
             self.assertEqual(attempted, ["WRITE_APPLIED"])
             self.assertEqual(executed, ["WRITE_APPLIED"])
+
+    def test_access_apply_runs_namespace_preflight_before_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            raw = desired_for(root).to_dict()
+            raw["lifecycle"] = {"deployment": "present", "runtime": "stopped"}
+            raw["access"] = {
+                "read_only": [{"alias": "docs", "path": str(root / "shared-ro")}],
+                "read_write": [{"alias": "scratch", "path": str(root / "shared-rw")}],
+            }
+            (root / "shared-ro").mkdir()
+            (root / "shared-rw").mkdir()
+            desired = DesiredInstance.from_dict(raw)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            plan = ReconciliationPlan(
+                instance_id="qual",
+                desired_fingerprint=desired.fingerprint(),
+                valid=True,
+                operations=(),
+                warnings=(),
+            )
+            systemd = FakeSystemd()
+            service = HostApplyService(
+                paths,
+                registry,
+                planner=StaticPlanner([plan, plan, plan]),
+                generator=ResourceGenerator(paths),
+                systemd=systemd,
+            )
+
+            result = service.apply("qual")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(systemd.calls[:2], [("verify", None), ("access-preflight", None)])
+
+    def test_systemd_access_namespace_preflight_renders_ro_and_rw_binds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            raw = desired_for(root).to_dict()
+            raw["access"] = {
+                "read_only": [{"alias": "docs", "path": str(root / "shared-ro")}],
+                "read_write": [{"alias": "scratch", "path": str(root / "shared-rw")}],
+            }
+            desired = DesiredInstance.from_dict(raw)
+            adapter = SystemdUserAdapter(state_root=paths.state_root)
+            from subprocess import CompletedProcess
+
+            with patch("workspace_mcp_manager.host_apply._run") as run:
+                run.return_value = CompletedProcess([], 0, "", "")
+                adapter.preflight_access_namespace(desired)
+
+            argv = run.call_args.args[0]
+            self.assertIn("--property=PrivateUsers=true", argv)
+            self.assertTrue(any(item.startswith("--property=BindReadOnlyPaths=") for item in argv))
+            self.assertTrue(any(item.startswith("--property=BindPaths=") for item in argv))
+            self.assertEqual(argv[-1], "/usr/bin/true")
+
+    def test_present_apply_removes_stale_access_after_mcp_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            desired = desired_for(root)
+            old_raw = desired.to_dict()
+            old_raw["access"]["read_only"] = [
+                {"alias": "docs", "path": str(root / "shared-ro")}
+            ]
+            old = DesiredInstance.from_dict(old_raw)
+            generator = ResourceGenerator(paths)
+            old_bundle = generator.generate(old)
+            for resource in old_bundle.resources:
+                if not resource.resource_id.startswith("access-"):
+                    continue
+                path = Path(resource.path)
+                if resource.kind.value == "directory":
+                    path.mkdir(parents=True, exist_ok=True, mode=resource.mode)
+                    os.chmod(path, resource.mode)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(resource.content or "", encoding="utf-8")
+                    os.chmod(path, resource.mode)
+
+            applied_path = paths.state_root / "applied/qual.json"
+            applied_path.parent.mkdir(parents=True)
+            applied_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "instance_id": "qual",
+                        "desired_fingerprint": old.fingerprint(),
+                        "owned_resources": [
+                            {
+                                "resource_id": resource.resource_id,
+                                "kind": resource.kind.value,
+                                "path": resource.path,
+                                "fingerprint": resource.fingerprint(),
+                            }
+                            for resource in old_bundle.resources
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            bundle = generator.generate(desired)
+            stale = stale_applied_access_resources(paths, desired, bundle)
+            plan = ReconciliationPlan(
+                instance_id="qual",
+                desired_fingerprint=desired.fingerprint(),
+                valid=True,
+                operations=(
+                    PlanItem(
+                        PlanOperation.RESTART,
+                        "coding-tools-mcp-qual.service",
+                        "access declaration changed",
+                        "mcp-unit",
+                    ),
+                    *tuple(
+                        PlanItem(
+                            PlanOperation.REMOVE,
+                            resource.path,
+                            "obsolete access resource",
+                            resource.resource_id,
+                        )
+                        for resource in stale
+                    ),
+                ),
+                warnings=(),
+            )
+            systemd = FakeSystemd()
+            systemd.active.add("coding-tools-mcp-qual.service")
+            service = HostApplyService(paths, registry, generator=generator, systemd=systemd)
+            journal_path = service._journal_path("qual", "stale-access-test")
+            journal = {"status": "running", "attempted": [], "executed": []}
+            service._write_journal(journal_path, journal)
+            rollback = _RollbackState()
+
+            service._execute(
+                plan,
+                bundle,
+                desired,
+                rollback,
+                force_restart=False,
+                journal=journal,
+                journal_path=journal_path,
+            )
+
+            self.assertIn(("restart", "coding-tools-mcp-qual.service"), systemd.calls)
+            self.assertFalse((Path(desired.workspace_path) / ".workspace-mcp-access").exists())
+            persisted = json.loads(journal_path.read_text(encoding="utf-8"))
+            executed = [item["operation"] for item in persisted["executed"]]
+            self.assertLess(executed.index("RESTART"), executed.index("REMOVE"))
+            rollback.discard()
 
     def test_rollback_removes_known_logs_before_new_state_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

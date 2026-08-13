@@ -52,7 +52,23 @@ class DesiredInstanceTests(unittest.TestCase):
         value["access"]["read_only"] = [
             {"alias": "inside", "path": "/srv/workspaces/sample/already-here"}
         ]
-        with self.assertRaisesRegex(ManagerError, "already inside workspace_path"):
+        with self.assertRaisesRegex(ManagerError, "must not overlap workspace_path"):
+            DesiredInstance.from_dict(value)
+
+    def test_access_source_containing_workspace_is_rejected(self) -> None:
+        value = sample_instance()
+        value["access"]["read_only"] = [
+            {"alias": "parent", "path": "/srv/workspaces"}
+        ]
+        with self.assertRaisesRegex(ManagerError, "must not overlap workspace_path"):
+            DesiredInstance.from_dict(value)
+
+    def test_access_source_rejects_systemd_bind_delimiter(self) -> None:
+        value = sample_instance()
+        value["access"]["read_only"] = [
+            {"alias": "bad-path", "path": "/srv/shared/with:colon"}
+        ]
+        with self.assertRaisesRegex(ManagerError, "must not contain ':'"):
             DesiredInstance.from_dict(value)
 
     def test_external_root_must_be_absolute(self) -> None:

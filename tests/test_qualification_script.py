@@ -21,5 +21,26 @@ class P6QualificationScriptTests(unittest.TestCase):
         self.assertIn('previous first apply remains ready', text)
 
 
+class P8QualificationScriptTests(unittest.TestCase):
+    def test_p8_harness_has_prepare_and_cleanup_gates(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p8_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('workspace-mcp-manager access add-ro "$INSTANCE_ID" p8-ro', text)
+        self.assertIn('workspace-mcp-manager access add-rw "$INSTANCE_ID" p8-rw', text)
+        self.assertIn('workspace-mcp-manager access remove "$INSTANCE_ID" p8-ro', text)
+        self.assertIn('workspace-mcp-manager access remove "$INSTANCE_ID" p8-rw', text)
+        self.assertIn("P8_HOST_PREPARED=PASS", text)
+        self.assertIn("P8_HOST_CLEANUP=PASS", text)
+
+    def test_p8_harness_checks_git_and_generated_bind_contract(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p8_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn("git -C \"$WORKSPACE\" status --porcelain --untracked-files=all", text)
+        self.assertIn("PrivateUsers=true", text)
+        self.assertIn("BindReadOnlyPaths=", text)
+        self.assertIn("BindPaths=", text)
+        self.assertIn('grep -F \'"operation":"REMOVE"\'', text)
+
+
 if __name__ == "__main__":
     unittest.main()

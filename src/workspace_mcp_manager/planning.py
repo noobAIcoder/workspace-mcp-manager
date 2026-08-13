@@ -10,7 +10,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .access import stale_applied_access_resources
 from .domain import DeploymentTarget, DesiredInstance, RuntimeTarget
+from .errors import ManagerError
 from .generation import OWNER_PREFIX, GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
 from .paths import ManagerPaths
 from .registry import InstanceRegistry
@@ -671,6 +673,54 @@ class ReconciliationPlanner:
                     )
         return operations, changed
 
+    def _stale_access_operations(
+        self,
+        desired: DesiredInstance,
+        bundle: GeneratedBundle,
+    ) -> list[PlanItem]:
+        try:
+            resources = stale_applied_access_resources(self.paths, desired, bundle)
+        except ManagerError as exc:
+            return [
+                PlanItem(
+                    PlanOperation.CONFLICT,
+                    str(self.paths.state_root / "applied" / f"{desired.instance_id.value}.json"),
+                    exc.message,
+                    resource_id="access-ownership",
+                )
+            ]
+        operations: list[PlanItem] = []
+        for resource in resources:
+            observation = self.observer.observe_resource(resource)
+            if observation.status is ObservationStatus.ABSENT:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.NOOP,
+                        resource.path,
+                        "obsolete applied access resource is already absent",
+                        resource.resource_id,
+                    )
+                )
+            elif observation.status in {ObservationStatus.EXACT, ObservationStatus.DIFFERENT}:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.REMOVE,
+                        resource.path,
+                        "obsolete manager-owned access resource must be removed",
+                        resource.resource_id,
+                    )
+                )
+            else:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.CONFLICT,
+                        resource.path,
+                        f"obsolete access resource cannot be safely removed: {observation.detail}",
+                        resource.resource_id,
+                    )
+                )
+        return operations
+
     def _unit_operations(
         self,
         desired: DesiredInstance,
@@ -738,13 +788,16 @@ class ReconciliationPlanner:
                     )
                 )
         file_ops, changed = self._file_operations(desired, bundle)
+        stale_access_ops = self._stale_access_operations(desired, bundle)
         unit_ops = self._unit_operations(desired, bundle, changed)
         if desired.lifecycle.deployment is DeploymentTarget.PRESENT:
             operations.extend(file_ops)
             operations.extend(unit_ops)
+            operations.extend(stale_access_ops)
         else:
             operations.extend(unit_ops)
             operations.extend(file_ops)
+            operations.extend(stale_access_ops)
         warnings: list[str] = []
         valid = not any(item.operation is PlanOperation.CONFLICT for item in operations)
         return ReconciliationPlan(

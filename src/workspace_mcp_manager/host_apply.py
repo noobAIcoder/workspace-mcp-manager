@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .access import stale_applied_access_resources
 from .domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from .errors import ErrorCode, ManagerError
 from .generation import GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
@@ -249,6 +250,48 @@ class SystemdUserAdapter:
                 unit_paths.append(str(path))
             _run(["systemd-analyze", "--user", "verify", *unit_paths], timeout=30.0)
 
+    def preflight_access_namespace(self, desired: DesiredInstance) -> None:
+        folders = [(folder, True) for folder in desired.access.read_only] + [
+            (folder, False) for folder in desired.access.read_write
+        ]
+        if not folders:
+            return
+        staging_parent = self.state_root / "staging"
+        staging_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.TemporaryDirectory(
+            prefix=f"access-preflight-{desired.instance_id.value}-",
+            dir=staging_parent,
+        ) as directory:
+            root = Path(directory)
+            argv = [
+                "systemd-run",
+                "--user",
+                "--wait",
+                "--collect",
+                "--pipe",
+                "--quiet",
+                f"--unit=workspace-mcp-manager-access-preflight-{desired.instance_id.value}-{uuid.uuid4().hex[:8]}",
+                "--property=Type=exec",
+                "--property=PrivateUsers=true",
+            ]
+            for folder, read_only in folders:
+                target = root / folder.alias
+                target.mkdir(mode=0o700)
+                directive = "BindReadOnlyPaths" if read_only else "BindPaths"
+                argv.append(f"--property={directive}={folder.path}:{target}:rbind")
+            argv.append("/usr/bin/true")
+            completed = _run(argv, timeout=30.0, check=False)
+            if completed.returncode != 0:
+                raise ManagerError(
+                    ErrorCode.RECONCILIATION_CONFLICT,
+                    "access namespace preflight failed",
+                    {
+                        "instance_id": desired.instance_id.value,
+                        "exit_code": completed.returncode,
+                        "detail": redact_text((completed.stderr or completed.stdout).strip())[-2000:],
+                    },
+                )
+
 
 class HostApplyService:
     """Host-side P6 reconciler.
@@ -471,6 +514,11 @@ class HostApplyService:
             plan = self.planner.plan(desired)
             if not plan.valid:
                 raise self._conflict(plan)
+            if (
+                desired.lifecycle.deployment is DeploymentTarget.PRESENT
+                and (desired.access.read_only or desired.access.read_write)
+            ):
+                self.systemd.preflight_access_namespace(desired)
 
             transaction_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:12]}"
             journal_path = self._journal_path(instance_id, transaction_id)
@@ -564,6 +612,8 @@ class HostApplyService:
         journal_path: Path,
     ) -> None:
         by_id = {resource.resource_id: resource for resource in bundle.resources}
+        for resource in stale_applied_access_resources(self.paths, desired, bundle):
+            by_id.setdefault(resource.resource_id, resource)
         operations = list(plan.operations)
         present = desired.lifecycle.deployment is DeploymentTarget.PRESENT
 
@@ -606,6 +656,11 @@ class HostApplyService:
                     if not was_active:
                         rollback.started_units.append(unit)
                     self._record(journal, journal_path, "FORCE_RESTART", unit)
+
+            remove_ops = [item for item in operations if item.operation is PlanOperation.REMOVE]
+            if remove_ops:
+                self._validate_destructive_operations(remove_ops, by_id)
+                self._remove_resource_operations(remove_ops, by_id, rollback, journal, journal_path)
         else:
             # Re-verify destructive ownership and residual contents immediately
             # before the first stop/disable/remove mutation.
@@ -1154,6 +1209,23 @@ class HostExecutionBridge:
             ["_runtime", "logs", instance_id, "--lines", str(lines)],
             unit_fragment=f"logs-{instance_id}",
         )
+
+    def run_access(
+        self,
+        action: str,
+        instance_id: str,
+        *,
+        alias: str | None = None,
+        path: str | None = None,
+    ) -> dict[str, Any]:
+        if action not in {"list", "add-ro", "add-rw", "remove"}:
+            raise ManagerError(ErrorCode.IO_ERROR, f"unsupported access action: {action}")
+        args = ["_runtime", "access", action, instance_id]
+        if alias is not None:
+            args.append(alias)
+        if path is not None:
+            args.append(path)
+        return self._run_json(args, unit_fragment=f"access-{action}-{instance_id}")
 
     def _run_json(
         self,

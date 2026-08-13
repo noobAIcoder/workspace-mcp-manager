@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from workspace_mcp_manager.cli import _payload_exit_code, main
+from workspace_mcp_manager.cli import _payload_exit_code, build_parser, main
 
 from tests.helpers import sample_instance
 
@@ -43,6 +43,17 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 2)
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["error"]["code"], "CONFIG_INVALID")
+
+    def test_access_command_surface_parses_all_p8_operations(self) -> None:
+        parser = build_parser()
+        listed = parser.parse_args(["access", "list", "manager-qual"])
+        self.assertEqual((listed.area, listed.command, listed.instance_id), ("access", "list", "manager-qual"))
+        added = parser.parse_args(
+            ["access", "add-ro", "manager-qual", "docs", "/srv/shared/docs"]
+        )
+        self.assertEqual((added.command, added.alias, added.path), ("add-ro", "docs", "/srv/shared/docs"))
+        removed = parser.parse_args(["access", "remove", "manager-qual", "docs"])
+        self.assertEqual((removed.command, removed.alias), ("remove", "docs"))
 
 
 if __name__ == "__main__":

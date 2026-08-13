@@ -248,7 +248,10 @@ class AccessFolder:
             raise config_error(
                 f"{field}.alias must use letters, digits, and single hyphens or underscores"
             )
-        return cls(alias=alias, path=_absolute_path(data["path"], f"{field}.path"))
+        path = _absolute_path(data["path"], f"{field}.path")
+        if ":" in path:
+            raise config_error(f"{field}.path must not contain ':'")
+        return cls(alias=alias, path=path)
 
     @property
     def normalized_alias(self) -> str:
@@ -285,9 +288,13 @@ class AccessConfig:
         workspace = PurePosixPath(workspace_path)
         for folder in all_folders:
             source = PurePosixPath(folder.path)
-            if source == workspace or workspace in source.parents:
+            if (
+                source == workspace
+                or workspace in source.parents
+                or source in workspace.parents
+            ):
                 raise config_error(
-                    "access folder source is already inside workspace_path",
+                    "access folder source must not overlap workspace_path",
                     alias=folder.alias,
                     path=folder.path,
                 )

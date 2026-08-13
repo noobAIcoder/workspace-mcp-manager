@@ -70,6 +70,9 @@ class GenerationTests(unittest.TestCase):
             self.assertIn(f"PATH={nvm_bin}:/home/operator/.local/bin:/usr/bin:/bin", mcp)
             self.assertIn(f"CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS={nvm_root}", mcp)
             self.assertNotIn("nvm.sh", mcp)
+            self.assertNotIn("PrivateUsers=true", mcp)
+            self.assertNotIn("BindReadOnlyPaths=", mcp)
+            self.assertNotIn("BindPaths=", mcp)
 
     def test_guard_resources_are_conditional(self) -> None:
         with TemporaryDirectory() as temp:

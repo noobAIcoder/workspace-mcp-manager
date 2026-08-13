@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
+from .access import AccessManager
 from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
@@ -96,6 +97,22 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("instance_id")
         item.add_argument("--pretty", action="store_true")
 
+    access = subparsers.add_parser("access")
+    access_sub = access.add_subparsers(dest="command", required=True)
+    access_list = access_sub.add_parser("list")
+    access_list.add_argument("instance_id")
+    access_list.add_argument("--pretty", action="store_true")
+    for command in ("add-ro", "add-rw"):
+        item = access_sub.add_parser(command)
+        item.add_argument("instance_id")
+        item.add_argument("alias")
+        item.add_argument("path")
+        item.add_argument("--pretty", action="store_true")
+    access_remove = access_sub.add_parser("remove")
+    access_remove.add_argument("instance_id")
+    access_remove.add_argument("alias")
+    access_remove.add_argument("--pretty", action="store_true")
+
     runtime = subparsers.add_parser("_runtime", help=argparse.SUPPRESS)
     runtime_sub = runtime.add_subparsers(dest="command", required=True)
     for command in ("tunnel", "admission-guard"):
@@ -116,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs = runtime_sub.add_parser("logs")
     runtime_logs.add_argument("instance_id")
     runtime_logs.add_argument("--lines", type=int, default=100)
+    runtime_access = runtime_sub.add_parser("access")
+    runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove"))
+    runtime_access.add_argument("instance_id")
+    runtime_access.add_argument("alias", nargs="?")
+    runtime_access.add_argument("path", nargs="?")
     runtime_lifecycle = runtime_sub.add_parser("lifecycle")
     runtime_lifecycle.add_argument("action", choices=("apply", "start", "stop", "restart", "remove"))
     runtime_lifecycle.add_argument("instance_id")
@@ -169,6 +191,16 @@ def _run_instance(
     raise AssertionError(args.command)
 
 
+def _run_access(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
+    bridge = HostExecutionBridge(paths)
+    return bridge.run_access(
+        args.command,
+        args.instance_id,
+        alias=getattr(args, "alias", None),
+        path=getattr(args, "path", None),
+    )
+
+
 def _run_runtime(
     args: argparse.Namespace,
     registry: InstanceRegistry,
@@ -210,6 +242,26 @@ def _run_runtime(
         desired = registry.get(args.instance_id)
         bundle = ResourceGenerator(paths).generate(desired)
         return {"ok": True, **bundle.to_dict(include_content=args.include_content)}
+    if args.command == "access":
+        access = AccessManager(paths, registry)
+        if args.action == "list":
+            if args.alias is not None or args.path is not None:
+                raise ManagerError(ErrorCode.CONFIG_INVALID, "list does not accept alias or path")
+            return access.list(args.instance_id)
+        if args.action in {"add-ro", "add-rw"}:
+            if args.alias is None or args.path is None:
+                raise ManagerError(ErrorCode.CONFIG_INVALID, f"{args.action} requires alias and path")
+            return access.add(
+                args.instance_id,
+                mode="ro" if args.action == "add-ro" else "rw",
+                alias=args.alias,
+                path=args.path,
+            )
+        if args.action == "remove":
+            if args.alias is None or args.path is not None:
+                raise ManagerError(ErrorCode.CONFIG_INVALID, "remove requires exactly one alias")
+            return access.remove(args.instance_id, alias=args.alias)
+        raise AssertionError(args.action)
 
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":
@@ -241,6 +293,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         registry = InstanceRegistry(paths.registry_dir)
         if args.area == "host":
             payload = _run_host(args, paths)
+        elif args.area == "access":
+            payload = _run_access(args, paths)
         elif args.area == "_runtime":
             payload = _run_runtime(args, registry, paths)
             if payload is None:
