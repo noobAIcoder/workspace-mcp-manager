@@ -1292,6 +1292,17 @@ class HostExecutionBridge:
     def run_reboot_check(self) -> dict[str, Any]:
         return self._run_json(["_runtime", "reboot-check"], unit_fragment="reboot-check")
 
+    def run_cleanup(self, action: str, *, instance_id: str | None = None) -> dict[str, Any]:
+        if action not in {"audit", "execute"}:
+            raise ManagerError(ErrorCode.IO_ERROR, f"unsupported cleanup action: {action}")
+        args = ["_runtime", "cleanup", action]
+        if instance_id is not None:
+            args.append(instance_id)
+        return self._run_json(
+            args,
+            unit_fragment=f"cleanup-{action}-{instance_id or 'all'}",
+        )
+
     def run_codex_start(self, mode: str, instance_id: str, *, prompt: str) -> dict[str, Any]:
         if mode not in {"read", "write"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported Codex mode: {mode}")

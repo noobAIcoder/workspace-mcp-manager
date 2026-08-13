@@ -236,6 +236,16 @@ class HostApplyTests(unittest.TestCase):
                 )
                 bridge.run_reboot_check()
                 run_json.assert_called_with(["_runtime", "reboot-check"], unit_fragment="reboot-check")
+                bridge.run_cleanup("audit")
+                run_json.assert_called_with(
+                    ["_runtime", "cleanup", "audit"],
+                    unit_fragment="cleanup-audit-all",
+                )
+                bridge.run_cleanup("execute", instance_id="legacy-qual")
+                run_json.assert_called_with(
+                    ["_runtime", "cleanup", "execute", "legacy-qual"],
+                    unit_fragment="cleanup-execute-legacy-qual",
+                )
                 bridge.run_access("add-ro", "qual", alias="docs", path="/srv/shared/docs")
                 run_json.assert_called_with(
                     ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],

@@ -95,6 +95,16 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(cancelled.command, "cancel")
 
+    def test_cleanup_command_surface_parses_p14_operations(self) -> None:
+        parser = build_parser()
+        audit_all = parser.parse_args(["cleanup", "audit", "--pretty"])
+        self.assertEqual((audit_all.area, audit_all.command, audit_all.instance_id), ("cleanup", "audit", None))
+        audit_one = parser.parse_args(["cleanup", "audit", "legacy-qual"])
+        self.assertEqual(audit_one.instance_id, "legacy-qual")
+        execute = parser.parse_args(["cleanup", "execute", "legacy-qual", "--pretty"])
+        self.assertEqual((execute.area, execute.command, execute.instance_id), ("cleanup", "execute", "legacy-qual"))
+        self.assertTrue(execute.pretty)
+
 
 if __name__ == "__main__":
     unittest.main()

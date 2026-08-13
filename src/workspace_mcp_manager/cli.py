@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .access import AccessManager
+from .cleanup import LegacyCleanupService
 from .codex_jobs import CodexJobManager
 from .diagnostics import DEFAULT_SINCE_SECONDS, ResilienceDiagnosticService
 from .domain import DesiredInstance
@@ -138,6 +139,15 @@ def build_parser() -> argparse.ArgumentParser:
     codex_cancel.add_argument("job_id")
     codex_cancel.add_argument("--pretty", action="store_true")
 
+    cleanup = subparsers.add_parser("cleanup")
+    cleanup_sub = cleanup.add_subparsers(dest="command", required=True)
+    cleanup_audit = cleanup_sub.add_parser("audit")
+    cleanup_audit.add_argument("instance_id", nargs="?")
+    cleanup_audit.add_argument("--pretty", action="store_true")
+    cleanup_execute = cleanup_sub.add_parser("execute")
+    cleanup_execute.add_argument("instance_id")
+    cleanup_execute.add_argument("--pretty", action="store_true")
+
     access = subparsers.add_parser("access")
     access_sub = access.add_subparsers(dest="command", required=True)
     access_list = access_sub.add_parser("list")
@@ -176,6 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs.add_argument("--lines", type=int, default=100)
     runtime_git = runtime_sub.add_parser("git")
     runtime_git.add_argument("instance_id")
+    runtime_cleanup = runtime_sub.add_parser("cleanup")
+    runtime_cleanup.add_argument("action", choices=("audit", "execute"))
+    runtime_cleanup.add_argument("instance_id", nargs="?")
     runtime_sub.add_parser("reboot-request")
     runtime_sub.add_parser("reboot-check")
     runtime_diagnose = runtime_sub.add_parser("diagnose")
@@ -291,6 +304,10 @@ def _run_codex(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
     raise AssertionError(args.command)
 
 
+def _run_cleanup(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
+    return HostExecutionBridge(paths).run_cleanup(args.command, instance_id=args.instance_id)
+
+
 def _run_runtime(
     args: argparse.Namespace,
     registry: InstanceRegistry,
@@ -377,6 +394,25 @@ def _run_runtime(
         return RebootService(paths, registry).request(reason=sys.stdin.read())
     if args.command == "reboot-check":
         return RebootService(paths, registry).check()
+    if args.command == "cleanup":
+        service = LegacyCleanupService(paths, registry)
+        if args.action == "audit":
+            payload = service.audit(args.instance_id)
+            if args.instance_id is None:
+                candidates = [
+                    candidate
+                    for candidate in payload.get("candidates", [])
+                    if any(
+                        resource.get("ownership") == "legacy-owned"
+                        for resource in candidate.get("resources", [])
+                    )
+                ]
+                payload["candidates"] = candidates
+                payload["ok"] = not any(candidate.get("state") == "conflict" for candidate in candidates)
+            return payload
+        if args.instance_id is None:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "cleanup execute requires an instance ID")
+        return service.apply(args.instance_id)
 
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":
@@ -416,6 +452,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = _run_access(args, paths)
         elif args.area == "codex":
             payload = _run_codex(args, paths)
+        elif args.area == "cleanup":
+            payload = _run_cleanup(args, paths)
         elif args.area == "_runtime":
             payload = _run_runtime(args, registry, paths)
             if payload is None:

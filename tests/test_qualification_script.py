@@ -136,6 +136,26 @@ class P13QualificationScriptTests(unittest.TestCase):
         self.assertIn("P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS", text)
 
 
+class P14QualificationScriptTests(unittest.TestCase):
+    def test_p14_harness_uses_only_synthetic_legacy_target(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p14_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('LEGACY_ID="${LEGACY_ID:-p14-legacy-qual}"', text)
+        self.assertIn('cleanup audit "$LEGACY_ID"', text)
+        self.assertIn('cleanup execute "$LEGACY_ID"', text)
+        self.assertIn("pre-existing legacy inventory changed", text)
+        self.assertIn("P14_LEGACY_CLEANUP_QUALIFICATION=PASS", text)
+
+    def test_p14_harness_proves_read_only_and_shared_resource_preservation(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p14_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn("P14_READ_ONLY_AUDIT=PASS", text)
+        self.assertIn("P14_SHARED_RESOURCES_PRESERVED=PASS", text)
+        self.assertIn('sha256sum "$SHARED_BIN"', text)
+        self.assertIn('sha256sum "$RUNTIME_ENV"', text)
+        self.assertIn('ops[:4] == ["STOP", "STOP", "DISABLE", "DISABLE"]', text)
+
+
 class P12QualificationScriptTests(unittest.TestCase):
     def test_p12_harness_uses_persisted_snapshots_and_real_tunnel_history(self) -> None:
         root = Path(__file__).resolve().parents[1]

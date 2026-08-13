@@ -156,6 +156,26 @@ class CliHostBoundaryTests(unittest.TestCase):
             bridge.run_reboot.assert_called_once_with(reason="maintenance")
             bridge.run_reboot_check.assert_called_once_with()
 
+    def test_public_cleanup_commands_use_host_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_cleanup.return_value = {"ok": True, "action": "audit", "candidates": []}
+                self.assertEqual(main(["cleanup", "audit"]), 0)
+                bridge.run_cleanup.return_value = {"ok": True, "action": "apply", "final": {"state": "clean"}}
+                self.assertEqual(main(["cleanup", "execute", "legacy-qual"]), 0)
+            self.assertEqual(
+                bridge.run_cleanup.call_args_list,
+                [
+                    unittest.mock.call("audit", instance_id=None),
+                    unittest.mock.call("execute", instance_id="legacy-qual"),
+                ],
+            )
+
     def test_public_codex_commands_use_host_bridge_and_prompt_stdin_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
