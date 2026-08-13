@@ -94,6 +94,13 @@ qualification used only the synthetic `p14-legacy-qual` instance and proved the
 existing `leadbot`, `manager`, and `wsl-reconcile` legacy deployments remained
 unchanged.
 
+P15 adds deterministic shared-toolkit and developer-tool provisioning. The
+standalone installer uses versioned user-local releases and validates existing
+manager declarations before replacing a shared release. Developer tooling uses
+explicit paths for Codex, GitHub CLI, and SSH/GPG-agent prerequisites without
+managing authentication, private keys, or session credentials. Persistent
+manager-owned agent activation remains the post-MVP portion of CAP-123.
+
 ## Run from source
 
 ```sh
@@ -173,7 +180,7 @@ verification are complete. Its WSL platform gate is qualified to fail closed as
 unsupported; WSL restart is deferred. Native-Linux physical reboot acceptance
 has not yet been run for the greenfield manager. P14 implementation, pure
 verification, and synthetic WSL legacy-cleanup qualification are complete. P15
-has not started.
+is implemented and WSL-qualified; P16 has not started.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
