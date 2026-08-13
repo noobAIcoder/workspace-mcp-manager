@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from workspace_mcp_manager.domain import DesiredInstance
+from workspace_mcp_manager.errors import ErrorCode
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.reboot import RebootService, reboot_bridge_main
 from workspace_mcp_manager.registry import InstanceRegistry
@@ -62,7 +63,7 @@ def service_for(root: Path) -> tuple[RebootService, InstanceRegistry, Path]:
     bridge.parent.mkdir(parents=True, exist_ok=True)
     bridge.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     os.chmod(bridge, 0o755)
-    return RebootService(paths, registry), registry, bridge
+    return RebootService(paths, registry, wsl_detector=lambda: False), registry, bridge
 
 
 class RebootBridgeTests(unittest.TestCase):
@@ -73,7 +74,9 @@ class RebootBridgeTests(unittest.TestCase):
             calls.append(list(argv))
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        with patch("workspace_mcp_manager.reboot.subprocess.run", side_effect=run):
+        with patch("workspace_mcp_manager.reboot.is_wsl", return_value=False), patch(
+            "workspace_mcp_manager.reboot.subprocess.run", side_effect=run
+        ):
             self.assertEqual(reboot_bridge_main(["--check"]), 0)
             self.assertEqual(reboot_bridge_main([]), 0)
 
@@ -90,6 +93,15 @@ class RebootBridgeTests(unittest.TestCase):
         with redirect_stderr(stderr):
             self.assertEqual(reboot_bridge_main(["restart", "something.service"]), 2)
         self.assertIn("accepts only --check or no arguments", stderr.getvalue())
+
+    def test_bridge_refuses_wsl_before_sudo(self) -> None:
+        stderr = StringIO()
+        with patch("workspace_mcp_manager.reboot.is_wsl", return_value=True), patch(
+            "workspace_mcp_manager.reboot.subprocess.run"
+        ) as run, redirect_stderr(stderr):
+            self.assertEqual(reboot_bridge_main(["--check"]), 69)
+        run.assert_not_called()
+        self.assertIn("unsupported on WSL", stderr.getvalue())
 
 
 class RebootServiceTests(unittest.TestCase):
@@ -292,6 +304,20 @@ class RebootServiceTests(unittest.TestCase):
             result = service.check()
             self.assertTrue(result["ok"])
             self.assertEqual(result["state"], "no_checkpoint")
+
+    def test_wsl_reboot_is_rejected_before_checkpoint_or_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired_for(root, instance_id="qual", running=True))
+            service = RebootService(paths, registry, wsl_detector=lambda: True)
+            with patch.object(service, "_run_bridge") as run:
+                with self.assertRaises(Exception) as caught:
+                    service.request(reason="must not reboot WSL")
+            run.assert_not_called()
+            self.assertFalse(service.checkpoint_path.exists())
+            self.assertEqual(getattr(caught.exception, "code", None), ErrorCode.FEATURE_NOT_IMPLEMENTED)
 
 
 if __name__ == "__main__":

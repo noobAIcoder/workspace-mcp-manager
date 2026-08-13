@@ -119,7 +119,9 @@ class P13QualificationScriptTests(unittest.TestCase):
         self.assertIn('"$BRIDGE" --check', text)
         self.assertNotIn('"$BRIDGE"\n', text)
         self.assertIn('MANAGER_PYTHON=', text)
-        self.assertIn("P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN", text)
+        self.assertIn("P13_WSL_REBOOT_UNSUPPORTED=PASS", text)
+        self.assertIn("P13_WSL_REBOOT=DEFERRED", text)
+        self.assertIn("P13_NATIVE_LINUX_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN", text)
         self.assertIn("P13_REAL_BRIDGE_CHECK_RC=", text)
 
     def test_p13_harness_live_checks_checkpoint_ordering_and_failure_persistence(self) -> None:

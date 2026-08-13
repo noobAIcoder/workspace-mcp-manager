@@ -9,7 +9,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .domain import DeploymentTarget, RuntimeTarget
 from .errors import ErrorCode, ManagerError
@@ -24,6 +24,16 @@ MAX_ERROR_CHARS = 2000
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 SUDO_PATH = "/usr/bin/sudo"
 SYSTEMCTL_PATH = "/usr/bin/systemctl"
+WSL_OSRELEASE_PATH = Path("/proc/sys/kernel/osrelease")
+
+
+def is_wsl() -> bool:
+    try:
+        release = WSL_OSRELEASE_PATH.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeError):
+        release = ""
+    lowered = release.lower()
+    return "microsoft" in lowered or "wsl" in lowered
 
 
 def _utc_now() -> str:
@@ -92,13 +102,18 @@ def _validate_boot_id(raw: str) -> str:
 
 def reboot_bridge_main(argv: Sequence[str] | None = None) -> int:
     args = list(argv if argv is not None else os.sys.argv[1:])
-    if args == ["--check"]:
-        command = [SUDO_PATH, "-n", "-l", SYSTEMCTL_PATH, "reboot"]
-    elif not args:
-        command = [SUDO_PATH, "-n", SYSTEMCTL_PATH, "reboot"]
-    else:
+    if args not in ([], ["--check"]):
         os.sys.stderr.write("workspace-mcp-reboot accepts only --check or no arguments\n")
         return 2
+    if is_wsl():
+        os.sys.stderr.write(
+            "workspace-mcp-reboot is unsupported on WSL; use a future external Windows restart service instead\n"
+        )
+        return 69
+    if args == ["--check"]:
+        command = [SUDO_PATH, "-n", "-l", SYSTEMCTL_PATH, "reboot"]
+    else:
+        command = [SUDO_PATH, "-n", SYSTEMCTL_PATH, "reboot"]
     try:
         completed = subprocess.run(
             command,
@@ -114,9 +129,16 @@ def reboot_bridge_main(argv: Sequence[str] | None = None) -> int:
 
 
 class RebootService:
-    def __init__(self, paths: ManagerPaths, registry: InstanceRegistry) -> None:
+    def __init__(
+        self,
+        paths: ManagerPaths,
+        registry: InstanceRegistry,
+        *,
+        wsl_detector: Callable[[], bool] = is_wsl,
+    ) -> None:
         self.paths = paths
         self.registry = registry
+        self._wsl_detector = wsl_detector
         self.reboot_root = paths.state_root / "reboot"
         self.checkpoint_path = self.reboot_root / "checkpoint.json"
 
@@ -187,6 +209,12 @@ class RebootService:
         return cleaned[-MAX_ERROR_CHARS:] if cleaned else None
 
     def request(self, *, reason: str) -> dict[str, Any]:
+        if self._wsl_detector():
+            raise ManagerError(
+                ErrorCode.FEATURE_NOT_IMPLEMENTED,
+                "host reboot is unsupported on WSL; WSL restart via an external Windows listener is deferred",
+                {"platform": "wsl", "reboot_supported": False},
+            )
         if not isinstance(reason, str) or not reason.strip():
             raise ManagerError(ErrorCode.CONFIG_INVALID, "reboot reason must be a non-empty string")
         if len(reason) > MAX_REASON_CHARS:

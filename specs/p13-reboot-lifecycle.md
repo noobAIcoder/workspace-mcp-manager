@@ -21,6 +21,20 @@ CAP-071  Synchronous reboot-command failure persistence
 
 P13 MUST NOT implement P14 legacy cleanup or P15 component installation.
 
+## Platform support
+
+P13 reboot execution is supported only on native Linux hosts.
+
+WSL is explicitly unsupported in P13. `host reboot` and
+`workspace-mcp-reboot` MUST fail closed on WSL before checkpoint creation,
+authorization probing, or sudo/systemctl execution.
+
+An optional future WSL design MAY use a small Windows-side listener/service
+that survives WSL termination. A WSL-side client could send an authenticated
+restart request over local networking, after which the Windows service would
+restart the distro and allow systemd to restore MCP+tunnel. That extension is
+deferred and MUST NOT require enabling WSL command interop.
+
 ## Public command surface
 
 ```text
@@ -258,6 +272,6 @@ Live non-destructive WSL qualification MUST prove:
 5. `host reboot-check` reports the unchanged boot/failure state;
 6. P6–P12 baseline remains all-NOOP and healthy afterward.
 
-Physical reboot qualification is a separate host acceptance gate. It MUST NOT
+Physical reboot qualification is a separate native-Linux host acceptance gate. It MUST NOT
 be simulated by rewriting `/proc` or the real checkpoint boot ID, and P13 MUST
 NOT create sudo authorization merely to make that gate runnable.

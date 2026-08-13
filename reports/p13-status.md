@@ -1,6 +1,6 @@
 # P13 — Controlled reboot lifecycle status
 
-Status: **IMPLEMENTATION PASS / WSL NON-DESTRUCTIVE PASS / PHYSICAL REBOOT NOT RUN**
+Status: **IMPLEMENTATION PASS / WSL UNSUPPORTED-GATE PASS / NATIVE-LINUX PHYSICAL REBOOT NOT RUN**
 
 P13 capability authority is `specs/p13-reboot-lifecycle.md` and covers
 CAP-066 through CAP-071.
@@ -65,6 +65,12 @@ No arbitrary command, systemctl verb, unit name, shell text, or executable is
 accepted by the bridge. P13 does not create/edit sudoers and does not broaden
 host authorization.
 
+On WSL, reboot execution is explicitly unsupported. Both the public reboot
+request and `workspace-mcp-reboot` fail before checkpoint creation or
+sudo/systemctl execution. A future optional WSL implementation may use a small
+Windows-side listening/restart service reached over local networking; it is
+deferred and must not require WSL command interop.
+
 ## Pure verification
 
 Final host-side source gate after P13 implementation and qualification fixes:
@@ -106,16 +112,17 @@ scripts/qualify_p13_wsl.sh
 
 The harness never invokes the real bridge without `--check`.
 
-### Real bridge authorization result
+### WSL platform result
 
 On the current WSL host:
 
 ```text
-P13_REAL_BRIDGE_CHECK_RC=1
+P13_REAL_BRIDGE_CHECK_RC=69
+P13_WSL_REBOOT_UNSUPPORTED=PASS
 ```
 
-Therefore existing host policy does not authorize the non-interactive reboot
-action required by the bridge. P13 correctly leaves that policy unchanged.
+Therefore reboot execution is blocked by explicit WSL platform policy,
+independently of sudo authorization.
 
 ### Canonical live checkpoint ordering / failure persistence
 
@@ -161,7 +168,8 @@ Live qualification final result:
 
 ```text
 P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS
-P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN
+P13_WSL_REBOOT=DEFERRED
+P13_NATIVE_LINUX_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN
 ```
 
 Qualification regressions corrected during P13:
@@ -210,12 +218,10 @@ P12 diagnose smoke=PASS
 The R3 harness explicitly asserted that both MCP and tunnel MainPID values were
 unchanged for the whole non-destructive qualification.
 
-## Physical reboot acceptance
+## Native Linux physical reboot acceptance
 
-Physical reboot is a separate host acceptance gate and was intentionally not
-run in this WSL qualification. The current real bridge preflight is not
-authorized (`RC=1`), and P13 is explicitly forbidden from modifying sudo policy
-to manufacture authorization.
+Physical reboot is a separate native-Linux host acceptance gate and was
+intentionally not run in this WSL qualification. WSL reboot itself is deferred.
 
 No P14 work was started.
 
@@ -225,6 +231,7 @@ No P14 work was started.
 P13_IMPLEMENTATION=PASS
 P13_PURE_VERIFICATION=PASS
 P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS
-P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN
+P13_WSL_REBOOT=DEFERRED
+P13_NATIVE_LINUX_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN
 P14=NOT_STARTED
 ```

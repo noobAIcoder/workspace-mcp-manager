@@ -69,17 +69,19 @@ Controlled live qualification on `manager-qual` proved current healthy evidence,
 retained real poll-timeout history, local MCP saturation classification without
 service restart, snapshot redaction/persistence, and final NOOP convergence.
 
-P13 adds controlled reboot checkpointing and reconciliation. `host reboot`
+P13 adds controlled reboot checkpointing and reconciliation for native Linux.
+`host reboot`
 fsyncs a manager-owned checkpoint containing the current boot ID and all
 present+running instance fingerprints before it performs even the authorization
 preflight. The separately installed `workspace-mcp-reboot` bridge accepts only
 `--check` or the exact preserved `sudo -n /usr/bin/systemctl reboot` action;
 the manager never creates or broadens sudo policy. `host reboot-check` compares
 the persisted boot ID with `/proc/sys/kernel/random/boot_id` and reconciles the
-captured expected instances after a real boot change. WSL non-destructive live
-qualification covers bridge preflight, checkpoint-before-command ordering,
-authorization/request failure persistence, unchanged-boot reconciliation, and
-P6-P12 non-regression. Physical reboot remains a separate host acceptance gate.
+captured expected instances after a real boot change. WSL reboot execution is
+explicitly deferred: both `host reboot` and `workspace-mcp-reboot` fail closed
+on WSL before checkpoint creation or sudo/systemctl execution. A future optional
+Windows-side listener may provide WSL restart without enabling WSL interop.
+Native-Linux physical reboot remains a separate host acceptance gate.
 
 ## Run from source
 
@@ -152,11 +154,10 @@ workspace-mcp-manager codex cancel <id> <job-id>
 manager's narrow host-worker boundary and never require manual systemd/profile
 editing.
 
-P7 through P12 are complete and live-qualified. P13 implementation, pure
-verification, and non-destructive WSL qualification are complete. The separate
-physical reboot acceptance gate has not been run on this WSL host because its
-existing non-interactive reboot authorization preflight fails; P13 does not
-modify sudo policy to force that gate green. P14 has not started.
+P7 through P12 are complete and live-qualified. P13 implementation and pure
+verification are complete. Its WSL platform gate is qualified to fail closed as
+unsupported; WSL restart is deferred. Native-Linux physical reboot acceptance
+has not yet been run for the greenfield manager. P14 has not started.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

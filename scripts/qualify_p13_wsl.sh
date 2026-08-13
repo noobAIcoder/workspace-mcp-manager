@@ -66,17 +66,34 @@ assert p["valid"] is True
 assert {item["operation"] for item in p["operations"]} == {"NOOP"}
 PY
 
-# Real bridge authorization check only. Never invoke the real bridge without
-# --check from this non-destructive qualification harness.
+# P13 intentionally does not support reboot execution on WSL. The installed
+# bridge must reject even --check before sudo/systemctl, and the public reboot
+# command must fail before creating a checkpoint.
 set +e
 "$BRIDGE" --check
 REAL_BRIDGE_CHECK_RC=$?
 set -e
 printf 'P13_REAL_BRIDGE_CHECK_RC=%s\n' "$REAL_BRIDGE_CHECK_RC"
+[ "$REAL_BRIDGE_CHECK_RC" -eq 69 ] || fail "WSL reboot bridge did not fail closed as unsupported"
 
-# Exercise the installed RebootService against the real registry/boot ID while
-# substituting a deliberately failing *fake* bridge. The fake checks that the
-# canonical checkpoint already exists in state=prepared before preflight.
+rm -f "$CHECKPOINT"
+set +e
+"$MANAGER" host reboot --reason "P13 WSL unsupported-platform qualification" >"$TMP_ROOT/wsl-reboot.json"
+WSL_REBOOT_RC=$?
+set -e
+[ "$WSL_REBOOT_RC" -eq 2 ] || fail "WSL host reboot did not return ManagerError exit 2"
+python3 - "$TMP_ROOT/wsl-reboot.json" <<'PY'
+import json, pathlib, sys
+p = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert p["error"]["code"] == "FEATURE_NOT_IMPLEMENTED", p
+assert p["error"]["details"].get("platform") == "wsl", p
+PY
+[ ! -e "$CHECKPOINT" ] || fail "WSL reboot rejection created a checkpoint"
+printf 'P13_WSL_REBOOT_UNSUPPORTED=PASS\n'
+
+# Exercise the native-Linux RebootService state machine against the real
+# registry/boot ID while explicitly overriding the WSL platform detector in the
+# integration helper. This validates the non-WSL path without invoking sudo.
 FAKE1="$TMP_ROOT/auth-fail/bin"
 mkdir -p "$FAKE1"
 cat >"$FAKE1/workspace-mcp-reboot" <<'SH'
@@ -104,7 +121,7 @@ fake_bin = Path(sys.argv[1])
 boot_id = sys.argv[2]
 paths = ManagerPaths.for_current_user()
 paths = replace(paths, manager_executable=fake_bin / "workspace-mcp-manager")
-service = RebootService(paths, InstanceRegistry(paths.registry_dir))
+service = RebootService(paths, InstanceRegistry(paths.registry_dir), wsl_detector=lambda: False)
 result = service.request(reason="P13 WSL authorization-failure qualification")
 assert result["ok"] is False, result
 assert result["state"] == "authorization_failed", result
@@ -151,7 +168,7 @@ fake_bin = Path(sys.argv[1])
 boot_id = sys.argv[2]
 paths = ManagerPaths.for_current_user()
 paths = replace(paths, manager_executable=fake_bin / "workspace-mcp-manager")
-service = RebootService(paths, InstanceRegistry(paths.registry_dir))
+service = RebootService(paths, InstanceRegistry(paths.registry_dir), wsl_detector=lambda: False)
 result = service.request(reason="P13 WSL synchronous-request-failure qualification")
 assert result["ok"] is False, result
 assert result["state"] == "request_failed", result
@@ -206,4 +223,5 @@ HOME="$HOME" CODEX_HOME="$HOME/.codex" PATH="$EXPECTED_PATH" "$CODEX_ENTRY" --ve
 "$MANAGER" instance diagnose "$INSTANCE_ID" --since-seconds 60 >/dev/null
 
 printf 'P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS\n'
-printf 'P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN\n'
+printf 'P13_WSL_REBOOT=DEFERRED\n'
+printf 'P13_NATIVE_LINUX_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN\n'
