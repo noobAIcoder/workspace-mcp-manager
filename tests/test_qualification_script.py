@@ -98,6 +98,9 @@ class P11QualificationScriptTests(unittest.TestCase):
         self.assertIn('The timer, not this script, must perform the first recovery.', text)
         self.assertIn('restart_attempt_count', text)
         self.assertIn('cooldown_suppression_count', text)
+        self.assertIn('last_restart_result.unit', text)
+        self.assertIn('Restart=always', text)
+        self.assertIn('EVIDENCE_BACKUP=', text)
 
     def test_p11_harness_restores_baseline_and_checks_noop(self) -> None:
         root = Path(__file__).resolve().parents[1]

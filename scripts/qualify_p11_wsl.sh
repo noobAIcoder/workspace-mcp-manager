@@ -25,6 +25,9 @@ json_value() {
 import json, pathlib, sys
 value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 for item in sys.argv[2].split('.'):
+    if not isinstance(value, dict) or item not in value:
+        print("")
+        raise SystemExit(0)
     value = value[item]
 if isinstance(value, bool):
     print("true" if value else "false")
@@ -45,6 +48,8 @@ BASELINE="$TMP_ROOT/baseline.json"
 ENABLED="$TMP_ROOT/enabled.json"
 FIRST_SESSIONS="$TMP_ROOT/first-sessions.txt"
 SECOND_SESSIONS="$TMP_ROOT/second-sessions.txt"
+EVIDENCE_BACKUP="$TMP_ROOT/admission-recovery.backup.json"
+EVIDENCE_EXISTED=0
 RESTORE_NEEDED=0
 MCP_PORT=""
 
@@ -88,6 +93,14 @@ cleanup() {
     "$MANAGER" instance update "$BASELINE" >/dev/null 2>&1 || true
     "$MANAGER" instance apply "$INSTANCE_ID" >/dev/null 2>&1 || true
   fi
+  if [ "$rc" -ne 0 ]; then
+    if [ "$EVIDENCE_EXISTED" -eq 1 ] && [ -f "$EVIDENCE_BACKUP" ]; then
+      cp "$EVIDENCE_BACKUP" "$EVIDENCE" >/dev/null 2>&1 || true
+      chmod 600 "$EVIDENCE" >/dev/null 2>&1 || true
+    else
+      rm -f "$EVIDENCE" >/dev/null 2>&1 || true
+    fi
+  fi
   rm -rf "$TMP_ROOT"
   return "$rc"
 }
@@ -117,6 +130,15 @@ PY
 BASELINE_FINGERPRINT="$(json_value "$SHOW_JSON" fingerprint)"
 MCP_PORT="$(json_value "$SHOW_JSON" desired.mcp.port)"
 TUNNEL_HEALTH_PORT="$(json_value "$SHOW_JSON" desired.tunnel.health_port)"
+
+# Qualification is disposable and must be deterministic after a prior failed
+# run. Preserve previous evidence only for rollback; a successful run replaces
+# it with fresh P11 evidence.
+if [ -f "$EVIDENCE" ]; then
+  cp "$EVIDENCE" "$EVIDENCE_BACKUP"
+  EVIDENCE_EXISTED=1
+  rm -f "$EVIDENCE"
+fi
 
 "$MANAGER" instance update "$ENABLED" >/dev/null
 RESTORE_NEEDED=1
@@ -231,8 +253,15 @@ done
 [ "$RECOVERED" -eq 1 ] || fail "30-second guard timer did not recover saturated MCP"
 
 MCP_PID_AFTER_RECOVERY="$(systemctl --user show "$MCP_UNIT" -p MainPID --value)"
-[ "$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)" = "$TUNNEL_PID_BASE" ] \
-  || fail "admission recovery restarted the tunnel"
+[ "$(json_value "$EVIDENCE" last_restart_result.unit)" = "$MCP_UNIT" ] \
+  || fail "recovery evidence names a non-MCP restart target"
+TUNNEL_PID_AFTER_RECOVERY="$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)"
+[ "$TUNNEL_PID_AFTER_RECOVERY" -gt 0 ] || fail "dependent tunnel did not recover after MCP restart"
+systemctl --user is-active "$TUNNEL_UNIT" >/dev/null || fail "dependent tunnel is not active after recovery"
+systemctl --user show "$TUNNEL_UNIT" -p Requires --value | grep -F "$MCP_UNIT" >/dev/null \
+  || fail "tunnel no longer declares its MCP dependency"
+systemctl --user cat "$TUNNEL_UNIT" | grep -F 'Restart=always' >/dev/null \
+  || fail "tunnel no longer declares automatic restart"
 [ "$(json_value "$EVIDENCE" last_saturation_signature)" = '503 maximum HTTP session count reached' ] \
   || fail "exact saturation signature was not persisted"
 [ "$(json_value "$EVIDENCE" saturation_detection_count)" -ge $((BASE_DETECTIONS + 1)) ] \
@@ -266,8 +295,8 @@ systemctl --user start "$GUARD_SERVICE"
   || fail "cooldown suppression was not persisted"
 [ "$(systemctl --user show "$MCP_UNIT" -p MainPID --value)" = "$SECOND_PID_BEFORE" ] \
   || fail "MCP restarted inside the cooldown"
-[ "$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)" = "$TUNNEL_PID_BASE" ] \
-  || fail "cooldown guard touched the tunnel"
+[ "$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)" = "$TUNNEL_PID_AFTER_RECOVERY" ] \
+  || fail "tunnel changed during cooldown without an MCP restart"
 
 delete_sessions "$SECOND_SESSIONS"
 rm -f "$SECOND_SESSIONS"

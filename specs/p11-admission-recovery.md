@@ -88,13 +88,19 @@ These observations may be persisted as evidence but remain non-mutating.
 
 ## Recovery action
 
-For an exact saturation match outside cooldown, the guard MUST restart only:
+For an exact saturation match outside cooldown, the guard MUST directly invoke
+restart only for:
 
 ```text
 coding-tools-mcp-<instance>.service
 ```
 
-It MUST NOT restart the tunnel service, timer, host, or unrelated MCP instances.
+It MUST NOT directly invoke restart for the tunnel service, timer, host, or
+unrelated MCP instances. The generated tunnel unit already has
+`Requires=coding-tools-mcp-<instance>.service` and `Restart=always`; therefore
+systemd may stop/restart that dependent tunnel as a consequence of the MCP
+restart. Such dependency propagation is allowed and MUST recover healthy. It is
+not a second P11 recovery target.
 
 The restart is performed through the user's systemd manager. A restart attempt
 is recorded before execution, and the attempt result is persisted after systemd
@@ -186,7 +192,9 @@ Live qualification MUST prove:
    signature;
 5. the guard automatically recovers the instance by restarting only its MCP
    service;
-6. tunnel service identity/process is not restarted by the recovery action;
+6. persisted recovery evidence names only the MCP unit as the direct restart
+   target; any tunnel restart is attributable to its existing systemd dependency
+   propagation and the tunnel returns healthy/ready;
 7. evidence records exact detection and one restart attempt;
 8. a repeated exact signature within 120 seconds does not cause a second
    restart;
