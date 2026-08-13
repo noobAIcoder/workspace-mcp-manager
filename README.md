@@ -31,6 +31,12 @@ environment propagation, Node toolchain execution, Git status, and tunnel
 health/readiness. P7 also regression-covers safe updates of an active owned MCP
 unit without weakening endpoint-collision checks.
 
+P8 adds deterministic RO/RW external-folder access. Desired access mutations run
+through the host boundary, generated user-systemd units mount sources under
+`.workspace-mcp-access/<alias>`, access ownership is tracked and cleaned from
+applied-state evidence, and both namespace preflight and live plugin enforcement
+are qualified on `manager-qual`.
+
 ## Run from source
 
 ```sh
@@ -79,6 +85,11 @@ workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
 workspace-mcp-manager instance restart <id>
 workspace-mcp-manager instance remove <id>
+
+workspace-mcp-manager access list <id>
+workspace-mcp-manager access add-ro <id> <alias> <path>
+workspace-mcp-manager access add-rw <id> <alias> <path>
+workspace-mcp-manager access remove <id> <alias>
 ```
 
 `plan` remains explicitly non-mutating. Lifecycle mutations execute through the
@@ -89,8 +100,8 @@ P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-P7 is complete and live-qualified. P8 RO/RW external-folder access lifecycle is
-the next gate.
+P7 and P8 are complete and live-qualified. P9 remains out of scope until the
+next execution session explicitly begins it.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
