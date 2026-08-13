@@ -51,6 +51,14 @@ survive the initiating MCP request. The configured WSL Codex installation and
 the full detached read/write/cancel/restart lifecycle are live-qualified on
 `manager-qual`.
 
+P11 implements exact local MCP admission recovery. A manager-owned 30-second
+timer probes MCP `initialize`, deletes every healthy probe session, and restarts
+only the local MCP unit when HTTP 503 carries the exact JSON-RPC error message
+`maximum HTTP session count reached`. Persisted recovery evidence enforces the
+120-second cooldown across guard invocations. Controlled live saturation on
+`manager-qual` qualified the exact-signature restart, dependent tunnel recovery,
+cooldown suppression, and reversible guard enable/disable lifecycle.
+
 ## Run from source
 
 ```sh
@@ -116,11 +124,8 @@ workspace-mcp-manager codex cancel <id> <job-id>
 manager's narrow host-worker boundary and never require manual systemd/profile
 editing.
 
-P5/P6 also feature-gate runtime capabilities that belong to later phases. A
-present deployment with admission recovery enabled is a `CONFLICT` until P11
-implements the guard runtime; P4 still renders and tests the guard resources.
-
-P7, P8, P9, and P10 are complete and live-qualified. P11 is the next gate.
+P7, P8, P9, P10, and P11 are complete and live-qualified. P12 remains out of
+scope until its execution session explicitly begins.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
