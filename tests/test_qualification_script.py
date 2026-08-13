@@ -118,6 +118,7 @@ class P13QualificationScriptTests(unittest.TestCase):
         text = (root / "scripts/qualify_p13_wsl.sh").read_text(encoding="utf-8")
         self.assertIn('"$BRIDGE" --check', text)
         self.assertNotIn('"$BRIDGE"\n', text)
+        self.assertIn('MANAGER_PYTHON=', text)
         self.assertIn("P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN", text)
         self.assertIn("P13_REAL_BRIDGE_CHECK_RC=", text)
 

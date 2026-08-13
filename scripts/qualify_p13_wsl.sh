@@ -6,6 +6,8 @@ MANAGER="${MANAGER:-$HOME/.local/bin/workspace-mcp-manager}"
 BRIDGE="${BRIDGE:-$HOME/.local/bin/workspace-mcp-reboot}"
 CHECKPOINT="$HOME/.local/state/workspace-mcp-manager/reboot/checkpoint.json"
 REBOOT_ROOT="$(dirname "$CHECKPOINT")"
+MANAGER_REAL="$(readlink -f "$MANAGER")"
+MANAGER_PYTHON="${MANAGER_PYTHON:-$(dirname "$MANAGER_REAL")/python}"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -14,6 +16,7 @@ fail() {
 
 [ -x "$MANAGER" ] || fail "manager executable is unavailable: $MANAGER"
 [ -x "$BRIDGE" ] || fail "reboot bridge is unavailable: $BRIDGE"
+[ -x "$MANAGER_PYTHON" ] || fail "manager tool Python is unavailable: $MANAGER_PYTHON"
 
 TMP_ROOT="$(mktemp -d -t workspace-mcp-p13-XXXXXX)"
 CHECKPOINT_BACKUP="$TMP_ROOT/checkpoint.backup"
@@ -82,7 +85,7 @@ exit 93
 SH
 chmod 0755 "$FAKE1/workspace-mcp-reboot"
 
-python3 - "$FAKE1" "$BOOT_ID_BEFORE" <<'PY'
+"$MANAGER_PYTHON" - "$FAKE1" "$BOOT_ID_BEFORE" <<'PY'
 from dataclasses import replace
 from pathlib import Path
 import json
@@ -129,7 +132,7 @@ exit 95
 SH
 chmod 0755 "$FAKE2/workspace-mcp-reboot"
 
-python3 - "$FAKE2" "$BOOT_ID_BEFORE" <<'PY'
+"$MANAGER_PYTHON" - "$FAKE2" "$BOOT_ID_BEFORE" <<'PY'
 from dataclasses import replace
 from pathlib import Path
 import json
