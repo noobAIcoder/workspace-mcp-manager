@@ -5,6 +5,7 @@ INSTANCE_ID="${INSTANCE_ID:-manager-qual}"
 WORKSPACE="${WORKSPACE:-/home/cloudtoor/repos/workspace-mcp-manager-qual}"
 REMOTE_NAME="${P9_REMOTE_NAME:-p9-qual}"
 REMOTE_URL="${P9_REMOTE_URL:-https://github.com/noobAIcoder/workspace-mcp-manager.git}"
+MANAGER_BIN="${MANAGER_BIN:-$HOME/.local/bin/workspace-mcp-manager}"
 
 fail() {
   printf 'P9_FAIL: %s\n' "$*" >&2
@@ -18,6 +19,7 @@ assert_clean_git() {
 }
 
 [ -d "$WORKSPACE/.git" ] || fail "qualification workspace is not a Git repository"
+[ -x "$MANAGER_BIN" ] || fail "manager executable is missing: $MANAGER_BIN"
 assert_clean_git
 
 if git -C "$WORKSPACE" remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
@@ -33,10 +35,10 @@ trap cleanup EXIT
 
 git -C "$WORKSPACE" remote add "$REMOTE_NAME" "$REMOTE_URL"
 
-desired_json="$(workspace-mcp-manager instance show "$INSTANCE_ID")"
+desired_json="$("$MANAGER_BIN" instance show "$INSTANCE_ID")"
 expected_path="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["desired"]["mcp"]["exec_path"])' <<<"$desired_json")"
 real_home="$(python3 -c 'import os,pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
-payload="$(workspace-mcp-manager instance git "$INSTANCE_ID")"
+payload="$("$MANAGER_BIN" instance git "$INSTANCE_ID")"
 
 python3 - "$real_home" "$expected_path" "$REMOTE_NAME" "$payload" <<'PY'
 import json

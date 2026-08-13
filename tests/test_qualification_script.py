@@ -48,7 +48,8 @@ class P9QualificationScriptTests(unittest.TestCase):
         text = (root / "scripts/qualify_p9_wsl.sh").read_text(encoding="utf-8")
         self.assertIn('git -C "$WORKSPACE" remote add "$REMOTE_NAME" "$REMOTE_URL"', text)
         self.assertIn('git -C "$WORKSPACE" remote remove "$REMOTE_NAME"', text)
-        self.assertIn('workspace-mcp-manager instance git "$INSTANCE_ID"', text)
+        self.assertIn('MANAGER_BIN="${MANAGER_BIN:-$HOME/.local/bin/workspace-mcp-manager}"', text)
+        self.assertIn('"$MANAGER_BIN" instance git "$INSTANCE_ID"', text)
         self.assertIn("P9_HOST_QUALIFICATION=PASS", text)
 
     def test_p9_harness_checks_real_home_path_remote_and_auth(self) -> None:
