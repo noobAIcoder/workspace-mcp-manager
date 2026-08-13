@@ -255,13 +255,6 @@ done
 MCP_PID_AFTER_RECOVERY="$(systemctl --user show "$MCP_UNIT" -p MainPID --value)"
 [ "$(json_value "$EVIDENCE" last_restart_result.unit)" = "$MCP_UNIT" ] \
   || fail "recovery evidence names a non-MCP restart target"
-TUNNEL_PID_AFTER_RECOVERY="$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)"
-[ "$TUNNEL_PID_AFTER_RECOVERY" -gt 0 ] || fail "dependent tunnel did not recover after MCP restart"
-systemctl --user is-active "$TUNNEL_UNIT" >/dev/null || fail "dependent tunnel is not active after recovery"
-systemctl --user show "$TUNNEL_UNIT" -p Requires --value | grep -F "$MCP_UNIT" >/dev/null \
-  || fail "tunnel no longer declares its MCP dependency"
-systemctl --user cat "$TUNNEL_UNIT" | grep -F 'Restart=always' >/dev/null \
-  || fail "tunnel no longer declares automatic restart"
 [ "$(json_value "$EVIDENCE" last_saturation_signature)" = '503 maximum HTTP session count reached' ] \
   || fail "exact saturation signature was not persisted"
 [ "$(json_value "$EVIDENCE" saturation_detection_count)" -ge $((BASE_DETECTIONS + 1)) ] \
@@ -283,6 +276,13 @@ curl -fsS "http://127.0.0.1:$MCP_PORT/.well-known/mcp.json" >/dev/null \
   || fail "tunnel health did not recover"
 [ "$(curl -fsS "http://127.0.0.1:$TUNNEL_HEALTH_PORT/readyz")" = ready ] \
   || fail "tunnel readiness did not recover"
+TUNNEL_PID_AFTER_RECOVERY="$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)"
+[ "$TUNNEL_PID_AFTER_RECOVERY" -gt 0 ] || fail "dependent tunnel did not recover after MCP restart"
+systemctl --user is-active "$TUNNEL_UNIT" >/dev/null || fail "dependent tunnel is not active after recovery"
+systemctl --user show "$TUNNEL_UNIT" -p Requires --value | grep -F "$MCP_UNIT" >/dev/null \
+  || fail "tunnel no longer declares its MCP dependency"
+systemctl --user cat "$TUNNEL_UNIT" | grep -F 'Restart=always' >/dev/null \
+  || fail "tunnel no longer declares automatic restart"
 
 # Saturate again while the 120-second cooldown is active. Run the guard
 # manually so the assertion is deterministic and remains inside cooldown.
