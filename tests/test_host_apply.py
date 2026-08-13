@@ -228,6 +228,14 @@ class HostApplyTests(unittest.TestCase):
                     ["_runtime", "diagnose", "qual", "--since-seconds", "123"],
                     unit_fragment="diagnose-qual",
                 )
+                bridge.run_reboot(reason="maintenance")
+                run_json.assert_called_with(
+                    ["_runtime", "reboot-request"],
+                    input_text="maintenance",
+                    unit_fragment="reboot-request",
+                )
+                bridge.run_reboot_check()
+                run_json.assert_called_with(["_runtime", "reboot-check"], unit_fragment="reboot-check")
                 bridge.run_access("add-ro", "qual", alias="docs", path="/srv/shared/docs")
                 run_json.assert_called_with(
                     ["_runtime", "access", "add-ro", "qual", "docs", "/srv/shared/docs"],

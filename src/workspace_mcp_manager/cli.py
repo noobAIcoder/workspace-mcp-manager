@@ -19,6 +19,7 @@ from .host_apply import HostExecutionBridge, HostInstanceStatusService
 from .lifecycle import HostLifecycleWorker
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
+from .reboot import RebootService
 from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object
 from .registry import InstanceRegistry
@@ -64,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("inspect", "doctor", "components"):
         item = host_sub.add_parser(command)
         item.add_argument("--pretty", action="store_true")
+    host_reboot = host_sub.add_parser("reboot")
+    host_reboot.add_argument("--reason", required=True)
+    host_reboot.add_argument("--pretty", action="store_true")
+    host_reboot_check = host_sub.add_parser("reboot-check")
+    host_reboot_check.add_argument("--pretty", action="store_true")
 
     instance = subparsers.add_parser("instance")
     instance_sub = instance.add_subparsers(dest="command", required=True)
@@ -170,6 +176,8 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs.add_argument("--lines", type=int, default=100)
     runtime_git = runtime_sub.add_parser("git")
     runtime_git.add_argument("instance_id")
+    runtime_sub.add_parser("reboot-request")
+    runtime_sub.add_parser("reboot-check")
     runtime_diagnose = runtime_sub.add_parser("diagnose")
     runtime_diagnose.add_argument("instance_id")
     runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
@@ -201,6 +209,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_host(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
+    if args.command == "reboot":
+        return HostExecutionBridge(paths).run_reboot(reason=args.reason)
+    if args.command == "reboot-check":
+        return HostExecutionBridge(paths).run_reboot_check()
     inspector = HostInspector(paths)
     if args.command == "inspect":
         return inspector.inspect()
@@ -360,6 +372,11 @@ def _run_runtime(
     if args.command == "codex-worker":
         CodexJobManager(paths, registry).run_worker(args.instance_id, args.job_id)
         return None
+
+    if args.command == "reboot-request":
+        return RebootService(paths, registry).request(reason=sys.stdin.read())
+    if args.command == "reboot-check":
+        return RebootService(paths, registry).check()
 
     desired = registry.get(args.instance_id)
     if args.command == "tunnel":

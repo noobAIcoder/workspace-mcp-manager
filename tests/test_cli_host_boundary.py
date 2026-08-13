@@ -141,6 +141,21 @@ class CliHostBoundaryTests(unittest.TestCase):
                 bridge.run_git.assert_called_once_with("sample")
                 bridge.run_diagnose.assert_called_once_with("sample", since_seconds=77)
 
+    def test_public_reboot_commands_use_host_bridge_and_reason_stdin_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_reboot.return_value = {"ok": False, "state": "authorization_failed"}
+                bridge.run_reboot_check.return_value = {"ok": False, "state": "authorization_failed"}
+                self.assertEqual(main(["host", "reboot", "--reason", "maintenance"]), 1)
+                self.assertEqual(main(["host", "reboot-check"]), 1)
+            bridge.run_reboot.assert_called_once_with(reason="maintenance")
+            bridge.run_reboot_check.assert_called_once_with()
+
     def test_public_codex_commands_use_host_bridge_and_prompt_stdin_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

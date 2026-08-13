@@ -1282,6 +1282,16 @@ class HostExecutionBridge:
             unit_fragment=f"diagnose-{instance_id}",
         )
 
+    def run_reboot(self, *, reason: str) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "reboot-request"],
+            input_text=reason,
+            unit_fragment="reboot-request",
+        )
+
+    def run_reboot_check(self) -> dict[str, Any]:
+        return self._run_json(["_runtime", "reboot-check"], unit_fragment="reboot-check")
+
     def run_codex_start(self, mode: str, instance_id: str, *, prompt: str) -> dict[str, Any]:
         if mode not in {"read", "write"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported Codex mode: {mode}")

@@ -112,6 +112,26 @@ class P11QualificationScriptTests(unittest.TestCase):
         self.assertIn('P11_WSL_QUALIFICATION=PASS', text)
 
 
+class P13QualificationScriptTests(unittest.TestCase):
+    def test_p13_harness_never_invokes_real_bridge_without_check(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p13_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('"$BRIDGE" --check', text)
+        self.assertNotIn('"$BRIDGE"\n', text)
+        self.assertIn("P13_PHYSICAL_REBOOT_QUALIFICATION=NOT_RUN", text)
+        self.assertIn("P13_REAL_BRIDGE_CHECK_RC=", text)
+
+    def test_p13_harness_live_checks_checkpoint_ordering_and_failure_persistence(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_p13_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('\"state\": \"prepared\"', text)
+        self.assertIn('\"state\": \"requesting\"', text)
+        self.assertIn("P13_AUTHORIZATION_FAILURE_PERSISTENCE=PASS", text)
+        self.assertIn("P13_SYNCHRONOUS_REQUEST_FAILURE_PERSISTENCE=PASS", text)
+        self.assertIn('host reboot-check', text)
+        self.assertIn("P13_WSL_NONDESTRUCTIVE_QUALIFICATION=PASS", text)
+
+
 class P12QualificationScriptTests(unittest.TestCase):
     def test_p12_harness_uses_persisted_snapshots_and_real_tunnel_history(self) -> None:
         root = Path(__file__).resolve().parents[1]

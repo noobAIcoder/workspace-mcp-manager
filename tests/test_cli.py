@@ -60,6 +60,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))
         self.assertTrue(args.pretty)
 
+    def test_host_reboot_commands_parse_p13_surface(self) -> None:
+        parser = build_parser()
+        request = parser.parse_args(["host", "reboot", "--reason", "maintenance", "--pretty"])
+        self.assertEqual((request.area, request.command, request.reason), ("host", "reboot", "maintenance"))
+        self.assertTrue(request.pretty)
+        check = parser.parse_args(["host", "reboot-check", "--pretty"])
+        self.assertEqual((check.area, check.command), ("host", "reboot-check"))
+        self.assertTrue(check.pretty)
+
     def test_instance_diagnose_command_parses_p12_window(self) -> None:
         args = build_parser().parse_args(
             ["instance", "diagnose", "manager-qual", "--since-seconds", "321", "--pretty"]
