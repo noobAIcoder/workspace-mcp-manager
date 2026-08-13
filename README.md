@@ -24,6 +24,13 @@ apply/NOOP apply/stop/start/restart/remove/recreate, ownership, rollback/recover
 transaction evidence, MCP discovery, tunnel health/readiness, and deterministic
 NVM-managed Node toolchain rendering.
 
+P7 live-qualifies the manager-owned `manager-qual` deployment through the real
+ChatGPT MCP/plugin surface: discovery, protocol initialization/session cleanup,
+workspace and permission identity, workspace confinement, WSL GitHub/NVM
+environment propagation, Node toolchain execution, Git status, and tunnel
+health/readiness. P7 also regression-covers safe updates of an active owned MCP
+unit without weakening endpoint-collision checks.
+
 ## Run from source
 
 ```sh
@@ -82,9 +89,8 @@ P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-P7 is the next gate: MCP protocol and permission qualification against the
-manager-owned disposable instance. P8 RO/RW access lifecycle remains deferred
-until P7 passes.
+P7 is complete and live-qualified. P8 RO/RW external-folder access lifecycle is
+the next gate.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
