@@ -250,19 +250,40 @@ class SystemdUserAdapter:
                 unit_paths.append(str(path))
             _run(["systemd-analyze", "--user", "verify", *unit_paths], timeout=30.0)
 
-    def preflight_access_namespace(self, desired: DesiredInstance) -> None:
+    def preflight_access_namespace(
+        self,
+        desired: DesiredInstance,
+        *,
+        target_root: Path | None = None,
+    ) -> None:
         folders = [(folder, True) for folder in desired.access.read_only] + [
             (folder, False) for folder in desired.access.read_write
         ]
         if not folders:
             return
-        staging_parent = self.state_root / "staging"
-        staging_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with tempfile.TemporaryDirectory(
-            prefix=f"access-preflight-{desired.instance_id.value}-",
-            dir=staging_parent,
-        ) as directory:
-            root = Path(directory)
+        @contextmanager
+        def target_directory():
+            if target_root is not None:
+                if target_root.is_symlink() or not target_root.is_dir():
+                    raise ManagerError(
+                        ErrorCode.RECONCILIATION_CONFLICT,
+                        "access namespace target root is not a directory",
+                        {"path": str(target_root)},
+                    )
+                yield target_root
+                return
+            staging_parent = self.state_root / "staging"
+            staging_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with tempfile.TemporaryDirectory(
+                prefix=f"access-preflight-{desired.instance_id.value}-",
+                dir=staging_parent,
+            ) as directory:
+                root = Path(directory)
+                for folder, _read_only in folders:
+                    (root / folder.alias).mkdir(mode=0o700)
+                yield root
+
+        with target_directory() as root:
             argv = [
                 "systemd-run",
                 "--user",
@@ -276,7 +297,12 @@ class SystemdUserAdapter:
             ]
             for folder, read_only in folders:
                 target = root / folder.alias
-                target.mkdir(mode=0o700)
+                if target.is_symlink() or not target.is_dir():
+                    raise ManagerError(
+                        ErrorCode.RECONCILIATION_CONFLICT,
+                        "access namespace target mountpoint is not a directory",
+                        {"alias": folder.alias, "path": str(target)},
+                    )
                 directive = "BindReadOnlyPaths" if read_only else "BindPaths"
                 argv.append(f"--property={directive}={folder.path}:{target}:rbind")
             argv.append("/usr/bin/true")
@@ -619,7 +645,19 @@ class HostApplyService:
 
         if present:
             file_ops = [item for item in operations if item.operation in {PlanOperation.CREATE, PlanOperation.UPDATE}]
-            self._apply_resource_operations(file_ops, by_id, rollback, journal, journal_path)
+            access_file_ops = [
+                item
+                for item in file_ops
+                if (item.resource_id or "").startswith("access-")
+            ]
+            other_file_ops = [item for item in file_ops if item not in access_file_ops]
+            self._apply_resource_operations(access_file_ops, by_id, rollback, journal, journal_path)
+            if desired.access.read_only or desired.access.read_write:
+                self.systemd.preflight_access_namespace(
+                    desired,
+                    target_root=Path(desired.workspace_path) / ".workspace-mcp-access",
+                )
+            self._apply_resource_operations(other_file_ops, by_id, rollback, journal, journal_path)
             unit_file_changed = any(
                 item.resource_id in by_id
                 and by_id[item.resource_id].kind is ResourceKind.SYSTEMD_UNIT

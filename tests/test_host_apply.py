@@ -35,8 +35,10 @@ class FakeSystemd:
     def verify_generated_units(self, _bundle) -> None:
         self.calls.append(("verify", None))
 
-    def preflight_access_namespace(self, _desired) -> None:
-        self.calls.append(("access-preflight", None))
+    def preflight_access_namespace(self, _desired, *, target_root=None) -> None:
+        self.calls.append(
+            ("access-preflight", None if target_root is None else str(target_root))
+        )
 
     def daemon_reload(self) -> None:
         self.calls.append(("daemon-reload", None))
@@ -591,7 +593,26 @@ class HostApplyTests(unittest.TestCase):
             desired = DesiredInstance.from_dict(raw)
             registry = InstanceRegistry(paths.registry_dir)
             registry.create(desired)
+            generator = ResourceGenerator(paths)
+            bundle = generator.generate(desired)
+            access_creates = tuple(
+                PlanItem(
+                    PlanOperation.CREATE,
+                    resource.path,
+                    "synthetic access create",
+                    resource.resource_id,
+                )
+                for resource in bundle.resources
+                if resource.resource_id.startswith("access-")
+            )
             plan = ReconciliationPlan(
+                instance_id="qual",
+                desired_fingerprint=desired.fingerprint(),
+                valid=True,
+                operations=access_creates,
+                warnings=(),
+            )
+            converged = ReconciliationPlan(
                 instance_id="qual",
                 desired_fingerprint=desired.fingerprint(),
                 valid=True,
@@ -602,8 +623,8 @@ class HostApplyTests(unittest.TestCase):
             service = HostApplyService(
                 paths,
                 registry,
-                planner=StaticPlanner([plan, plan, plan]),
-                generator=ResourceGenerator(paths),
+                planner=StaticPlanner([plan, plan, converged]),
+                generator=generator,
                 systemd=systemd,
             )
 
@@ -611,6 +632,10 @@ class HostApplyTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(systemd.calls[:2], [("verify", None), ("access-preflight", None)])
+            self.assertIn(
+                ("access-preflight", str(Path(desired.workspace_path) / ".workspace-mcp-access")),
+                systemd.calls,
+            )
 
     def test_systemd_access_namespace_preflight_renders_ro_and_rw_binds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

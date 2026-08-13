@@ -79,8 +79,11 @@ configured and MUST be absent when none are configured.
 
 The manager MUST perform a real transient user-systemd access-namespace
 preflight before mutating generated resources for a present deployment with
-external folders. Failure to construct the requested bind namespace MUST abort
-the transaction before managed-resource mutation.
+external folders. After the manager-owned target mountpoint directories are
+created, it MUST repeat the preflight against those exact workspace paths before
+replacing or restarting the MCP unit. Failure of either preflight MUST abort the
+transaction; an exact-target failure MUST leave the previously installed MCP
+unit authoritative and roll back the newly created access resources.
 
 ## Ownership and cleanup contract
 
