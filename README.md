@@ -47,9 +47,9 @@ P10 implements durable detached Codex jobs through transient user-systemd
 workers. Jobs resolve Codex only from the instance's declared MCP execution
 PATH, preserve read-only/workspace-write modes, persist request/status/result
 and separate stdout/stderr logs, support bounded output and cancellation, and
-survive the initiating MCP request. P10 implementation/pure verification is
-complete; live WSL qualification remains blocked until the externally managed
-standalone Codex payload is restored.
+survive the initiating MCP request. The configured WSL Codex installation and
+the full detached read/write/cancel/restart lifecycle are live-qualified on
+`manager-qual`.
 
 ## Run from source
 
@@ -120,9 +120,7 @@ P5/P6 also feature-gate runtime capabilities that belong to later phases. A
 present deployment with admission recovery enabled is a `CONFLICT` until P11
 implements the guard runtime; P4 still renders and tests the guard resources.
 
-P7, P8, and P9 are complete and live-qualified. P10 implementation is complete
-and pushed, but the P10 live gate is blocked by the missing WSL standalone
-Codex payload. P11 remains out of scope until P10 live qualification passes.
+P7, P8, P9, and P10 are complete and live-qualified. P11 is the next gate.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

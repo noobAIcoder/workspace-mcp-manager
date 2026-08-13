@@ -1,6 +1,6 @@
 # P10 — Codex lifecycle status
 
-Status: **IMPLEMENTATION COMPLETE / LIVE QUALIFICATION BLOCKED**
+Status: **PASS / LIVE WSL QUALIFIED 2026-08-13**
 
 P10 capability authority is `specs/p10-codex-jobs.md` and covers CAP-056 through
 CAP-065 plus CAP-113.
@@ -10,6 +10,13 @@ Implementation checkpoint:
 ```text
 803eb447e5c15343c3ad21d37a6d3b85690614f5
 Implement P10 detached Codex lifecycle
+```
+
+Qualification-authority re-baseline:
+
+```text
+1931387de4bc665ecc7bbbf2fd8dc9398899818c
+Rebaseline P10 Codex installation authority
 ```
 
 ## Implemented behavior
@@ -75,41 +82,103 @@ binding/tamper rejection, activating-unit handling, interrupted reconciliation,
 bounded separate output streams, cancellation, CLI transport, and the WSL
 qualification harness contract.
 
-## Live WSL prerequisite evidence
+## Live WSL Codex authority
 
-The intended standalone entrypoint currently resolves host-side to:
-
-```text
-/home/cloudtoor/.local/lib/codex-wsl/bin/codex
-```
-
-but its version preflight returns exit `127`:
+The WSL Codex installation was re-baselined to the executable selected by the
+instance's declared MCP execution PATH rather than a hard-coded installation
+mechanism. Live `manager-qual` resolves:
 
 ```text
-codex: WSL standalone binary is unavailable at
-/home/cloudtoor/.codex/packages/standalone/current/bin/codex.
+PATH=/home/cloudtoor/.nvm/versions/node/v24.15.0/bin:/home/cloudtoor/.local/bin:/usr/local/bin:/usr/bin:/bin
+codex=/home/cloudtoor/.nvm/versions/node/v24.15.0/bin/codex
+codex-cli 0.147.0
 ```
 
-The P10 harness therefore exits before any manager desired-state mutation:
+The non-system Codex installation is covered by the already-declared external
+root:
 
 ```text
-P10_EXTERNAL_CODEX_BLOCKED=version-preflight
-P10_HARNESS_EXIT=2
+/home/cloudtoor/.nvm/versions/node/v24.15.0
 ```
 
-This is an external/P15 installation prerequisite, not a P10 implementation
-failure. The manager MUST NOT silently substitute an npm, Windows, or other Codex
-distribution to force the gate green.
+Real MCP `exec_command` resolved the same executable and `codex --version`
+succeeded. The MCP sandbox emitted non-fatal warnings about writes under
+`CODEX_HOME`; P10 detached workers execute through the host user-systemd
+boundary with real account `HOME`/`CODEX_HOME`, as specified.
+
+## Live detached-job qualification
+
+The configured-PATH qualification harness ran against disposable
+`manager-qual`. Its initiating MCP request was lost when the harness deliberately
+restarted `manager-qual`; the host-side qualification and detached job state
+survived independently. Persisted evidence after reconnect showed:
+
+### Read job
+
+```text
+job_id=20260813T085834Z-c66b93cf533f
+mode=read
+state=succeeded
+exit_code=0
+last_message=P10_READ_OK
+```
+
+### Write job
+
+```text
+job_id=20260813T085852Z-81b4181340bb
+mode=write
+state=succeeded
+exit_code=0
+last_message=P10_WRITE_OK
+```
+
+The write job created the requested disposable `.p10-codex-write-check`; the
+harness verified its exact content and removed it. Post-qualification evidence
+confirmed the file is absent.
+
+### Cancellation job
+
+```text
+job_id=20260813T085916Z-dae3de3a548e
+mode=read
+state=cancelled
+exit_code=null
+```
+
+Submission returned before the long-running worker completed, and cancellation
+persisted terminal `cancelled` status/result evidence.
+
+After the deliberate instance restart, the completed read job remained
+queryable and authoritative. This qualifies detached persistence independently
+of the initiating MCP request and persistence across MCP/tunnel restart.
+
+## Final convergence
+
+After qualification and removal of the temporary source-development access:
+
+```text
+desired_fingerprint=728dcc4f4086ef9e98f856201741dc16c50bee9a9d0f491009661e94cba14701
+access.read_only=[]
+access.read_write=[]
+.workspace-mcp-access=absent
+plan=NOOP
+coding-tools-mcp-manager-qual.service=active/running
+tunnel-client-manager-qual.service=active/running
+MCP discovery=PASS
+healthz=live
+readyz=ready
+```
+
+The live harness preserves the desired-state fingerprint and performs no Codex
+installation or authentication changes.
 
 ## Current gate
 
 ```text
 P10_IMPLEMENTATION=PASS
 P10_PURE_VERIFICATION=PASS
-P10_LIVE_WSL_QUALIFICATION=BLOCKED_EXTERNAL_CODEX
-P11=NOT_STARTED
+P10_LIVE_WSL_QUALIFICATION=PASS
+P10_WSL_QUALIFICATION=PASS
+P11=UNBLOCKED
 ```
-
-P10 can become fully PASS only after the intended standalone Codex payload is
-restored and `scripts/qualify_p10_wsl.sh` completes the live read/write,
-detach/status/output, cancellation, restart-persistence, and regression gates.
