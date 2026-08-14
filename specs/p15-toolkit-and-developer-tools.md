@@ -55,16 +55,20 @@ Toolkit layout:
     src/workspace_mcp_manager/...
     pyproject.toml
     bin/workspace-mcp-manager
+    bin/workspace-mcp-manager-tui
     bin/workspace-mcp-reboot
     install.json
   current -> releases/<source-fingerprint>
 
 <prefix>/bin/workspace-mcp-manager -> ../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager
+<prefix>/bin/workspace-mcp-manager-tui -> ../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager-tui
 <prefix>/bin/workspace-mcp-reboot  -> ../lib/workspace-mcp-manager/current/bin/workspace-mcp-reboot
 ```
 
 The stable `<prefix>/bin` symlinks MUST NOT embed a release fingerprint so a
-single atomic `current` switch upgrades both entrypoints together.
+single atomic `current` switch upgrades all toolkit entrypoints together. PM2
+adds the TUI entrypoint to this P15 atomic-release contract without changing
+P15's manager/reboot semantics.
 
 ### Source fingerprint
 

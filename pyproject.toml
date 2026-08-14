@@ -13,6 +13,7 @@ dependencies = []
 
 [project.scripts]
 workspace-mcp-manager = "workspace_mcp_manager.cli:main"
+workspace-mcp-manager-tui = "workspace_mcp_manager.tui:main"
 workspace-mcp-reboot = "workspace_mcp_manager.reboot:reboot_bridge_main"
 
 [tool.setuptools.packages.find]

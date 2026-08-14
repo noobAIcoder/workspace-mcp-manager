@@ -14,12 +14,14 @@
 | `src/workspace_mcp_manager/development_environment.py` | PM1 GitHub profile, local Git identity/transport and agent-provider reconciliation | exact repository-local owned keys only |
 | `src/workspace_mcp_manager/admission_recovery.py` | Admission guard plus applied-evidence reconstruction for obsolete owned resources | reconstruction only |
 | `src/workspace_mcp_manager/git_diagnostics.py` | Instance Git/GitHub diagnostics under effective environment | read-only |
+| `src/workspace_mcp_manager/tui.py` | PM2 stdlib curses frontend over public manager CLI commands | manager CLI delegation only |
 | `src/workspace_mcp_manager/runtime.py` | Secret-safe tunnel/admission runtime helpers used by systemd | runtime-scoped |
 | `src/workspace_mcp_manager/cli.py` | Thin public/private command routing | delegates only |
 | `scripts/qualify_*.sh` | Reproducible live qualification harnesses | disposable qualification targets only |
 | `specs/capabilities.tsv` | Capability disposition authority | none |
 | `specs/external-contracts.md` | Verified external runtime contracts | none |
 | `specs/pm1-development-environment.md` | CAP-117/119/120/123 post-MVP authority | none |
+| `specs/pm2-tui.md` | Post-MVP terminal frontend authority | none |
 | `tests/` | Stdlib-first pure verification | temporary fixtures/repositories only |
 
 CLI/TUI code MUST NOT manipulate host resources directly. Host mutations enter

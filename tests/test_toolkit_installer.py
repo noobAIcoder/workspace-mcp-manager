@@ -67,6 +67,10 @@ class ToolkitInstallerTests(unittest.TestCase):
                 os.readlink(prefix / "bin/workspace-mcp-manager"),
                 "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager",
             )
+            self.assertEqual(
+                os.readlink(prefix / "bin/workspace-mcp-manager-tui"),
+                "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager-tui",
+            )
             completed = subprocess.run(
                 [str(prefix / "bin/workspace-mcp-manager"), "--help"],
                 stdout=subprocess.PIPE,
@@ -75,6 +79,14 @@ class ToolkitInstallerTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
+            tui_help = subprocess.run(
+                [str(prefix / "bin/workspace-mcp-manager-tui"), "--help"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(tui_help.returncode, 0, tui_help.stderr)
             wrapper = (release / "bin/workspace-mcp-manager").read_text(encoding="utf-8")
             self.assertIn(str(release / "src"), wrapper)
             self.assertNotIn(".stage-", wrapper)

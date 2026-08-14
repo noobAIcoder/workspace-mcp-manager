@@ -119,6 +119,19 @@ is implemented, pure-verified, and reversibly live-qualified on disposable
 `manager-qual` across managed GitHub profile, Git identity, SSH agent, HTTPS
 helper, cleanup/restoration, final all-NOOP convergence, and endpoint health.
 
+PM2 adds `workspace-mcp-manager-tui`, a standard-library `curses` frontend over
+the existing public manager CLI. The TUI has no registry, systemd, Git-mutation,
+or private `_runtime` authority of its own: it delegates host overview,
+instance lifecycle/views, RO/RW access changes, and validated declaration
+create/update workflows to `workspace-mcp-manager`. Its structured editor covers
+the common lifecycle/tunnel/MCP fields plus PM1 GitHub/Git/agent declarations,
+including one-way v1 -> v2 projection. The standalone P15 toolkit now atomically
+publishes the manager, TUI, and reboot bridge from the same release. PM2 is
+pure-verified and live WSL-qualified on `manager-qual`, including dashboard and
+instance snapshots, a real pseudo-TTY curses smoke, isolated toolkit entrypoint,
+unchanged declaration fingerprint, final all-NOOP convergence, and healthy MCP
+/ tunnel endpoints.
+
 ## Run from source
 
 ```sh
@@ -127,6 +140,7 @@ PYTHONPATH=src python3 -m workspace_mcp_manager host doctor --pretty
 PYTHONPATH=src python3 -m workspace_mcp_manager instance validate examples/manager.json --pretty
 PYTHONPATH=src python3 -m workspace_mcp_manager --registry-dir examples/registry instance render manager-qual --pretty
 PYTHONPATH=src python3 -m workspace_mcp_manager --registry-dir examples/registry instance plan manager-qual --pretty
+PYTHONPATH=src python3 -m workspace_mcp_manager.tui --snapshot
 ```
 
 Run the pure test suite without third-party dependencies:
@@ -187,6 +201,9 @@ workspace-mcp-manager codex start <id> --mode read|write (--prompt <text> | --pr
 workspace-mcp-manager codex status <id> <job-id>
 workspace-mcp-manager codex output <id> <job-id> [--limit-bytes N]
 workspace-mcp-manager codex cancel <id> <job-id>
+
+workspace-mcp-manager-tui
+workspace-mcp-manager-tui --snapshot [--instance <id>]
 ```
 
 `plan` remains explicitly non-mutating. Lifecycle mutations execute through the
@@ -200,7 +217,8 @@ has not yet been run for the greenfield manager. P14 implementation, pure
 verification, and synthetic WSL legacy-cleanup qualification are complete.
 P15 and P16 are implemented and WSL-qualified, completing the frozen MVP. PM1
 is also implemented, pure-verified, and reversibly WSL-qualified on
-`manager-qual`.
+`manager-qual`. PM2 is implemented, pure-verified, and WSL-qualified as the
+interactive terminal frontend over that authoritative control plane.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

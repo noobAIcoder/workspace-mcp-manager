@@ -160,6 +160,7 @@ def entrypoints_valid(prefix: Path) -> bool:
     toolkit_root = prefix / "lib" / "workspace-mcp-manager"
     expected = {
         "workspace-mcp-manager": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager",
+        "workspace-mcp-manager-tui": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager-tui",
         "workspace-mcp-reboot": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-reboot",
     }
     if installed_fingerprint(toolkit_root) is None:
@@ -183,6 +184,8 @@ def wrapper_text(release: Path, target: str) -> str:
     src = release / "src"
     if target == "manager":
         statement = "from workspace_mcp_manager.cli import main; raise SystemExit(main())"
+    elif target == "tui":
+        statement = "from workspace_mcp_manager.tui import main; raise SystemExit(main())"
     else:
         statement = "from workspace_mcp_manager.reboot import reboot_bridge_main; raise SystemExit(reboot_bridge_main())"
     return (
@@ -230,6 +233,7 @@ def stage_release(repo: Path, releases: Path, fingerprint: str) -> Path:
         shutil.copy2(repo / "pyproject.toml", stage / "pyproject.toml", follow_symlinks=False)
         (stage / "bin").mkdir(mode=0o755)
         atomic_write(stage / "bin" / "workspace-mcp-manager", wrapper_text(final, "manager"), mode=0o755)
+        atomic_write(stage / "bin" / "workspace-mcp-manager-tui", wrapper_text(final, "tui"), mode=0o755)
         atomic_write(stage / "bin" / "workspace-mcp-reboot", wrapper_text(final, "reboot"), mode=0o755)
         atomic_write(
             stage / "install.json",
@@ -258,6 +262,7 @@ def switch_current(prefix: Path, toolkit_root: Path, fingerprint: str) -> None:
     atomic_symlink(current, f"releases/{fingerprint}")
     expected = {
         "workspace-mcp-manager": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager",
+        "workspace-mcp-manager-tui": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager-tui",
         "workspace-mcp-reboot": "../lib/workspace-mcp-manager/current/bin/workspace-mcp-reboot",
     }
     for name, target in expected.items():
@@ -265,18 +270,19 @@ def switch_current(prefix: Path, toolkit_root: Path, fingerprint: str) -> None:
 
 
 def validate_installed(prefix: Path) -> None:
-    manager = stable_entrypoint(prefix, "workspace-mcp-manager")
-    completed = subprocess.run(
-        [str(manager), "--help"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-        timeout=20,
-    )
-    if completed.returncode != 0:
-        die(f"installed manager entrypoint validation failed: {(completed.stderr or completed.stdout)[-2000:]}")
+    for name in ("workspace-mcp-manager", "workspace-mcp-manager-tui"):
+        executable = stable_entrypoint(prefix, name)
+        completed = subprocess.run(
+            [str(executable), "--help"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if completed.returncode != 0:
+            die(f"installed {name} entrypoint validation failed: {(completed.stderr or completed.stdout)[-2000:]}")
 
 
 def report(*, candidate: str, installed: str | None, instance_count: int, instances_valid: bool, links_valid: bool) -> dict[str, object]:
