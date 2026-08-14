@@ -128,6 +128,40 @@ class DevelopmentEnvironmentTests(unittest.TestCase):
             self.assertEqual(self._git(repo, "config", "--local", "--get", IDENTITY_OWNER_KEY, check=False), "")
             self.assertEqual(self._git(repo, "config", "--local", "--get", REMOTE_OWNER_KEY, check=False), "")
 
+    def test_equivalent_remote_spelling_is_reversibly_adopted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            self._init_repo(repo)
+            original_url = "https://github.com/owner/repo"
+            self._git(repo, "remote", "add", "origin", original_url)
+
+            desired = self._desired(root, repo, protocol="https-gh")
+            reconciler = DevelopmentEnvironmentReconciler(self._paths(root))
+            observation = reconciler.observe_transport(desired)
+            self.assertEqual(observation.status, DevObservationStatus.ABSENT)
+            self.assertIn("semantically equivalent", observation.detail)
+
+            reconciler.converge_transport(desired)
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", "remote.origin.url"),
+                "https://github.com/owner/repo.git",
+            )
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", REMOTE_ORIGINAL_URL_KEY),
+                original_url,
+            )
+            self.assertEqual(reconciler.observe_transport(desired).status, DevObservationStatus.EXACT)
+
+            absent_raw = desired.to_dict()
+            absent_raw["lifecycle"] = {"deployment": "absent", "runtime": "stopped"}
+            reconciler.converge_transport(DesiredInstance.from_dict(absent_raw))
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", "remote.origin.url"),
+                original_url,
+            )
+            self.assertEqual(self._git(repo, "config", "--local", "--get", REMOTE_OWNER_KEY, check=False), "")
+
     def test_created_identity_is_removed_on_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
