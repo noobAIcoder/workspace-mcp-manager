@@ -13,7 +13,7 @@ from .planning import HostResourceObserver, PlanOperation, ReconciliationPlan
 PROJECTION_VERSION = 1
 PLAN_FINGERPRINT_VERSION = 1
 PLAN_EXECUTION_PRECONDITION_VERSION = 1
-TEMPLATE_VERSION = 1
+TEMPLATE_VERSION = 2
 
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
@@ -180,7 +180,6 @@ def operator_template(paths: ManagerPaths) -> dict[str, Any]:
             "workspace_path",
             "mcp.port",
             "tunnel.id",
-            "tunnel.profile",
             "tunnel.health_port",
         ],
     }

@@ -93,6 +93,18 @@ class CliTests(unittest.TestCase):
             ("docs", "rw", "models", "/srv/models", "c" * 64),
         )
 
+    def test_pm3_1_discovery_candidate_and_ports_surface_parses(self) -> None:
+        parser = build_parser()
+        discover = parser.parse_args(["instance", "discover", "/home/operator/repos/example", "--pretty"])
+        self.assertEqual((discover.area, discover.command, discover.path), ("instance", "discover", "/home/operator/repos/example"))
+        self.assertTrue(discover.pretty)
+        candidate = parser.parse_args(["instance", "candidate", "--pretty"])
+        self.assertEqual((candidate.area, candidate.command), ("instance", "candidate"))
+        self.assertTrue(candidate.pretty)
+        ports = parser.parse_args(["host", "ports", "--pretty"])
+        self.assertEqual((ports.area, ports.command), ("host", "ports"))
+        self.assertTrue(ports.pretty)
+
     def test_instance_git_command_parses_p9_diagnostic(self) -> None:
         args = build_parser().parse_args(["instance", "git", "manager-qual", "--pretty"])
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))

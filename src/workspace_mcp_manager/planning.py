@@ -19,7 +19,15 @@ from .development_environment import (
     validate_pm1_host_preconditions,
 )
 from .domain import DeploymentTarget, DesiredInstance, RuntimeTarget
-from .errors import ManagerError
+from .endpoint_projection import (
+    Endpoint,
+    ListenerObservation,
+    ListenerState,
+    endpoint_overlap,
+    listener_strings,
+    observe_tcp_listeners,
+)
+from .errors import ErrorCode, ManagerError
 from .generation import OWNER_PREFIX, GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
 from .paths import ManagerPaths
 from .registry import InstanceRegistry
@@ -265,25 +273,10 @@ class HostResourceObserver:
         )
 
     def listeners(self) -> set[str]:
-        try:
-            completed = subprocess.run(
-                ["ss", "-H", "-ltn"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                errors="replace",
-                timeout=3,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return set()
-        listeners: set[str] = set()
-        for line in completed.stdout.splitlines():
-            fields = line.split()
-            if len(fields) >= 4:
-                listeners.add(fields[3])
-        return listeners
+        return listener_strings(self.listener_observation())
+
+    def listener_observation(self) -> ListenerObservation:
+        return observe_tcp_listeners()
 
     def managed_identities(self) -> list[dict[str, str]]:
         try:
@@ -420,6 +413,26 @@ class ReconciliationPlanner:
 
     def _registry_conflicts(self, desired: DesiredInstance) -> list[PlanItem]:
         result: list[PlanItem] = []
+        desired_mcp = Endpoint(desired.mcp.host, desired.mcp.port, "MCP", "candidate", desired.instance_id.value)
+        desired_health = Endpoint(
+            desired.tunnel.health_host,
+            desired.tunnel.health_port,
+            "Tunnel health",
+            "candidate",
+            desired.instance_id.value,
+        )
+        internal_overlap = endpoint_overlap(desired_mcp, desired_health)
+        if internal_overlap is not False:
+            result.append(
+                PlanItem(
+                    PlanOperation.CONFLICT,
+                    f"{desired_mcp.host}:{desired_mcp.port}",
+                    "candidate MCP and tunnel-health endpoints overlap"
+                    if internal_overlap is True
+                    else "cannot prove candidate MCP and tunnel-health endpoints are disjoint without network resolution",
+                    resource_id="endpoint",
+                )
+            )
         for other in self.registry.list():
             if other.instance_id == desired.instance_id:
                 continue
@@ -427,12 +440,6 @@ class ReconciliationPlanner:
                 (desired.workspace_path, other.workspace_path, "workspace path"),
                 (desired.tunnel.id, other.tunnel.id, "tunnel ID"),
                 (desired.tunnel.profile, other.tunnel.profile, "tunnel profile"),
-                ((desired.mcp.host, desired.mcp.port), (other.mcp.host, other.mcp.port), "MCP endpoint"),
-                (
-                    (desired.tunnel.health_host, desired.tunnel.health_port),
-                    (other.tunnel.health_host, other.tunnel.health_port),
-                    "tunnel health endpoint",
-                ),
             )
             for left, right, label in comparisons:
                 if left == right:
@@ -441,6 +448,35 @@ class ReconciliationPlanner:
                             PlanOperation.CONFLICT,
                             desired.instance_id.value,
                             f"{label} collides with declared instance {other.instance_id.value}",
+                        )
+                    )
+            desired_endpoints = (desired_mcp, desired_health)
+            other_endpoints = (
+                Endpoint(other.mcp.host, other.mcp.port, "MCP", "declared", other.instance_id.value),
+                Endpoint(
+                    other.tunnel.health_host,
+                    other.tunnel.health_port,
+                    "Tunnel health",
+                    "declared",
+                    other.instance_id.value,
+                ),
+            )
+            for left in desired_endpoints:
+                for right in other_endpoints:
+                    overlap = endpoint_overlap(left, right)
+                    if overlap is False:
+                        continue
+                    reason = (
+                        f"{left.purpose} endpoint collides with {right.purpose.lower()} endpoint of declared instance {other.instance_id.value}"
+                        if overlap is True
+                        else f"cannot prove {left.purpose} endpoint is disjoint from {right.purpose.lower()} endpoint of declared instance {other.instance_id.value} without network resolution"
+                    )
+                    result.append(
+                        PlanItem(
+                            PlanOperation.CONFLICT,
+                            f"{left.host}:{left.port}",
+                            reason,
+                            resource_id="endpoint",
                         )
                     )
         return result
@@ -544,20 +580,61 @@ class ReconciliationPlanner:
 
     @staticmethod
     def _endpoint_in_use(listeners: set[str], host: str, port: int) -> bool:
-        suffix = f":{port}"
+        candidate = Endpoint(host, port, "candidate", "candidate")
         for item in listeners:
-            if not item.endswith(suffix):
+            raw_host, separator, raw_port = item.rpartition(":")
+            if not separator or not raw_port.isdigit():
                 continue
-            if host in {"0.0.0.0", "::"}:
-                return True
-            if item.startswith(host + ":") or item.startswith("[" + host + "]:"):
-                return True
-            if item.startswith("0.0.0.0:") or item.startswith("[::]:") or item.startswith("*:"):
+            if raw_host.startswith("[") and raw_host.endswith("]"):
+                raw_host = raw_host[1:-1]
+            observed = Endpoint(
+                raw_host or "*",
+                int(raw_port),
+                "Unknown",
+                "observed",
+                dual_stack_unknown=raw_host == "::",
+            )
+            if endpoint_overlap(candidate, observed) is True:
                 return True
         return False
 
+    @staticmethod
+    def _observation_from_legacy_listeners(listeners: set[str]) -> ListenerObservation:
+        endpoints: list[Endpoint] = []
+        for item in listeners:
+            raw_host, separator, raw_port = item.rpartition(":")
+            if not separator or not raw_port.isdigit():
+                continue
+            if raw_host.startswith("[") and raw_host.endswith("]"):
+                raw_host = raw_host[1:-1]
+            endpoints.append(
+                Endpoint(
+                    raw_host or "*",
+                    int(raw_port),
+                    "Unknown",
+                    "observed",
+                    dual_stack_unknown=raw_host == "::",
+                )
+            )
+        return ListenerObservation(ListenerState.AVAILABLE, tuple(endpoints))
+
+    def _listener_observation(self) -> ListenerObservation:
+        method = getattr(self.observer, "listener_observation", None)
+        inherited_live_method = (
+            callable(method)
+            and getattr(type(self.observer), "listener_observation", None)
+            is HostResourceObserver.listener_observation
+            and getattr(type(self.observer), "listeners", None) is not HostResourceObserver.listeners
+        )
+        if callable(method) and not inherited_live_method:
+            return method()
+        legacy = getattr(self.observer, "listeners", None)
+        if callable(legacy):
+            return self._observation_from_legacy_listeners(set(legacy()))
+        return ListenerObservation(ListenerState.UNAVAILABLE, (), "listener observer is unavailable")
+
     def _listener_conflicts(self, desired: DesiredInstance, bundle: GeneratedBundle) -> list[PlanItem]:
-        listeners = self.observer.listeners()
+        observation = self._listener_observation()
         result: list[PlanItem] = []
         unit_by_id = {resource.resource_id: resource for resource in bundle.resources if resource.unit_name}
         identities = {
@@ -569,8 +646,8 @@ class ReconciliationPlanner:
             ("tunnel-unit", desired.tunnel.health_host, desired.tunnel.health_port, "tunnel health listener"),
         )
         for resource_id, host, port, label in checks:
-            if not self._endpoint_in_use(listeners, host, port):
-                continue
+            candidate_endpoint = Endpoint(host, port, label, "candidate", desired.instance_id.value)
+            overlapping = [item for item in observation.endpoints if endpoint_overlap(candidate_endpoint, item) is True]
             resource = unit_by_id[resource_id]
             unit = self.observer.observe_unit(resource.unit_name or "")
             observed_resource = self.observer.observe_resource(resource)
@@ -592,7 +669,7 @@ class ReconciliationPlanner:
                     and current.get("mcp_host") == host
                     and current.get("mcp_port") == str(port)
                 )
-            if not owned_listener:
+            if overlapping and not owned_listener:
                 result.append(
                     PlanItem(
                         PlanOperation.CONFLICT,
@@ -601,6 +678,35 @@ class ReconciliationPlanner:
                         resource_id=resource_id,
                     )
                 )
+            if observation.state is not ListenerState.AVAILABLE:
+                try:
+                    current_desired = self.registry.get(desired.instance_id.value)
+                except ManagerError as exc:
+                    if exc.code is ErrorCode.INSTANCE_NOT_FOUND:
+                        current_desired = None
+                    else:
+                        raise
+                if current_desired is None:
+                    unchanged = False
+                elif resource_id == "mcp-unit":
+                    unchanged = (
+                        current_desired.mcp.host == desired.mcp.host
+                        and current_desired.mcp.port == desired.mcp.port
+                    )
+                else:
+                    unchanged = (
+                        current_desired.tunnel.health_host == desired.tunnel.health_host
+                        and current_desired.tunnel.health_port == desired.tunnel.health_port
+                    )
+                if not unchanged:
+                    result.append(
+                        PlanItem(
+                            PlanOperation.CONFLICT,
+                            f"{host}:{port}",
+                            f"{label} collision evidence is {observation.state.value}; endpoint-sensitive mutation fails closed",
+                            resource_id=resource_id,
+                        )
+                    )
         return result
 
     def _file_operations(

@@ -119,18 +119,23 @@ is implemented, pure-verified, and reversibly live-qualified on disposable
 `manager-qual` across managed GitHub profile, Git identity, SSH agent, HTTPS
 helper, cleanup/restoration, final all-NOOP convergence, and endpoint health.
 
-PM2 adds `workspace-mcp-manager-tui`, a standard-library `curses` frontend over
-the existing public manager CLI. The TUI has no registry, systemd, Git-mutation,
-or private `_runtime` authority of its own: it delegates host overview,
-instance lifecycle/views, RO/RW access changes, and validated declaration
-create/update workflows to `workspace-mcp-manager`. Its structured editor covers
-the common lifecycle/tunnel/MCP fields plus PM1 GitHub/Git/agent declarations,
-including one-way v1 -> v2 projection. The standalone P15 toolkit now atomically
-publishes the manager, TUI, and reboot bridge from the same release. PM2 is
-pure-verified and live WSL-qualified on `manager-qual`, including dashboard and
-instance snapshots, a real pseudo-TTY curses smoke, isolated toolkit entrypoint,
-unchanged declaration fingerprint, final all-NOOP convergence, and healthy MCP
-/ tunnel endpoints.
+PM2 established `workspace-mcp-manager-tui` and its bounded snapshot/smoke
+contracts over the public manager CLI. PM3 replatforms the interactive frontend
+to the isolated Textual runtime while preserving those external contracts and
+keeping registry, systemd, Git/Access interpretation, reconciliation, and
+mutation authority in `workspace-mcp-manager`.
+
+PM3.1 makes instance setup context-aware and manager-composed. Launch context or
+a selected directory is resolved through `instance discover`; effective setup
+state is constructed through `instance candidate` with field provenance and
+structured operator edits; `host ports` projects declared/listening endpoints
+and recommendation/collision evidence. The Textual wizard supplies intent only,
+uses an existing-instance dropdown and filesystem-only directory picker, shows
+known ports and local Git/authentication evidence, and hides the manager-derived
+tunnel profile from normal editing. Authentication credentials remain external
+and secret values do not enter public setup contracts or TUI state. PM3.1 is
+pure/Pilot/live WSL-qualified with PM3 and PM2 regression gates and final
+`manager-qual` all-NOOP convergence.
 
 ## Run from source
 
@@ -166,6 +171,7 @@ The CLI supports `--registry-dir` for explicit testing/bootstrap isolation.
 workspace-mcp-manager host inspect
 workspace-mcp-manager host doctor
 workspace-mcp-manager host components
+workspace-mcp-manager host ports
 workspace-mcp-manager host reboot --reason <text>
 workspace-mcp-manager host reboot-check
 
@@ -180,6 +186,12 @@ workspace-mcp-manager instance create <file>
 workspace-mcp-manager instance update <file>
 workspace-mcp-manager instance list
 workspace-mcp-manager instance show <id>
+workspace-mcp-manager instance template
+workspace-mcp-manager instance discover <path>
+workspace-mcp-manager instance candidate        # request JSON on stdin
+workspace-mcp-manager instance preview <file>
+workspace-mcp-manager instance summary <id>
+workspace-mcp-manager instance summaries
 workspace-mcp-manager instance render <id>
 workspace-mcp-manager instance plan <id>
 workspace-mcp-manager instance status <id>
@@ -196,6 +208,7 @@ workspace-mcp-manager access list <id>
 workspace-mcp-manager access add-ro <id> <alias> <path>
 workspace-mcp-manager access add-rw <id> <alias> <path>
 workspace-mcp-manager access remove <id> <alias>
+workspace-mcp-manager access update <id> <existing-alias> ro|rw <alias> <path>
 
 workspace-mcp-manager codex start <id> --mode read|write (--prompt <text> | --prompt-stdin)
 workspace-mcp-manager codex status <id> <job-id>
@@ -217,8 +230,9 @@ has not yet been run for the greenfield manager. P14 implementation, pure
 verification, and synthetic WSL legacy-cleanup qualification are complete.
 P15 and P16 are implemented and WSL-qualified, completing the frozen MVP. PM1
 is also implemented, pure-verified, and reversibly WSL-qualified on
-`manager-qual`. PM2 is implemented, pure-verified, and WSL-qualified as the
-interactive terminal frontend over that authoritative control plane.
+`manager-qual`. PM2 external terminal contracts remain qualified; PM3 is the
+qualified Textual operator frontend; PM3.1 is qualified for context-aware,
+manager-authoritative instance setup with PM3/PM2 regression preservation.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

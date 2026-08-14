@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
+import webbrowser
 from functools import partial
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from textual import on, work
@@ -16,6 +19,7 @@ from textual.widgets import (
     Button,
     Checkbox,
     DataTable,
+    DirectoryTree,
     Footer,
     Header,
     Input,
@@ -35,11 +39,10 @@ from .tui import (
     SettingsField,
     TuiError,
     TuiOutcomeUnknown,
-    apply_settings_values,
     get_nested,
+    parse_settings_value,
     project_v1_to_v2,
     semantic_plan_diff,
-    settings_field_applicable,
 )
 
 
@@ -943,29 +946,93 @@ class SettingsScreen(BaseScreen):
             values[field.path] = value
         return values
 
-    def _candidate(self) -> dict[str, Any]:
-        candidate = apply_settings_values(self.draft, self._values())
-        self.draft = copy.deepcopy(candidate)
-        return candidate
+    @staticmethod
+    def _pointer(path: Sequence[str]) -> str:
+        return "/" + "/".join(part.replace("~", "~0").replace("/", "~1") for part in path)
+
+    def _parsed_values(self) -> dict[tuple[str, ...], Any]:
+        raw = self._values()
+        result: dict[tuple[str, ...], Any] = {}
+        for field in SETTINGS_FIELDS:
+            result[field.path] = parse_settings_value(field, raw[field.path])
+        return result
+
+    def _field_edits(self) -> list[dict[str, Any]]:
+        """Translate controls into explicit edit intent without composing desired state."""
+
+        values = self._parsed_values()
+        original = self.draft
+        edits: list[dict[str, Any]] = []
+
+        composite_paths = {
+            ("git", "identity", "name"),
+            ("git", "identity", "email"),
+            ("git", "remote", "name"),
+            ("git", "remote", "protocol"),
+        }
+        for field in SETTINGS_FIELDS:
+            if field.path in composite_paths:
+                continue
+            value = values[field.path]
+            if value == get_nested(original, field.path):
+                continue
+            pointer = self._pointer(field.path)
+            if value is None:
+                edits.append({"path": pointer, "operation": "clear"})
+            else:
+                edits.append({"path": pointer, "operation": "set", "value": value})
+
+        identity_name = values[("git", "identity", "name")]
+        identity_email = values[("git", "identity", "email")]
+        original_identity = get_nested(original, ("git", "identity"))
+        if not identity_name and not identity_email:
+            if original_identity is not None:
+                edits.append({"path": "/git/identity", "operation": "clear"})
+        elif not identity_name or not identity_email:
+            raise ValueError("Git identity requires both name and email")
+        else:
+            identity = {"name": identity_name, "email": identity_email}
+            if identity != original_identity:
+                edits.append({"path": "/git/identity", "operation": "set", "value": identity})
+
+        remote_name = values[("git", "remote", "name")]
+        remote_protocol = values[("git", "remote", "protocol")]
+        original_remote = get_nested(original, ("git", "remote"))
+        if not remote_name and not remote_protocol:
+            if original_remote is not None:
+                edits.append({"path": "/git/remote", "operation": "clear"})
+        elif not remote_name or not remote_protocol:
+            raise ValueError("Git remote requires both name and protocol")
+        else:
+            remote = {"name": remote_name, "protocol": remote_protocol}
+            if remote != original_remote:
+                edits.append({"path": "/git/remote", "operation": "set", "value": remote})
+        return edits
+
+    def _candidate_request(self) -> dict[str, Any]:
+        return {
+            "candidate_request_version": 1,
+            "workspace_path": str(self.draft["workspace_path"]),
+            "field_edits": self._field_edits(),
+            "access_edits": [],
+        }
 
     def _sync_applicability(self) -> None:
-        try:
-            transient = apply_settings_values(self.draft, self._values())
-        except ValueError:
-            transient = self.draft
-            # Choice controls still provide enough state for dependency display.
-            for index, field in enumerate(SETTINGS_FIELDS):
-                if field.path not in {("github", "mode"), ("agent", "mode")}:
-                    continue
-                control = self.query_one(f"#{self._control_id(index)}", Select)
-                if control.value is not Select.BLANK:
-                    transient = copy.deepcopy(dict(transient))
-                    from .tui import set_nested
-
-                    set_nested(transient, field.path, str(control.value))
+        modes: dict[tuple[str, ...], str] = {}
+        for index, field in enumerate(SETTINGS_FIELDS):
+            if field.path not in {("github", "mode"), ("agent", "mode")}:
+                continue
+            control = self.query_one(f"#{self._control_id(index)}", Select)
+            if control.value is not Select.BLANK:
+                modes[field.path] = str(control.value)
         for index, field in enumerate(SETTINGS_FIELDS):
             wrapper = self.query_one(f"#{self._wrap_id(index)}")
-            wrapper.styles.display = "block" if settings_field_applicable(field, transient) else "none"
+            applicable = True
+            if field.path in {("github", "config_dir"), ("github", "binary")}:
+                applicable = modes.get(("github", "mode"), "disabled") in {"external", "managed"}
+            elif field.path == ("agent", "ssh_auth_sock"):
+                applicable = modes.get(("agent", "mode"), "none") == "external"
+            wrapper.styles.display = "block" if applicable else "none"
 
     @on(Select.Changed)
     def select_changed(self, event: Select.Changed) -> None:
@@ -980,17 +1047,21 @@ class SettingsScreen(BaseScreen):
             self.app.push_screen(RawJsonScreen(f"{self.instance_id} — Raw declaration", self.original))
         elif event.button.id == "save":
             try:
-                candidate = self._candidate()
+                request = self._candidate_request()
             except ValueError as exc:
                 self.set_status(f"✗ {exc}")
                 return
-            self.set_status("Previewing candidate with manager authority…")
-            self._preview_worker(candidate)
+            self.set_status("Reconstructing settings candidate with manager authority…")
+            self._preview_worker(request)
 
     @work(thread=True, exclusive=True, exit_on_error=False)
-    def _preview_worker(self, candidate: Mapping[str, Any]) -> None:
+    def _preview_worker(self, request: Mapping[str, Any]) -> None:
         worker = get_current_worker()
         try:
+            candidate_payload = self.client.candidate(request)
+            candidate = candidate_payload.get("effective_declaration")
+            if not isinstance(candidate, Mapping):
+                raise TuiError("manager candidate did not return an effective declaration")
             preview = self.client.preview_declaration(candidate)
         except TuiError as exc:
             if not worker.is_cancelled:
@@ -1152,15 +1223,69 @@ class HostScreen(BaseScreen):
             self.refresh_authoritative()
 
 
+class DirectoryPicker(ModalScreen[Path | None]):
+    """Filesystem-only directory selector; semantic interpretation stays manager-side."""
+
+    def __init__(self, selected: Path) -> None:
+        super().__init__()
+        self.selected = selected if selected.is_dir() else selected.parent
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="page"):
+            yield Static("[b]Choose directory[/b]", classes="title")
+            yield Static(str(self.selected), id="directory-selection", classes="card")
+            yield DirectoryTree("/", id="directory-tree")
+            with Horizontal(classes="actions"):
+                yield Button("Use selected", id="directory-use", variant="primary")
+                yield Button("Cancel", id="directory-cancel")
+
+    @on(DirectoryTree.DirectorySelected)
+    def directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        self.selected = Path(event.path)
+        self.query_one("#directory-selection", Static).update(str(self.selected))
+
+    @on(Button.Pressed)
+    def button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "directory-use":
+            self.dismiss(self.selected)
+        elif event.button.id == "directory-cancel":
+            self.dismiss(None)
+
+
 class NewInstanceScreen(BaseScreen):
-    STEPS = ("Basics", "Runtime", "Tunnel", "Git & Access", "Review")
+    STEPS = ("Workspace", "Runtime", "Tunnel", "Git & Access", "Review")
+    REUSABLE_EDIT_PATHS = {
+        "/mcp/binary",
+        "/mcp/host",
+        "/mcp/port",
+        "/mcp/permission_mode",
+        "/mcp/shell_env_inherit",
+        "/mcp/exec_path",
+        "/mcp/external_roots",
+        "/tunnel/binary",
+        "/tunnel/health_host",
+        "/tunnel/health_port",
+        "/tunnel/env_file",
+        "/recovery/admission_guard_enabled",
+        "/recovery/guard_interval_seconds",
+        "/recovery/recovery_cooldown_seconds",
+    }
 
     def __init__(self) -> None:
         super().__init__()
         self.step = 0
-        self.candidate: dict[str, Any] = {}
+        self.field_edits: list[dict[str, Any]] = []
+        self.access_edits: list[dict[str, Any]] = []
+        self.candidate_payload: Mapping[str, Any] | None = None
         self.preview_payload: Mapping[str, Any] | None = None
-        self.source_mode = "defaults"
+        self.workspace_identity: str | None = None
+        self.existing_instance_id: str | None = None
+        self.setup_action_url: str | None = None
+        self._dirty_paths: set[str] = set()
+        self._workspace_dirty = False
+        self._populating = True
+        self._candidate_gate = GenerationGate()
+        self._active_request_identity: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1171,43 +1296,57 @@ class NewInstanceScreen(BaseScreen):
                 with Vertical(id="wizard-basics", classes="wizard-step"):
                     yield Label("Start from")
                     yield Select(
-                        (("Defaults", "defaults"), ("Copy existing instance", "copy")),
+                        (("Defaults", "defaults"), ("Copy existing", "copy")),
                         value="defaults",
                         allow_blank=False,
                         id="new-source-mode",
                     )
-                    yield Label("Existing instance ID (copy mode)")
-                    yield Input(id="new-copy-source")
-                    yield Button("Load source", id="new-load-source")
-                    yield Label("Instance ID")
-                    yield Input(placeholder="example", id="new-instance-id")
+                    with Vertical(id="copy-source-row"):
+                        yield Label("Copy configuration from")
+                        yield Select([], allow_blank=True, id="new-copy-source")
                     yield Label("Workspace")
-                    yield Input(placeholder="/home/user/repos/example", id="new-workspace")
+                    with Horizontal(classes="actions"):
+                        yield Input(placeholder="/home/user/repos/example", id="new-workspace")
+                        yield Button("Browse…", id="new-workspace-browse")
+                    yield Label("Instance ID")
+                    yield Input(placeholder="manager-suggested-id", id="new-instance-id")
+                    with Vertical(id="existing-workspace-row"):
+                        yield Static("", id="new-existing-workspace")
+                        yield Button("Open existing instance", id="new-open-existing", variant="primary")
                 with Vertical(id="wizard-runtime", classes="wizard-step"):
+                    yield Label("Permission mode")
+                    yield Select(
+                        (("safe", "safe"), ("trusted", "trusted"), ("dangerous", "dangerous")),
+                        value="trusted",
+                        allow_blank=False,
+                        id="new-permission",
+                    )
                     yield Label("MCP port")
                     yield Input(placeholder="7654", id="new-mcp-port")
-                    yield Label("Permission mode")
-                    yield Select((("safe", "safe"), ("trusted", "trusted"), ("dangerous", "dangerous")), value="trusted", allow_blank=False, id="new-permission")
+                    yield Static("", id="new-mcp-port-state", classes="card")
+                    yield Label("Known ports")
+                    yield Static("Loading manager port projection…", id="new-runtime-known-ports", classes="card")
                 with Vertical(id="wizard-tunnel", classes="wizard-step"):
                     yield Label("Tunnel ID")
-                    yield Input(id="new-tunnel-id")
-                    yield Label("Tunnel profile")
-                    yield Input(id="new-tunnel-profile")
+                    yield Input(placeholder="tunnel_…", id="new-tunnel-id")
                     yield Label("Tunnel health port")
                     yield Input(placeholder="7070", id="new-health-port")
+                    yield Static("", id="new-health-port-state", classes="card")
+                    yield Label("Known ports")
+                    yield Static("Loading manager port projection…", id="new-tunnel-known-ports", classes="card")
+                    yield Label("Authentication")
+                    yield Static("Loading external authentication status…", id="new-auth-status", classes="card")
+                    yield Button("Open credential setup", id="new-auth-setup")
                 with Vertical(id="wizard-git", classes="wizard-step"):
-                    yield Label("GitHub profile mode")
-                    yield Select((("disabled", "disabled"), ("external", "external"), ("managed", "managed")), value="disabled", allow_blank=False, id="new-github-mode")
-                    yield Label("GitHub config directory (external/managed mode)")
-                    yield Input(id="new-github-config-dir")
-                    yield Label("Initial read-only access alias")
-                    yield Input(id="new-ro-alias")
-                    yield Label("Initial read-only access path")
-                    yield Input(id="new-ro-path")
-                    yield Label("Initial read-write access alias")
-                    yield Input(id="new-rw-alias")
-                    yield Label("Initial read-write access path")
-                    yield Input(id="new-rw-path")
+                    yield Label("Git repository and adoption")
+                    yield Static("Loading manager Git discovery…", id="new-git-summary", classes="card")
+                    yield Label("External folder access")
+                    yield Static("No additional folders configured", id="new-access-summary", classes="card")
+                    yield Select([], allow_blank=True, id="new-access-selection")
+                    with Horizontal(classes="actions"):
+                        yield Button("+ Read-only folder", id="new-access-add-ro")
+                        yield Button("+ Read-write folder", id="new-access-add-rw")
+                        yield Button("Remove selected", id="new-access-remove")
                 with Vertical(id="wizard-review", classes="wizard-step"):
                     yield RichLog(id="wizard-review-log", wrap=True, markup=True)
             with Horizontal(classes="actions"):
@@ -1215,33 +1354,261 @@ class NewInstanceScreen(BaseScreen):
                 yield Button("Next", id="wizard-next", variant="primary")
                 yield Button("Create declaration", id="wizard-create", classes="mutation-action")
                 yield Button("Create and deploy", id="wizard-deploy", variant="success", classes="mutation-action")
-            yield Static("Loading manager defaults…", id="screen-status")
+            yield Static("Discovering launch context…", id="screen-status")
         yield Footer()
 
     def on_mount(self) -> None:
         self._show_step()
-        self._load_template_worker()
+        self.query_one("#copy-source-row").styles.display = "none"
+        self.query_one("#existing-workspace-row").styles.display = "none"
+        self.query_one("#new-auth-setup", Button).styles.display = "none"
+        self._populating = True
+        self.query_one("#new-workspace", Input).value = os.getcwd()
+        self._populating = False
+        self._load_summaries_worker()
+        self._request_candidate("launch context")
+
+    @staticmethod
+    def _select_value(select: Select) -> str:
+        return "" if select.value is Select.BLANK else str(select.value)
+
+    def _build_request(self) -> dict[str, Any]:
+        workspace = self.query_one("#new-workspace", Input).value.strip() or os.getcwd()
+        request: dict[str, Any] = {
+            "candidate_request_version": 1,
+            "workspace_path": workspace,
+            "field_edits": copy.deepcopy(self.field_edits),
+            "access_edits": copy.deepcopy(self.access_edits),
+        }
+        if self._select_value(self.query_one("#new-source-mode", Select)) == "copy":
+            source = self._select_value(self.query_one("#new-copy-source", Select))
+            if source:
+                request["copy_source_instance_id"] = source
+        return request
+
+    @staticmethod
+    def _request_identity(request: Mapping[str, Any]) -> str:
+        return json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _set_field_edit(self, path: str, value: Any) -> None:
+        self.field_edits = [item for item in self.field_edits if item.get("path") != path]
+        self.field_edits.append({"path": path, "operation": "set", "value": value})
+
+    def _remove_field_edit(self, path: str) -> None:
+        self.field_edits = [item for item in self.field_edits if item.get("path") != path]
+
+    def _request_candidate(self, reason: str) -> None:
+        request = self._build_request()
+        identity = self._request_identity(request)
+        generation = self._candidate_gate.next("new-instance")
+        self._active_request_identity = identity
+        self.preview_payload = None
+        self.query_one("#wizard-create", Button).disabled = True
+        self.query_one("#wizard-deploy", Button).disabled = True
+        self.set_status(f"Refreshing manager candidate: {reason}…")
+        self._candidate_worker(request, identity, generation)
 
     @work(thread=True, exclusive=True, exit_on_error=False)
-    def _load_template_worker(self) -> None:
+    def _candidate_worker(self, request: Mapping[str, Any], identity: str, generation: int) -> None:
         worker = get_current_worker()
         try:
-            template = self.client.template()
+            payload = self.client.candidate(request)
         except TuiError as exc:
             if not worker.is_cancelled:
-                self.app.call_from_thread(self.set_status, f"✗ Manager template unavailable: {exc}")
+                self.app.call_from_thread(self._candidate_failed, identity, generation, str(exc))
             return
         if not worker.is_cancelled:
-            self.app.call_from_thread(self._apply_template, template)
+            self.app.call_from_thread(self._apply_candidate, payload, identity, generation)
 
-    def _apply_template(self, template: Mapping[str, Any]) -> None:
-        defaults = template.get("defaults")
-        if not isinstance(defaults, Mapping):
-            self.set_status("✗ Manager template did not provide defaults")
+    def _candidate_failed(self, identity: str, generation: int, message: str) -> None:
+        if not self._candidate_gate.accepts("new-instance", generation) or identity != self._active_request_identity:
             return
-        self.candidate = copy.deepcopy(dict(defaults))
-        self._populate_from_candidate()
-        self.set_status("✓ Manager-owned defaults loaded")
+        self.set_status(f"✗ Manager candidate rejected: {message}")
+
+    def _apply_candidate(self, payload: Mapping[str, Any], identity: str, generation: int) -> None:
+        if not self._candidate_gate.accepts("new-instance", generation) or identity != self._active_request_identity:
+            return
+        discovery = payload.get("discovery") if isinstance(payload.get("discovery"), Mapping) else {}
+        new_identity = str(discovery.get("workspace_identity") or "") or None
+        if self.workspace_identity is not None and new_identity is not None and new_identity != self.workspace_identity:
+            self.field_edits = [
+                item for item in self.field_edits if str(item.get("path")) in self.REUSABLE_EDIT_PATHS
+            ]
+            self.access_edits = []
+            self.workspace_identity = new_identity
+            resolved = discovery.get("workspace_path")
+            if isinstance(resolved, str) and resolved:
+                self._populating = True
+                self.query_one("#new-workspace", Input).value = resolved
+                self._populating = False
+            self._request_candidate("canonical workspace changed; target-bound edits invalidated")
+            return
+        self.workspace_identity = new_identity or self.workspace_identity
+        self.candidate_payload = payload
+        self.existing_instance_id = str(payload.get("existing_instance_id")) if payload.get("existing_instance_id") else None
+        self._populate_from_candidate(payload)
+        warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
+        warning_suffix = f" — {warnings[0]}" if warnings else ""
+        self.set_status(f"✓ Manager-authoritative candidate refreshed{warning_suffix}")
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _load_summaries_worker(self) -> None:
+        worker = get_current_worker()
+        try:
+            payload = self.client.summaries()
+        except TuiError as exc:
+            if not worker.is_cancelled:
+                self.app.call_from_thread(self.set_status, f"! Existing-instance list unavailable: {exc}")
+            return
+        if not worker.is_cancelled:
+            self.app.call_from_thread(self._apply_summaries, payload)
+
+    def _apply_summaries(self, payload: Mapping[str, Any]) -> None:
+        values = payload.get("instances") if isinstance(payload.get("instances"), list) else []
+        options: list[tuple[str, str]] = []
+        for item in values:
+            if not isinstance(item, Mapping) or not item.get("instance_id"):
+                continue
+            instance_id = str(item["instance_id"])
+            workspace = str(item.get("workspace_path") or "?")
+            options.append((f"{instance_id}  {workspace}", instance_id))
+        select = self.query_one("#new-copy-source", Select)
+        select.set_options(options)
+        if not options:
+            select.disabled = True
+
+    def _known_ports_text(self, projection: Mapping[str, Any]) -> str:
+        endpoints = projection.get("endpoints") if isinstance(projection.get("endpoints"), list) else []
+        state = projection.get("listener_observation") if isinstance(projection.get("listener_observation"), Mapping) else {}
+        lines = [f"Listener evidence: {state.get('state', 'unknown')}"]
+        for item in endpoints[:12]:
+            if not isinstance(item, Mapping):
+                continue
+            owner = item.get("instance_id") or "—"
+            item_state = item.get("state") or item.get("source") or "?"
+            lines.append(
+                f"{item.get('port', '?'):>5}  {item.get('purpose', 'Unknown'):<14}  {owner:<16}  {item_state}"
+            )
+        if len(endpoints) > 12:
+            lines.append(f"… {len(endpoints) - 12} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _provenance_for(payload: Mapping[str, Any], path: str) -> Mapping[str, Any] | None:
+        values = payload.get("field_provenance")
+        if not isinstance(values, list):
+            return None
+        for item in values:
+            if isinstance(item, Mapping) and item.get("path") == path:
+                return item
+        return None
+
+    def _populate_from_candidate(self, payload: Mapping[str, Any]) -> None:
+        desired = payload.get("effective_declaration") if isinstance(payload.get("effective_declaration"), Mapping) else {}
+        mcp = desired.get("mcp") if isinstance(desired.get("mcp"), Mapping) else {}
+        tunnel = desired.get("tunnel") if isinstance(desired.get("tunnel"), Mapping) else {}
+        self._populating = True
+        self.query_one("#new-workspace", Input).value = str(desired.get("workspace_path") or "")
+        self.query_one("#new-instance-id", Input).value = str(desired.get("instance_id") or "")
+        if mcp.get("permission_mode"):
+            self.query_one("#new-permission", Select).value = str(mcp["permission_mode"])
+        self.query_one("#new-mcp-port", Input).value = "" if mcp.get("port") is None else str(mcp.get("port"))
+        self.query_one("#new-tunnel-id", Input).value = str(tunnel.get("id") or "")
+        self.query_one("#new-health-port", Input).value = "" if tunnel.get("health_port") is None else str(tunnel.get("health_port"))
+        self._populating = False
+
+        port_projection = payload.get("port_projection") if isinstance(payload.get("port_projection"), Mapping) else {}
+        known = self._known_ports_text(port_projection)
+        self.query_one("#new-runtime-known-ports", Static).update(known)
+        self.query_one("#new-tunnel-known-ports", Static).update(known)
+        collision_state = str(port_projection.get("collision_state") or "unknown")
+        mcp_provenance = self._provenance_for(payload, "/mcp/port") or {}
+        health_provenance = self._provenance_for(payload, "/tunnel/health_port") or {}
+        self.query_one("#new-mcp-port-state", Static).update(
+            f"{mcp_provenance.get('source', 'manager')} / {mcp_provenance.get('status', 'effective')} — collision: {collision_state}"
+        )
+        self.query_one("#new-health-port-state", Static).update(
+            f"{health_provenance.get('source', 'manager')} / {health_provenance.get('status', 'effective')} — collision: {collision_state}"
+        )
+
+        discovery = payload.get("discovery") if isinstance(payload.get("discovery"), Mapping) else {}
+        local_git = discovery.get("local_git") if isinstance(discovery.get("local_git"), Mapping) else {}
+        identity = local_git.get("identity") if isinstance(local_git.get("identity"), Mapping) else {}
+        local_identity = identity.get("local") if isinstance(identity.get("local"), Mapping) else {}
+        effective_identity = identity.get("effective") if isinstance(identity.get("effective"), Mapping) else {}
+        remote = local_git.get("remote") if isinstance(local_git.get("remote"), Mapping) else {}
+        desired_git = desired.get("git") if isinstance(desired.get("git"), Mapping) else {}
+        desired_identity = desired_git.get("identity") if isinstance(desired_git.get("identity"), Mapping) else None
+        desired_remote = desired_git.get("remote") if isinstance(desired_git.get("remote"), Mapping) else None
+        git_lines = [
+            f"Repository: {'detected' if discovery.get('repository_detected') else 'not detected'}",
+            f"Root: {discovery.get('repository_root') or '—'}",
+        ]
+        if local_identity.get("name") or effective_identity.get("name"):
+            display_identity = local_identity if local_identity.get("name") else effective_identity
+            git_lines.append(
+                f"Identity: {display_identity.get('name', '—')} <{display_identity.get('email', '—')}>"
+            )
+            git_lines.append(
+                f"Identity source: {effective_identity.get('scope') or 'unknown'} / {identity.get('classification', 'unknown')}"
+            )
+        else:
+            git_lines.append("Identity: absent")
+        if desired_identity:
+            git_lines.append("Identity adoption: manager candidate")
+        if remote.get("selected"):
+            git_lines.append(
+                f"Remote: {remote.get('selected')} → {remote.get('host') or '—'}/{remote.get('repository') or '—'}"
+            )
+            git_lines.append(
+                f"Transport: {remote.get('transport') or '—'} / {remote.get('classification') or 'unknown'}"
+            )
+        else:
+            git_lines.append("Remote: none")
+        if desired_remote:
+            git_lines.append(f"Remote adoption: {desired_remote.get('protocol')} via manager candidate")
+        self.query_one("#new-git-summary", Static).update("\n".join(git_lines))
+
+        access = desired.get("access") if isinstance(desired.get("access"), Mapping) else {}
+        access_lines: list[str] = []
+        access_options: list[tuple[str, str]] = []
+        for group, mode in (("read_only", "ro"), ("read_write", "rw")):
+            values = access.get(group) if isinstance(access.get(group), list) else []
+            for item in values:
+                if not isinstance(item, Mapping):
+                    continue
+                alias = str(item.get("alias") or "")
+                path = str(item.get("path") or "")
+                access_lines.append(f"{mode.upper()}  {alias}  {path}")
+                access_options.append((f"{mode.upper()} {alias} — {path}", f"{mode}|{alias}"))
+        self.query_one("#new-access-summary", Static).update(
+            "\n".join(access_lines) if access_lines else "No additional folders configured"
+        )
+        access_select = self.query_one("#new-access-selection", Select)
+        access_select.set_options(access_options)
+        access_select.disabled = not access_options
+
+        auth = discovery.get("authentication_status") if isinstance(discovery.get("authentication_status"), Mapping) else {}
+        providers = auth.get("providers") if isinstance(auth.get("providers"), list) else []
+        auth_lines: list[str] = []
+        self.setup_action_url = None
+        for item in providers:
+            if not isinstance(item, Mapping):
+                continue
+            auth_lines.append(f"{item.get('provider', '?')}: {item.get('status', 'unknown')} — {item.get('reason', '')}")
+            action = item.get("setup_action") if isinstance(item.get("setup_action"), Mapping) else None
+            if self.setup_action_url is None and action and isinstance(action.get("url"), str):
+                self.setup_action_url = str(action["url"])
+        self.query_one("#new-auth-status", Static).update("\n".join(auth_lines) or "Authentication status unavailable")
+        self.query_one("#new-auth-setup", Button).styles.display = "block" if self.setup_action_url else "none"
+
+        existing_row = self.query_one("#existing-workspace-row")
+        existing_row.styles.display = "block" if self.existing_instance_id else "none"
+        if self.existing_instance_id:
+            self.query_one("#new-existing-workspace", Static).update(
+                f"Already managed by {self.existing_instance_id}. Opening the existing instance is the primary action."
+            )
+        self._show_step()
 
     def _show_step(self) -> None:
         self.query_one("#wizard-progress", Static).update(
@@ -1251,71 +1618,178 @@ class NewInstanceScreen(BaseScreen):
         for index, widget_id in enumerate(ids):
             self.query_one(f"#{widget_id}").styles.display = "block" if index == self.step else "none"
         self.query_one("#wizard-back", Button).disabled = self.step == 0
-        self.query_one("#wizard-next", Button).styles.display = "block" if self.step < 4 else "none"
+        next_button = self.query_one("#wizard-next", Button)
+        next_button.styles.display = "block" if self.step < 4 else "none"
+        next_button.disabled = self.step == 0 and self.existing_instance_id is not None
         self.query_one("#wizard-create", Button).styles.display = "block" if self.step == 4 else "none"
         self.query_one("#wizard-deploy", Button).styles.display = "block" if self.step == 4 else "none"
 
-    @staticmethod
-    def _select_value(select: Select) -> str:
-        return "" if select.value is Select.BLANK else str(select.value)
-
     def _capture_step(self) -> None:
-        if not self.candidate:
-            raise ValueError("manager defaults are not loaded")
         if self.step == 0:
-            instance_id = self.query_one("#new-instance-id", Input).value.strip()
             workspace = self.query_one("#new-workspace", Input).value.strip()
-            if not instance_id or not workspace.startswith("/"):
-                raise ValueError("Instance ID and an absolute workspace path are required")
-            self.candidate["instance_id"] = instance_id
-            self.candidate["workspace_path"] = workspace
-            self.candidate.setdefault("tunnel", {})["profile"] = self.candidate.get("tunnel", {}).get("profile") or instance_id
+            if not workspace.startswith("/"):
+                raise ValueError("Workspace must be an absolute path")
+            if "/instance_id" in self._dirty_paths:
+                instance_id = self.query_one("#new-instance-id", Input).value.strip()
+                if instance_id:
+                    self._set_field_edit("/instance_id", instance_id)
+                else:
+                    self._remove_field_edit("/instance_id")
+            self._workspace_dirty = False
+            self._dirty_paths.discard("/instance_id")
+            self._request_candidate("workspace/instance intent")
         elif self.step == 1:
-            port = int(self.query_one("#new-mcp-port", Input).value.strip())
-            self.candidate.setdefault("mcp", {})["port"] = port
-            self.candidate["mcp"]["permission_mode"] = self._select_value(self.query_one("#new-permission", Select))
+            if "/mcp/permission_mode" in self._dirty_paths:
+                self._set_field_edit(
+                    "/mcp/permission_mode",
+                    self._select_value(self.query_one("#new-permission", Select)),
+                )
+            if "/mcp/port" in self._dirty_paths:
+                port_text = self.query_one("#new-mcp-port", Input).value.strip()
+                self._set_field_edit("/mcp/port", int(port_text))
+            self._dirty_paths -= {"/mcp/permission_mode", "/mcp/port"}
+            self._request_candidate("runtime intent")
         elif self.step == 2:
             tunnel_id = self.query_one("#new-tunnel-id", Input).value.strip()
-            profile = self.query_one("#new-tunnel-profile", Input).value.strip()
-            health_port = int(self.query_one("#new-health-port", Input).value.strip())
-            if not tunnel_id or not profile:
-                raise ValueError("Tunnel ID and profile are required")
-            self.candidate.setdefault("tunnel", {}).update({"id": tunnel_id, "profile": profile, "health_port": health_port})
-        elif self.step == 3:
-            mode = self._select_value(self.query_one("#new-github-mode", Select))
-            self.candidate.setdefault("github", {})["mode"] = mode
-            config_dir = self.query_one("#new-github-config-dir", Input).value.strip()
-            if mode == "disabled":
-                self.candidate["github"]["config_dir"] = None
-            elif not config_dir.startswith("/"):
-                raise ValueError("GitHub config directory must be an absolute path when GitHub profile mode is enabled")
-            else:
-                self.candidate["github"]["config_dir"] = config_dir
-            access = self.candidate.setdefault("access", {"read_only": [], "read_write": []})
-            ro_alias = self.query_one("#new-ro-alias", Input).value.strip()
-            ro_path = self.query_one("#new-ro-path", Input).value.strip()
-            rw_alias = self.query_one("#new-rw-alias", Input).value.strip()
-            rw_path = self.query_one("#new-rw-path", Input).value.strip()
-            access["read_only"] = [{"alias": ro_alias, "path": ro_path}] if ro_alias and ro_path else []
-            access["read_write"] = [{"alias": rw_alias, "path": rw_path}] if rw_alias and rw_path else []
+            if not tunnel_id:
+                raise ValueError("Tunnel ID is required; authentication credentials remain external")
+            if "/tunnel/id" in self._dirty_paths or not any(item.get("path") == "/tunnel/id" for item in self.field_edits):
+                self._set_field_edit("/tunnel/id", tunnel_id)
+            if "/tunnel/health_port" in self._dirty_paths:
+                health_text = self.query_one("#new-health-port", Input).value.strip()
+                self._set_field_edit("/tunnel/health_port", int(health_text))
+            self._dirty_paths -= {"/tunnel/id", "/tunnel/health_port"}
+            self._request_candidate("tunnel intent")
 
-    def _populate_from_candidate(self) -> None:
-        if not self.candidate:
+    @on(Input.Changed)
+    def input_changed(self, event: Input.Changed) -> None:
+        if self._populating:
             return
-        self.query_one("#new-instance-id", Input).value = str(self.candidate.get("instance_id", ""))
-        self.query_one("#new-workspace", Input).value = str(self.candidate.get("workspace_path", ""))
-        mcp = self.candidate.get("mcp") if isinstance(self.candidate.get("mcp"), Mapping) else {}
-        tunnel = self.candidate.get("tunnel") if isinstance(self.candidate.get("tunnel"), Mapping) else {}
-        self.query_one("#new-mcp-port", Input).value = "" if mcp.get("port") is None else str(mcp.get("port"))
-        if mcp.get("permission_mode"):
-            self.query_one("#new-permission", Select).value = str(mcp.get("permission_mode"))
-        self.query_one("#new-tunnel-id", Input).value = str(tunnel.get("id", ""))
-        self.query_one("#new-tunnel-profile", Input).value = str(tunnel.get("profile", ""))
-        self.query_one("#new-health-port", Input).value = "" if tunnel.get("health_port") is None else str(tunnel.get("health_port"))
-        github = self.candidate.get("github") if isinstance(self.candidate.get("github"), Mapping) else {}
-        if github.get("mode"):
-            self.query_one("#new-github-mode", Select).value = str(github.get("mode"))
-        self.query_one("#new-github-config-dir", Input).value = str(github.get("config_dir") or "")
+        mapping = {
+            "new-instance-id": "/instance_id",
+            "new-mcp-port": "/mcp/port",
+            "new-tunnel-id": "/tunnel/id",
+            "new-health-port": "/tunnel/health_port",
+        }
+        if event.input.id == "new-workspace":
+            self._workspace_dirty = True
+        elif event.input.id in mapping:
+            self._dirty_paths.add(mapping[event.input.id])
+
+    @on(Select.Changed, "#new-permission")
+    def permission_changed(self, event: Select.Changed) -> None:
+        if not self._populating:
+            self._dirty_paths.add("/mcp/permission_mode")
+
+    @on(Select.Changed, "#new-source-mode")
+    def source_mode_changed(self, event: Select.Changed) -> None:
+        if self._populating:
+            return
+        mode = "" if event.value is Select.BLANK else str(event.value)
+        self.query_one("#copy-source-row").styles.display = "block" if mode == "copy" else "none"
+        self._request_candidate("copy mode changed")
+
+    @on(Select.Changed, "#new-copy-source")
+    def copy_source_changed(self, event: Select.Changed) -> None:
+        if self._populating:
+            return
+        if self._select_value(self.query_one("#new-source-mode", Select)) == "copy":
+            self._request_candidate("copy source changed")
+
+    def _workspace_picked(self, path: Path | None) -> None:
+        if path is None:
+            return
+        self._populating = True
+        self.query_one("#new-workspace", Input).value = str(path)
+        self._populating = False
+        self._workspace_dirty = True
+        self._request_candidate("workspace selected")
+
+    def _access_picked(self, mode: str, path: Path | None) -> None:
+        if path is None:
+            return
+        self.access_edits.append({"operation": "add", "mode": mode, "path": str(path)})
+        self._request_candidate("Access folder added")
+
+    def _preview_current(self) -> None:
+        request = self._build_request()
+        identity = self._request_identity(request)
+        self._active_request_identity = identity
+        self.set_status("Reconstructing and previewing manager-authoritative candidate…")
+        self._review_worker(request, identity)
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _review_worker(self, request: Mapping[str, Any], identity: str) -> None:
+        worker = get_current_worker()
+        try:
+            candidate = self.client.candidate(request)
+            unresolved = candidate.get("unresolved_required_operator_fields")
+            if isinstance(unresolved, list) and unresolved:
+                raise TuiError(f"required operator fields remain unresolved: {', '.join(str(item) for item in unresolved)}")
+            effective = candidate.get("effective_declaration")
+            if not isinstance(effective, Mapping):
+                raise TuiError("manager candidate did not contain an effective declaration")
+            preview = self.client.preview_declaration(effective)
+        except TuiError as exc:
+            if not worker.is_cancelled:
+                self.app.call_from_thread(self._review_failed, identity, str(exc))
+            return
+        if not worker.is_cancelled:
+            self.app.call_from_thread(self._apply_review, candidate, preview, identity)
+
+    def _review_failed(self, identity: str, message: str) -> None:
+        if identity != self._active_request_identity:
+            return
+        self.preview_payload = None
+        self.query_one("#wizard-create", Button).disabled = True
+        self.query_one("#wizard-deploy", Button).disabled = True
+        self.set_status(f"✗ Preview rejected: {message}")
+
+    def _apply_review(
+        self,
+        candidate: Mapping[str, Any],
+        preview: Mapping[str, Any],
+        identity: str,
+    ) -> None:
+        if identity != self._active_request_identity:
+            return
+        self.candidate_payload = candidate
+        self.preview_payload = preview
+        log = self.query_one("#wizard-review-log", RichLog)
+        log.clear()
+        effective = candidate.get("effective_declaration") if isinstance(candidate.get("effective_declaration"), Mapping) else {}
+        tunnel = effective.get("tunnel") if isinstance(effective.get("tunnel"), Mapping) else {}
+        log.write(f"Instance: {effective.get('instance_id', '?')}")
+        log.write(f"Workspace: {effective.get('workspace_path', '?')}")
+        log.write(f"Derived tunnel profile: {tunnel.get('profile', '?')}")
+        log.write(f"Candidate input fingerprint: {candidate.get('candidate_input_fingerprint', '?')}")
+        log.write(f"Candidate fingerprint: {candidate.get('candidate_fingerprint', '?')}")
+        collision = preview.get("collision_result") if isinstance(preview.get("collision_result"), Mapping) else {}
+        log.write(f"Collision state: {collision.get('state', 'unknown')}")
+        log.write("Provenance:")
+        provenance = candidate.get("field_provenance") if isinstance(candidate.get("field_provenance"), list) else []
+        for item in provenance:
+            if isinstance(item, Mapping):
+                log.write(
+                    f"• {item.get('path', '?')}: {item.get('source', '?')} / {item.get('status', '?')}"
+                )
+        semantic = preview.get("semantic_operations") if isinstance(preview.get("semantic_operations"), list) else []
+        log.write("Initial reconciliation plan:")
+        for item in semantic:
+            if isinstance(item, Mapping) and item.get("operation") != "NOOP":
+                log.write(f"• {item.get('description', item.get('operation'))}")
+        for warning in candidate.get("warnings", []) if isinstance(candidate.get("warnings"), list) else []:
+            log.write(f"[yellow]! {warning}[/yellow]")
+        for warning in preview.get("warnings", []) if isinstance(preview.get("warnings"), list) else []:
+            log.write(f"[yellow]! {warning}[/yellow]")
+        for error in preview.get("errors", []) if isinstance(preview.get("errors"), list) else []:
+            log.write(f"[red]✗ {error}[/red]")
+        log.write(f"Plan fingerprint: {preview.get('plan_fingerprint', '?')}")
+        valid = bool(preview.get("validation", {}).get("valid")) if isinstance(preview.get("validation"), Mapping) else False
+        clear = collision.get("state") == "clear" if collision.get("state") is not None else bool(collision.get("clear"))
+        self.query_one("#wizard-create", Button).disabled = not (valid and clear)
+        self.query_one("#wizard-deploy", Button).disabled = not (valid and clear)
+        self.set_status("Review manager-authoritative effective declaration, provenance, and plan")
 
     @on(Button.Pressed)
     def button_pressed(self, event: Button.Pressed) -> None:
@@ -1333,89 +1807,54 @@ class NewInstanceScreen(BaseScreen):
             self.step += 1
             self._show_step()
             if self.step == 4:
-                self._preview_candidate()
+                self._preview_current()
             return
-        if button_id == "new-load-source":
-            source = self.query_one("#new-copy-source", Input).value.strip()
-            if source:
-                self._copy_worker(source)
+        if button_id == "new-workspace-browse":
+            raw = self.query_one("#new-workspace", Input).value.strip() or os.getcwd()
+            self.app.push_screen(DirectoryPicker(Path(raw)), self._workspace_picked)
+            return
+        if button_id == "new-open-existing" and self.existing_instance_id:
+            self.app.push_screen(InstanceScreen(self.existing_instance_id))
+            return
+        if button_id in {"new-access-add-ro", "new-access-add-rw"}:
+            mode = "ro" if button_id.endswith("-ro") else "rw"
+            self.app.push_screen(
+                DirectoryPicker(Path(self.query_one("#new-workspace", Input).value.strip() or os.getcwd())),
+                partial(self._access_picked, mode),
+            )
+            return
+        if button_id == "new-access-remove":
+            selected = self._select_value(self.query_one("#new-access-selection", Select))
+            if selected and "|" in selected:
+                mode, alias = selected.split("|", 1)
+                self.access_edits.append({"operation": "remove", "mode": mode, "target_alias": alias})
+                self._request_candidate("Access folder removed")
+            return
+        if button_id == "new-auth-setup" and self.setup_action_url:
+            webbrowser.open(self.setup_action_url)
+            self.set_status("Opened manager-projected external authentication setup")
             return
         if button_id in {"wizard-create", "wizard-deploy"}:
-            if not self.preview_payload or not self.preview_payload.get("plan_fingerprint"):
+            if not self.preview_payload or not self.preview_payload.get("plan_fingerprint") or not self.candidate_payload:
                 self.set_status("? Preview is not current; review again before creation")
-                self._preview_candidate()
+                self._preview_current()
+                return
+            effective = self.candidate_payload.get("effective_declaration")
+            if not isinstance(effective, Mapping):
+                self.set_status("✗ Manager candidate has no effective declaration")
                 return
             self.manager_app.start_create_workflow(
-                self.candidate,
+                effective,
                 reviewed_plan_fingerprint=str(self.preview_payload["plan_fingerprint"]),
                 deploy=button_id == "wizard-deploy",
             )
-
-    @work(thread=True, exclusive=True, exit_on_error=False)
-    def _copy_worker(self, source: str) -> None:
-        worker = get_current_worker()
-        try:
-            show = self.client.show(source)
-        except TuiError as exc:
-            if not worker.is_cancelled:
-                self.app.call_from_thread(self.set_status, f"✗ Cannot copy {source}: {exc}")
-            return
-        desired = show.get("desired") if isinstance(show.get("desired"), Mapping) else None
-        if desired is not None and not worker.is_cancelled:
-            self.app.call_from_thread(self._apply_copy, desired)
-
-    def _apply_copy(self, desired: Mapping[str, Any]) -> None:
-        new_id = self.query_one("#new-instance-id", Input).value.strip()
-        self.candidate = project_v1_to_v2(desired) if desired.get("config_version") == 1 else copy.deepcopy(dict(desired))
-        self.candidate["instance_id"] = new_id
-        self._populate_from_candidate()
-        self.set_status("✓ Non-secret manager declaration copied; choose a new instance ID and review ports/tunnel")
-
-    def _preview_candidate(self) -> None:
-        self.set_status("Previewing validation, collisions, and initial reconciliation…")
-        self._preview_worker(copy.deepcopy(self.candidate))
-
-    @work(thread=True, exclusive=True, exit_on_error=False)
-    def _preview_worker(self, candidate: Mapping[str, Any]) -> None:
-        worker = get_current_worker()
-        try:
-            preview = self.client.preview_declaration(candidate)
-        except TuiError as exc:
-            if not worker.is_cancelled:
-                self.app.call_from_thread(self.set_status, f"✗ Preview rejected: {exc}")
-            return
-        if not worker.is_cancelled:
-            self.app.call_from_thread(self._apply_preview, preview)
-
-    def _apply_preview(self, preview: Mapping[str, Any]) -> None:
-        self.preview_payload = preview
-        log = self.query_one("#wizard-review-log", RichLog)
-        log.clear()
-        log.write(f"Instance: {preview.get('instance_id', '?')}")
-        log.write(f"Candidate fingerprint: {preview.get('candidate_fingerprint', '?')}")
-        collision = preview.get("collision_result") if isinstance(preview.get("collision_result"), Mapping) else {}
-        log.write(f"Collisions clear: {collision.get('clear', False)}")
-        semantic = preview.get("semantic_operations") if isinstance(preview.get("semantic_operations"), list) else []
-        log.write("Initial plan:")
-        for item in semantic:
-            if isinstance(item, Mapping) and item.get("operation") != "NOOP":
-                log.write(f"• {item.get('description', item.get('operation'))}")
-        for warning in preview.get("warnings", []) if isinstance(preview.get("warnings"), list) else []:
-            log.write(f"[yellow]! {warning}[/yellow]")
-        for error in preview.get("errors", []) if isinstance(preview.get("errors"), list) else []:
-            log.write(f"[red]✗ {error}[/red]")
-        log.write(f"Plan fingerprint: {preview.get('plan_fingerprint', '?')}")
-        valid = bool(preview.get("validation", {}).get("valid")) if isinstance(preview.get("validation"), Mapping) else False
-        clear = bool(collision.get("clear"))
-        self.query_one("#wizard-create", Button).disabled = not (valid and clear)
-        self.query_one("#wizard-deploy", Button).disabled = not (valid and clear)
-        self.set_status("Review manager-authoritative candidate and proposed plan")
 
 
 class WorkspaceManagerApp(App[None]):
     TITLE = "Workspace MCP Manager"
     SUB_TITLE = "Overview → Instance → Task"
     COMMAND_PALETTE_BINDING = "ctrl+p"
+    BINDINGS = [Binding("ctrl+c", "quit", "Quit", show=False)]
     CSS = """
     Screen { background: $surface; }
     .page { width: 100%; height: 100%; padding: 0 1; }
@@ -1445,6 +1884,9 @@ class WorkspaceManagerApp(App[None]):
         self.initial_load = initial_load
         self.busy_instances: set[str] = set()
         self.uncertain_instances: set[str] = set()
+
+    def action_quit(self) -> None:
+        self.exit()
 
     def on_mount(self) -> None:
         self.push_screen(DashboardScreen())

@@ -328,6 +328,20 @@ class ManagerClient:
     def template(self) -> Mapping[str, Any]:
         return self.invoke("instance", "template", require_ok=True).payload
 
+    def discover(self, path: str) -> Mapping[str, Any]:
+        return self.invoke("instance", "discover", path, require_ok=True).payload
+
+    def candidate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return self.invoke(
+            "instance",
+            "candidate",
+            stdin_text=json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+            require_ok=True,
+        ).payload
+
+    def ports(self) -> Mapping[str, Any]:
+        return self.invoke("host", "ports", require_ok=True).payload
+
     def git(self, instance_id: str) -> Mapping[str, Any]:
         return self.invoke("instance", "git", instance_id).payload
 
@@ -582,13 +596,11 @@ class SettingsField:
 
 
 SETTINGS_FIELDS: tuple[SettingsField, ...] = (
-    SettingsField("General", "Workspace", ("workspace_path",)),
     SettingsField("General", "Desired runtime", ("lifecycle", "runtime"), "choice", ("running", "stopped")),
-    SettingsField("Runtime", "MCP port", ("mcp", "port"), "int"),
     SettingsField("Runtime", "Permission mode", ("mcp", "permission_mode"), "choice", ("safe", "trusted", "dangerous")),
+    SettingsField("Runtime", "MCP port", ("mcp", "port"), "int"),
     SettingsField("Runtime", "Shell environment", ("mcp", "shell_env_inherit"), "choice", ("core", "all", "none")),
     SettingsField("Tunnel", "Tunnel ID", ("tunnel", "id")),
-    SettingsField("Tunnel", "Tunnel profile", ("tunnel", "profile")),
     SettingsField("Tunnel", "Health port", ("tunnel", "health_port"), "int"),
     SettingsField("Git & GitHub", "GitHub profile mode", ("github", "mode"), "choice", ("disabled", "external", "managed")),
     SettingsField("Git & GitHub", "GitHub config directory", ("github", "config_dir"), "text", optional=True),

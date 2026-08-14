@@ -27,6 +27,7 @@ from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object
 from .registry import InstanceRegistry
 from .runtime import run_admission_guard, run_tunnel
+from .setup_projection import PortProjectionService, SetupProjectionService
 from .tooling import ToolingService
 
 
@@ -66,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     host = subparsers.add_parser("host")
     host_sub = host.add_subparsers(dest="command", required=True)
-    for command in ("inspect", "doctor", "components"):
+    for command in ("inspect", "doctor", "components", "ports"):
         item = host_sub.add_parser(command)
         item.add_argument("--pretty", action="store_true")
     host_reboot = host_sub.add_parser("reboot")
@@ -115,6 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
     summary_cmd.add_argument("--pretty", action="store_true")
     summaries_cmd = instance_sub.add_parser("summaries")
     summaries_cmd.add_argument("--pretty", action="store_true")
+    discover_cmd = instance_sub.add_parser("discover")
+    discover_cmd.add_argument("path")
+    discover_cmd.add_argument("--pretty", action="store_true")
+    candidate_cmd = instance_sub.add_parser("candidate")
+    candidate_cmd.add_argument("--pretty", action="store_true")
 
     render_cmd = instance_sub.add_parser("render")
     render_cmd.add_argument("instance_id")
@@ -224,6 +230,10 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_summary = runtime_sub.add_parser("summary")
     runtime_summary.add_argument("instance_id")
     runtime_sub.add_parser("summaries")
+    runtime_discover = runtime_sub.add_parser("discover")
+    runtime_discover.add_argument("path")
+    runtime_sub.add_parser("candidate")
+    runtime_sub.add_parser("ports")
     runtime_render = runtime_sub.add_parser("render")
     runtime_render.add_argument("instance_id")
     runtime_render.add_argument("--include-content", action="store_true")
@@ -288,6 +298,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_host(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
+    if args.command == "ports":
+        return HostExecutionBridge(paths).run_ports()
     if args.command == "reboot":
         return HostExecutionBridge(paths).run_reboot(reason=args.reason)
     if args.command == "reboot-check":
@@ -359,6 +371,17 @@ def _run_instance(
         return bridge.run_summary(args.instance_id)
     if args.command == "summaries":
         return bridge.run_summaries()
+    if args.command == "discover":
+        return bridge.run_discover(args.path)
+    if args.command == "candidate":
+        text = sys.stdin.read()
+        try:
+            request = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "candidate request is not valid JSON") from exc
+        if not isinstance(request, Mapping):
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "candidate request must be an object")
+        return bridge.run_candidate(request)
     if args.command == "list":
         return bridge.run_list()
     if args.command == "show":
@@ -427,6 +450,18 @@ def _run_runtime(
     if args.command == "registry-write":
         text = sys.stdin.read()
         desired = DesiredInstance.from_json(text)
+        port_projection = PortProjectionService(registry).candidate_projection(desired.to_dict())
+        collision_state = port_projection.get("collision_state")
+        if collision_state != "clear":
+            raise ManagerError(
+                ErrorCode.RECONCILIATION_CONFLICT,
+                "endpoint assignment is not authoritatively clear",
+                {
+                    "collision_state": collision_state,
+                    "listener_observation": port_projection.get("listener_observation"),
+                    "conflicts": port_projection.get("conflicts", []),
+                },
+            )
         path = (
             registry.create(desired)
             if args.action == "create"
@@ -470,6 +505,18 @@ def _run_runtime(
         return OperatorProjectionService(paths, registry).summary(args.instance_id)
     if args.command == "summaries":
         return OperatorProjectionService(paths, registry).summaries()
+    if args.command == "discover":
+        return SetupProjectionService(paths, registry).discover(args.path)
+    if args.command == "candidate":
+        try:
+            request = json.loads(sys.stdin.read())
+        except json.JSONDecodeError as exc:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "candidate request is not valid JSON") from exc
+        if not isinstance(request, Mapping):
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "candidate request must be an object")
+        return SetupProjectionService(paths, registry).candidate(request)
+    if args.command == "ports":
+        return PortProjectionService(registry).project()
     if args.command == "render":
         desired = registry.get(args.instance_id)
         bundle = ResourceGenerator(paths).generate(desired)

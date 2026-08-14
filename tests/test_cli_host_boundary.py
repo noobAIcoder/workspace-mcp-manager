@@ -141,6 +141,31 @@ class CliHostBoundaryTests(unittest.TestCase):
                 bridge.run_git.assert_called_once_with("sample")
                 bridge.run_diagnose.assert_called_once_with("sample", since_seconds=77)
 
+    def test_pm3_1_public_setup_projections_use_host_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            request = {
+                "candidate_request_version": 1,
+                "workspace_path": "/home/operator/repos/example",
+                "field_edits": [],
+                "access_edits": [],
+            }
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_discover.return_value = {"ok": True, "workspace_path": request["workspace_path"]}
+                bridge.run_candidate.return_value = {"ok": True, "candidate_version": 1}
+                bridge.run_ports.return_value = {"ok": True, "port_projection_version": 1}
+                self.assertEqual(main(["instance", "discover", request["workspace_path"]]), 0)
+                with patch("sys.stdin", StringIO(json.dumps(request))):
+                    self.assertEqual(main(["instance", "candidate"]), 0)
+                self.assertEqual(main(["host", "ports"]), 0)
+            bridge.run_discover.assert_called_once_with(request["workspace_path"])
+            bridge.run_candidate.assert_called_once_with(request)
+            bridge.run_ports.assert_called_once_with()
+
     def test_public_reboot_commands_use_host_bridge_and_reason_stdin_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

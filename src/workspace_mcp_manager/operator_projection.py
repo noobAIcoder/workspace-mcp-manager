@@ -152,6 +152,17 @@ class OperatorProjectionService:
         plan = self.planner.plan(desired)
         plan = project_recoverable_failed_first_apply(self.paths, desired, bundle, plan)
         conflicts = [item.to_dict() for item in plan.operations if item.operation is PlanOperation.CONFLICT]
+        unknown_collision_conflicts = [
+            item
+            for item in conflicts
+            if (
+                "collision evidence is" in str(item.get("reason", ""))
+                or "cannot prove" in str(item.get("reason", ""))
+            )
+            and item.get("resource_id") in {"mcp-unit", "tunnel-unit", "endpoint"}
+        ]
+        definitive_conflicts = [item for item in conflicts if item not in unknown_collision_conflicts]
+        collision_state = "conflict" if definitive_conflicts else ("unknown" if unknown_collision_conflicts else "clear")
         current_fingerprint: str | None = None
         try:
             current_fingerprint = self.registry.get(desired.instance_id.value).fingerprint()
@@ -171,7 +182,11 @@ class OperatorProjectionService:
             "candidate_fingerprint": desired.fingerprint(),
             "current_authoritative_fingerprint": current_fingerprint,
             "validation": {"valid": True, "errors": []},
-            "collision_result": {"clear": not conflicts, "conflicts": conflicts},
+            "collision_result": {
+                "state": collision_state,
+                "clear": collision_state == "clear",
+                "conflicts": conflicts,
+            },
             "warnings": list(plan.warnings),
             "errors": [item["reason"] for item in conflicts],
             "proposed_plan": plan.to_dict(),

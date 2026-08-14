@@ -14,7 +14,12 @@
 | `src/workspace_mcp_manager/development_environment.py` | PM1 GitHub profile, local Git identity/transport and agent-provider reconciliation | exact repository-local owned keys only |
 | `src/workspace_mcp_manager/admission_recovery.py` | Admission guard plus applied-evidence reconstruction for obsolete owned resources | reconstruction only |
 | `src/workspace_mcp_manager/git_diagnostics.py` | Instance Git/GitHub diagnostics under effective environment | read-only |
-| `src/workspace_mcp_manager/tui.py` | PM2 stdlib curses frontend over public manager CLI commands | manager CLI delegation only |
+| `src/workspace_mcp_manager/endpoint_projection.py` | PM3.1 TCP listener evidence and shared bind-overlap semantics | read-only |
+| `src/workspace_mcp_manager/setup_projection.py` | PM3.1 workspace discovery, candidate/provenance, local Git/auth and port projections | read-only candidate construction |
+| `src/workspace_mcp_manager/operator_contracts.py` | PM3/PM3.1 operator template, state and plan-fingerprint contracts | none |
+| `src/workspace_mcp_manager/operator_projection.py` | Manager-authoritative summaries/preview/review projections | read-only |
+| `src/workspace_mcp_manager/tui.py` | Public-CLI adapter plus pure frontend helpers | manager CLI delegation only |
+| `src/workspace_mcp_manager/tui_textual.py` | PM3/PM3.1 Textual projection/editor frontend | manager CLI delegation only |
 | `src/workspace_mcp_manager/runtime.py` | Secret-safe tunnel/admission runtime helpers used by systemd | runtime-scoped |
 | `src/workspace_mcp_manager/cli.py` | Thin public/private command routing | delegates only |
 | `scripts/qualify_*.sh` | Reproducible live qualification harnesses | disposable qualification targets only |

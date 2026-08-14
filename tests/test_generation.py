@@ -36,6 +36,7 @@ class GenerationTests(unittest.TestCase):
             tunnel = resources["tunnel-unit"].content or ""
             profile = resources["tunnel-profile"].content or ""
             self.assertIn("Restart=on-failure", mcp)
+            self.assertIn("SuccessExitStatus=143", mcp)
             self.assertIn("KillMode=mixed", mcp)
             self.assertIn("PrivateUsers=true", mcp)
             self.assertIn(

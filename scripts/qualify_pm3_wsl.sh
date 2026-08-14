@@ -75,7 +75,8 @@ for line in reversed(lines):
     error = payload.get("error", {}) if isinstance(payload, dict) else {}
     if error.get("code") == expected:
         raise SystemExit(0)
-raise SystemExit(f"expected manager error {expected}, got: {lines[-1] if lines else '<empty>'}")
+fallback = chr(60) + "empty" + chr(62)
+raise SystemExit(f"expected manager error {expected}, got: {lines[-1] if lines else fallback}")
 ' "$expected"
 }
 

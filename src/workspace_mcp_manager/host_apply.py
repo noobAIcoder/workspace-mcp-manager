@@ -1498,6 +1498,19 @@ class HostExecutionBridge:
     def run_summaries(self) -> dict[str, Any]:
         return self._run_json(["_runtime", "summaries"], unit_fragment="summaries")
 
+    def run_discover(self, path: str) -> dict[str, Any]:
+        return self._run_json(["_runtime", "discover", path], unit_fragment="discover")
+
+    def run_candidate(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "candidate"],
+            input_text=json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+            unit_fragment="candidate",
+        )
+
+    def run_ports(self) -> dict[str, Any]:
+        return self._run_json(["_runtime", "ports"], unit_fragment="ports")
+
     def run_plan(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(["_runtime", "plan", instance_id], unit_fragment=f"plan-{instance_id}")
 

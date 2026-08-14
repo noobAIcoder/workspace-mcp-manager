@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import os
 import threading
 import unittest
+from pathlib import Path
 from typing import Any, Mapping
 
 from workspace_mcp_manager.tui import TuiError, TuiOutcomeUnknown
@@ -60,6 +63,7 @@ class FakeClient:
         self.health = "Healthy"
         self.attention_reasons = ["Pending reconciliation"]
         self.log_categories: list[str] = []
+        self.candidate_calls: list[Mapping[str, Any]] = []
 
     def summaries(self) -> Mapping[str, Any]:
         return {
@@ -171,13 +175,158 @@ class FakeClient:
         template["tunnel"]["health_port"] = None
         return {"ok": True, "defaults": template}
 
+    def candidate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.candidate_calls.append(copy.deepcopy(dict(request)))
+        workspace = str(request.get("workspace_path") or "/home/operator/repos/new")
+        existing = "manager-qual" if workspace == self.desired["workspace_path"] else None
+        suggested = Path(workspace).name.lower().replace("_", "-") or "workspace"
+        if existing:
+            desired = copy.deepcopy(self.desired)
+        else:
+            desired = sample_v2_instance()
+            desired["instance_id"] = suggested
+            desired["workspace_path"] = workspace
+            desired["lifecycle"] = {"deployment": "present", "runtime": "stopped"}
+            desired["mcp"]["port"] = 7654
+            desired["mcp"]["permission_mode"] = "trusted"
+            desired["tunnel"]["id"] = ""
+            desired["tunnel"]["health_port"] = 7070
+            desired["tunnel"]["profile"] = f"workspace-mcp-{suggested}"
+            desired["access"] = {"read_only": [], "read_write": []}
+            desired["github"] = {"mode": "disabled", "config_dir": None, "binary": None}
+            desired["git"] = {"identity": None, "remote": None}
+            desired["agent"] = {"mode": "none", "ssh_auth_sock": None}
+
+        source = request.get("copy_source_instance_id")
+        if source == "manager-qual":
+            desired["mcp"]["permission_mode"] = self.desired["mcp"]["permission_mode"]
+            desired["access"] = copy.deepcopy(self.desired["access"])
+
+        for edit in request.get("field_edits", []):
+            if not isinstance(edit, Mapping):
+                continue
+            path = str(edit.get("path") or "")
+            operation = edit.get("operation")
+            value = edit.get("value") if operation == "set" else None
+            targets = {
+                "/instance_id": (desired, "instance_id"),
+                "/lifecycle/runtime": (desired["lifecycle"], "runtime"),
+                "/mcp/permission_mode": (desired["mcp"], "permission_mode"),
+                "/mcp/port": (desired["mcp"], "port"),
+                "/mcp/shell_env_inherit": (desired["mcp"], "shell_env_inherit"),
+                "/tunnel/id": (desired["tunnel"], "id"),
+                "/tunnel/health_port": (desired["tunnel"], "health_port"),
+                "/github/mode": (desired["github"], "mode"),
+                "/github/config_dir": (desired["github"], "config_dir"),
+                "/github/binary": (desired["github"], "binary"),
+                "/git/identity": (desired["git"], "identity"),
+                "/git/remote": (desired["git"], "remote"),
+                "/agent/mode": (desired["agent"], "mode"),
+                "/agent/ssh_auth_sock": (desired["agent"], "ssh_auth_sock"),
+                "/recovery/admission_guard_enabled": (desired["recovery"], "admission_guard_enabled"),
+                "/recovery/guard_interval_seconds": (desired["recovery"], "guard_interval_seconds"),
+                "/recovery/recovery_cooldown_seconds": (desired["recovery"], "recovery_cooldown_seconds"),
+            }
+            target = targets.get(path)
+            if target is not None:
+                target[0][target[1]] = value
+        if desired["github"].get("mode") == "disabled":
+            desired["github"]["config_dir"] = None
+        if desired["agent"].get("mode") != "external":
+            desired["agent"]["ssh_auth_sock"] = None
+        if not existing:
+            desired["tunnel"]["profile"] = f"workspace-mcp-{desired['instance_id']}"
+
+        for edit in request.get("access_edits", []):
+            if not isinstance(edit, Mapping):
+                continue
+            mode = "read_only" if edit.get("mode") == "ro" else "read_write"
+            if edit.get("operation") == "add":
+                path = str(edit.get("path") or "")
+                alias = str(edit.get("alias") or Path(path).name.lower().replace(" ", "-"))
+                desired["access"][mode].append({"alias": alias, "path": path})
+            elif edit.get("operation") == "remove":
+                alias = edit.get("target_alias")
+                for group in ("read_only", "read_write"):
+                    desired["access"][group] = [item for item in desired["access"][group] if item.get("alias") != alias]
+
+        unresolved = [] if desired["tunnel"]["id"] else ["tunnel.id"]
+        provenance = [
+            {"path": "/instance_id", "source": "manager_derived", "status": "effective", "reason": "suggestion"},
+            {"path": "/workspace_path", "source": "workspace_discovery", "status": "effective", "reason": "canonical"},
+            {"path": "/mcp/permission_mode", "source": "template_default", "status": "effective", "reason": "default"},
+            {"path": "/mcp/port", "source": "manager_recommendation", "status": "effective", "reason": "port"},
+            {"path": "/tunnel/health_port", "source": "manager_recommendation", "status": "effective", "reason": "port"},
+            {"path": "/tunnel/profile", "source": "manager_derived", "status": "effective", "reason": "profile"},
+        ]
+        for edit in request.get("field_edits", []):
+            if isinstance(edit, Mapping):
+                for item in provenance:
+                    if item["path"] == edit.get("path"):
+                        item["source"] = "operator_override"
+        return {
+            "ok": True,
+            "candidate_version": 1,
+            "candidate_input_fingerprint": "i" * 64,
+            "candidate_fingerprint": "c" * 64,
+            "effective_declaration": desired,
+            "field_provenance": provenance,
+            "discovery_fingerprint": "f" * 64,
+            "copy_source": source,
+            "copy_source_fingerprint": "d" * 64 if source else None,
+            "port_projection": {
+                "port_projection_version": 1,
+                "listener_observation": {"state": "available", "reason": None},
+                "endpoints": [
+                    {"port": 7656, "purpose": "MCP", "instance_id": "manager-qual", "state": "declared + listening"},
+                    {"port": 7071, "purpose": "Tunnel health", "instance_id": "manager-qual", "state": "declared + listening"},
+                ],
+                "collision_state": "clear",
+                "conflicts": [],
+            },
+            "warnings": [],
+            "unresolved_required_operator_fields": unresolved,
+            "existing_instance_id": existing,
+            "discovery": {
+                "workspace_path": workspace,
+                "workspace_identity": workspace,
+                "repository_detected": True,
+                "repository_root": workspace,
+                "local_git": {
+                    "identity": {
+                        "local": {"name": "Example User", "email": "example@example.invalid"},
+                        "effective": {"name": "Example User", "email": "example@example.invalid", "scope": "repository-local"},
+                        "classification": "adoptable",
+                    },
+                    "remote": {
+                        "selected": "origin",
+                        "host": "github.com",
+                        "repository": "noobAIcoder/example",
+                        "transport": "ssh",
+                        "classification": "adoptable",
+                    },
+                },
+                "authentication_status": {
+                    "authentication_status_version": 1,
+                    "providers": [
+                        {
+                            "provider": "github-cli",
+                            "status": "unavailable",
+                            "reason": "GitHub CLI authentication unavailable",
+                            "setup_action": {"label": "Setup", "url": "https://github.com/settings/tokens"},
+                        }
+                    ],
+                },
+            },
+        }
+
     def preview_declaration(self, desired: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
             "ok": True,
             "instance_id": desired["instance_id"],
             "candidate_fingerprint": "c" * 64,
             "validation": {"valid": True, "errors": []},
-            "collision_result": {"clear": True, "conflicts": []},
+            "collision_result": {"state": "clear", "clear": True, "conflicts": []},
             "warnings": [],
             "errors": [],
             "plan_fingerprint": self.plan_version,
@@ -268,13 +417,13 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             app.push_screen(SettingsScreen("manager-qual", client.desired, "d" * 64))
             await pilot.pause()
-            workspace = app.screen.query_one("#setting-0", Input)
-            workspace.value = "/home/operator/repos/draft-preserved"
+            port = app.screen.query_one("#setting-2", Input)
+            port.value = "7788"
             await pilot.click("#save")
             for _ in range(6):
                 await pilot.pause()
             self.assertIsInstance(app.screen, SettingsScreen)
-            self.assertEqual(workspace.value, "/home/operator/repos/draft-preserved")
+            self.assertEqual(port.value, "7788")
             self.assertIn("stale", str(app.screen.query_one("#screen-status").render()).lower())
 
     async def test_stale_access_edit_reopens_preserved_draft(self) -> None:
@@ -362,6 +511,12 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("ctrl+p")
             await pilot.pause()
             self.assertIsNot(app.screen, before)
+
+    async def test_ctrl_c_is_an_explicit_quit_binding(self) -> None:
+        from workspace_mcp_manager.tui_textual import WorkspaceManagerApp
+
+        bindings = list(WorkspaceManagerApp.BINDINGS)
+        self.assertTrue(any(binding.key == "ctrl+c" and binding.action == "quit" for binding in bindings))
 
     async def test_degraded_instance_reason_is_visible_without_raw_json(self) -> None:
         client = FakeClient()
@@ -462,12 +617,17 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             app.screen.query_one("#new-instance-id", Input).value = "new-qual"
             app.screen.query_one("#new-workspace", Input).value = "/home/operator/repos/new-qual"
             await pilot.click("#wizard-next")
+            for _ in range(3):
+                await pilot.pause()
             app.screen.query_one("#new-mcp-port", Input).value = "7766"
             await pilot.click("#wizard-next")
+            for _ in range(3):
+                await pilot.pause()
             app.screen.query_one("#new-tunnel-id", Input).value = "tunnel_new_qual"
-            app.screen.query_one("#new-tunnel-profile", Input).value = "new-qual"
             app.screen.query_one("#new-health-port", Input).value = "7171"
             await pilot.click("#wizard-next")
+            for _ in range(3):
+                await pilot.pause()
             await pilot.click("#wizard-next")
             for _ in range(5):
                 await pilot.pause()
@@ -480,6 +640,74 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.save_calls, 1)
             self.assertEqual(client.apply_calls, ["a" * 64])
             self.assertIsInstance(app.screen, InstanceScreen)
+
+    async def test_pm3_1_wizard_projects_manager_context_without_profile_or_secret_inputs(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(5):
+                await pilot.pause()
+            self.assertIsInstance(app.screen.query_one("#new-copy-source"), Select)
+            self.assertEqual(list(app.screen.query("#new-tunnel-profile")), [])
+            input_ids = {widget.id for widget in app.screen.query(Input)}
+            self.assertNotIn("new-tunnel-profile", input_ids)
+            self.assertFalse(any(any(term in str(widget_id).lower() for term in ("secret", "token", "api-key", "password")) for widget_id in input_ids))
+            runtime_children = list(app.screen.query_one("#wizard-runtime").children)
+            permission_index = next(index for index, widget in enumerate(runtime_children) if widget.id == "new-permission")
+            port_index = next(index for index, widget in enumerate(runtime_children) if widget.id == "new-mcp-port")
+            self.assertLess(permission_index, port_index)
+            self.assertIn("7656", str(app.screen.query_one("#new-runtime-known-ports").render()))
+            self.assertIn("repository-local", str(app.screen.query_one("#new-git-summary").render()))
+            self.assertEqual(app.screen.query_one("#new-auth-setup", Button).styles.display, "block")
+
+    async def test_pm3_1_managed_launch_context_prioritizes_open_existing(self) -> None:
+        client = FakeClient()
+        client.desired["workspace_path"] = os.getcwd()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(5):
+                await pilot.pause()
+            self.assertEqual(app.screen.existing_instance_id, "manager-qual")
+            self.assertTrue(app.screen.query_one("#wizard-next", Button).disabled)
+            self.assertEqual(app.screen.query_one("#existing-workspace-row").styles.display, "block")
+            app.screen.query_one("#new-open-existing", Button).press()
+            for _ in range(3):
+                await pilot.pause()
+            self.assertIsInstance(app.screen, InstanceScreen)
+
+    async def test_pm3_1_workspace_change_invalidates_target_edits_but_keeps_runtime_overrides(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(5):
+                await pilot.pause()
+            screen = app.screen
+            self.assertIsInstance(screen, NewInstanceScreen)
+            screen.workspace_identity = "/old/workspace"
+            screen.field_edits = [
+                {"path": "/instance_id", "operation": "set", "value": "old-id"},
+                {"path": "/tunnel/id", "operation": "set", "value": "tunnel_old"},
+                {"path": "/mcp/port", "operation": "set", "value": 7788},
+            ]
+            screen.access_edits = [{"operation": "add", "mode": "rw", "path": "/srv/old"}]
+            screen._populating = True
+            screen.query_one("#new-workspace", Input).value = "/new/workspace"
+            screen._populating = False
+            screen._request_candidate("test workspace change")
+            for _ in range(8):
+                await pilot.pause()
+            paths = {item["path"] for item in screen.field_edits}
+            self.assertEqual(paths, {"/mcp/port"})
+            self.assertEqual(screen.access_edits, [])
 
 
 if __name__ == "__main__":

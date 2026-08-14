@@ -41,11 +41,6 @@ grep -Fx "instance=$INSTANCE_ID" "$TMP_ROOT/instance.txt" >/dev/null \
 grep -Fx "plan_valid=True non_noop=0" "$TMP_ROOT/instance.txt" >/dev/null \
   || fail "instance snapshot is not converged"
 
-printf -v smoke_cmd 'cd %q && TERM=xterm-256color PYTHONPATH=%q python3 -m workspace_mcp_manager.tui --manager %q --smoke' \
-  "$REPO" "$REPO/src:$REPO:$REPO/tests" "$MANAGER"
-script -qfec "$smoke_cmd" /dev/null >"$TMP_ROOT/smoke.out" 2>&1 \
-  || { tail -n 40 "$TMP_ROOT/smoke.out" >&2; fail "curses pseudo-TTY smoke failed"; }
-
 TOOLKIT_HOME="$TMP_ROOT/toolkit-home"
 TOOLKIT_PREFIX="$TOOLKIT_HOME/.local"
 mkdir -p "$TOOLKIT_HOME"
@@ -58,6 +53,11 @@ bash "$REPO/scripts/install_toolkit.sh" \
   || fail "standalone toolkit did not install TUI entrypoint"
 "$TOOLKIT_PREFIX/bin/workspace-mcp-manager-tui" --help >/dev/null \
   || fail "standalone toolkit TUI entrypoint does not execute"
+
+printf -v smoke_cmd 'cd %q && TERM=xterm-256color %q --manager %q --smoke' \
+  "$REPO" "$TOOLKIT_PREFIX/bin/workspace-mcp-manager-tui" "$MANAGER"
+script -qfec "$smoke_cmd" /dev/null >"$TMP_ROOT/smoke.out" 2>&1 \
+  || { tail -n 40 "$TMP_ROOT/smoke.out" >&2; fail "Textual pseudo-TTY smoke failed"; }
 
 final_show="$($MANAGER instance show "$INSTANCE_ID")"
 FINAL_FINGERPRINT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])' <<<"$final_show")"

@@ -302,6 +302,7 @@ class ResourceGenerator:
                 *environment_lines,
                 f"ExecStart={exec_start}",
                 "Restart=on-failure",
+                "SuccessExitStatus=143",
                 "RestartSec=2",
                 "TimeoutStopSec=10",
                 "KillMode=mixed",
