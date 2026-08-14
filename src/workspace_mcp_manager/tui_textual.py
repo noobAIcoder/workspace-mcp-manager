@@ -4,6 +4,8 @@ import asyncio
 import copy
 import json
 import os
+import shutil
+import subprocess
 import webbrowser
 from functools import partial
 from pathlib import Path
@@ -22,7 +24,7 @@ from textual.widgets import (
     DirectoryTree,
     Footer,
     Header,
-    Input,
+    Input as TextualInput,
     Label,
     RichLog,
     Select,
@@ -32,6 +34,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from . import __version__
 from .tui import (
     SETTINGS_FIELDS,
     GenerationGate,
@@ -44,6 +47,96 @@ from .tui import (
     project_v1_to_v2,
     semantic_plan_diff,
 )
+
+
+HOST_CLIPBOARD_MAX_BYTES = 256 * 1024
+
+
+def _windows_powershell() -> str | None:
+    """Resolve Windows PowerShell for explicit WSL clipboard interop."""
+
+    discovered = shutil.which("powershell.exe")
+    if discovered:
+        return discovered
+    fallback = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+    return str(fallback) if fallback.is_file() else None
+
+
+def _copy_to_host_clipboard(text: str) -> bool:
+    """Best-effort Windows clipboard write in addition to Textual OSC52/local copy."""
+
+    powershell = _windows_powershell()
+    if powershell is None:
+        return False
+    command = (
+        "$enc=[System.Text.UTF8Encoding]::new($false);"
+        "[Console]::InputEncoding=$enc;"
+        "$text=[Console]::In.ReadToEnd();"
+        "Set-Clipboard -Value $text"
+    )
+    try:
+        completed = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            input=text.encode("utf-8"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def _read_host_clipboard() -> str | None:
+    """Read the Windows clipboard only for an explicit paste action."""
+
+    powershell = _windows_powershell()
+    if powershell is None:
+        return None
+    command = (
+        "$enc=[System.Text.UTF8Encoding]::new($false);"
+        "[Console]::OutputEncoding=$enc;"
+        "[Console]::Out.Write((Get-Clipboard -Raw))"
+    )
+    try:
+        completed = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0 or len(completed.stdout) > HOST_CLIPBOARD_MAX_BYTES:
+        return None
+    try:
+        return completed.stdout.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+
+
+class Input(TextualInput):
+    """Textual Input with explicit WSL host-clipboard fallback for Ctrl+V."""
+
+    BINDINGS = [
+        *TextualInput.BINDINGS,
+        Binding("ctrl+shift+c", "copy", "Copy selected text", show=False),
+        Binding("ctrl+insert", "copy", "Copy selected text", show=False),
+        Binding("ctrl+shift+v", "paste", "Paste text", show=False),
+        Binding("shift+insert", "paste", "Paste text", show=False),
+    ]
+
+    def action_paste(self) -> None:
+        host_text = _read_host_clipboard()
+        if host_text is None:
+            super().action_paste()
+            return
+        line = host_text.splitlines()[0] if host_text.splitlines() else host_text
+        start, end = self.selection
+        self.replace(line, start, end)
 
 
 STATE_SYMBOLS = {
@@ -244,6 +337,8 @@ class BaseScreen(Screen[None]):
         Binding("escape", "back", "Back"),
         Binding("r", "refresh", "Refresh"),
         Binding("?", "help", "Help"),
+        Binding("ctrl+shift+c", "copy_text", "Copy selected text", show=False),
+        Binding("ctrl+insert", "copy_text", "Copy selected text", show=False),
     ]
 
     @property
@@ -301,9 +396,12 @@ class HelpScreen(BaseScreen):
                 "Tab        next control / section\n"
                 "Space      toggle/select\n"
                 "Ctrl+P     command palette\n"
-                "Ctrl+C     copy selected text\n"
+                "Ctrl+C     copy selected text to terminal/host clipboard\n"
+                "Ctrl+Shift+C / Ctrl+Insert  copy fallback\n"
                 "Ctrl+X     cut selected input text\n"
-                "Ctrl+V     paste copied input text\n"
+                "Ctrl+V     paste into input (host clipboard on WSL, local fallback)\n"
+                "Ctrl+Shift+V / Shift+Insert paste fallback\n"
+                "F6         toggle terminal-selection mode (mouse released)\n"
                 "Ctrl+Q     quit\n"
                 "?          this help\n\n"
                 "State is manager-authoritative. Authentication is external. Raw JSON is diagnostic/read-only."
@@ -1858,6 +1956,7 @@ class WorkspaceManagerApp(App[None]):
     TITLE = "Workspace MCP Manager"
     SUB_TITLE = "Overview → Instance → Task"
     COMMAND_PALETTE_BINDING = "ctrl+p"
+    BINDINGS = [Binding("f6", "toggle_terminal_selection", "Terminal select")]
     CSS = """
     Screen { background: $surface; }
     .page { width: 100%; height: 100%; padding: 0 1; }
@@ -1887,6 +1986,51 @@ class WorkspaceManagerApp(App[None]):
         self.initial_load = initial_load
         self.busy_instances: set[str] = set()
         self.uncertain_instances: set[str] = set()
+        try:
+            cli_version = client.cli_version()
+        except (TuiError, AttributeError):
+            cli_version = "unknown"
+        self._version_sub_title = f"Overview → Instance → Task · TUI {__version__} · CLI {cli_version}"
+        self.sub_title = self._version_sub_title
+        self._terminal_selection_mode = False
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy through Textual and, on WSL, directly to the Windows clipboard."""
+
+        super().copy_to_clipboard(text)
+        _copy_to_host_clipboard(text)
+
+    def action_toggle_terminal_selection(self) -> None:
+        """Release/restore terminal mouse reporting for native terminal selection."""
+
+        driver = self._driver
+        if driver is None:
+            return
+        if self._terminal_selection_mode:
+            enable = getattr(driver, "_enable_mouse_support", None)
+            if callable(enable):
+                enable()
+            self._terminal_selection_mode = False
+            self.sub_title = self._version_sub_title
+            self.notify("TUI mouse interaction restored", title="Terminal selection")
+            return
+
+        disable = getattr(driver, "_disable_mouse_support", None)
+        if not callable(disable):
+            self.notify(
+                "This terminal driver cannot release mouse reporting; use Shift+drag for terminal selection",
+                title="Terminal selection",
+                severity="warning",
+            )
+            return
+        self.capture_mouse(None)
+        disable()
+        self._terminal_selection_mode = True
+        self.sub_title = self._version_sub_title + " · SELECT MODE"
+        self.notify(
+            "Mouse released to terminal. Select normally and copy with the terminal shortcut; press F6 to restore TUI mouse input.",
+            title="Terminal selection",
+        )
 
     def action_quit(self) -> None:
         self.exit()

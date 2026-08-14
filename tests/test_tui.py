@@ -32,6 +32,17 @@ from tests.helpers import sample_instance
 
 
 class ManagerClientTests(unittest.TestCase):
+    def test_cli_version_is_read_from_manager_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "workspace-mcp-manager"
+            executable.write_text(
+                "#!/usr/bin/env bash\nprintf 'workspace-mcp-manager 7.6.5\\n'\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+            client = ManagerClient(str(executable))
+            self.assertEqual(client.cli_version(), "7.6.5")
+
     def test_argv_uses_public_manager_and_registry_override(self) -> None:
         client = ManagerClient("/opt/bin/workspace-mcp-manager", registry_dir=Path("/tmp/registry"))
         self.assertEqual(

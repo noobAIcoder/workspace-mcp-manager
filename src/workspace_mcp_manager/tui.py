@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from . import __version__
 
 READ_CONCURRENCY = 4
 OUTPUT_LIMIT_BYTES = 1024 * 1024
@@ -162,6 +163,22 @@ class ManagerClient:
             values.extend(["--registry-dir", str(self.registry_dir)])
         values.extend(args)
         return tuple(values)
+
+    def cli_version(self) -> str:
+        returncode, stdout, stderr = self._invoke_process(
+            (self.manager, "--version"),
+            stdin_text=None,
+            timeout=READ_TIMEOUT_SECONDS,
+            mutation=False,
+        )
+        if returncode != 0:
+            evidence = (stderr or stdout).strip()[-500:]
+            raise TuiError(f"manager version probe failed with status {returncode}: {evidence}")
+        text = stdout.strip()
+        if not text:
+            raise TuiError("manager version probe returned no version")
+        prefix = "workspace-mcp-manager "
+        return text[len(prefix) :] if text.startswith(prefix) else text
 
     def _bounded_file_text(self, handle: Any, *, stream: str) -> str:
         handle.flush()
@@ -766,6 +783,7 @@ def _run_textual(client: ManagerClient, *, smoke: bool) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="workspace-mcp-manager-tui")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--manager", help="explicit manager executable for controlled testing")
     parser.add_argument("--registry-dir", type=Path, help="override manager registry for controlled testing")
     parser.add_argument("--snapshot", action="store_true", help="emit bounded read-only plain-text snapshot")

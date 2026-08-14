@@ -13,6 +13,13 @@ from tests.helpers import sample_instance
 
 
 class CliTests(unittest.TestCase):
+    def test_version_flag_reports_package_version(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            build_parser().parse_args(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(output.getvalue().strip(), "workspace-mcp-manager 0.1.1")
+
     def test_structured_false_result_returns_semantic_failure_exit(self) -> None:
         self.assertEqual(_payload_exit_code({"ok": False}), 1)
         self.assertEqual(_payload_exit_code({"ok": True}), 0)

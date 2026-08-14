@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
+from . import __version__
 from .access import AccessManager
 from .cleanup import LegacyCleanupService
 from .codex_jobs import CodexJobManager
@@ -62,6 +63,7 @@ def _load_declaration(path: Path) -> DesiredInstance:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="workspace-mcp-manager")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--registry-dir", type=Path, help="override desired-state registry directory")
     subparsers = parser.add_subparsers(dest="area", required=True)
 

@@ -69,6 +69,8 @@ echo "=== PM3.1 specification and pure contract verification ==="
 test -s "$ROOT/specs/pm3.1-context-aware-instance-setup.md" || fail "normative PM3.1 specification is missing"
 PYTHONPATH="$ROOT/src:$ROOT/tests:$ROOT" python3 -m unittest \
   tests.test_pm3_1_setup \
+  tests.test_pm3_1_electrocad_dry_run \
+  tests.test_development_environment \
   tests.test_operator_contracts \
   tests.test_planning \
   tests.test_p7_listener_updates \
@@ -77,6 +79,7 @@ PYTHONPATH="$ROOT/src:$ROOT/tests:$ROOT" python3 -m unittest \
   tests.test_tui
 echo "PM3_1_SPECIFICATION=PASS"
 echo "PM3_1_PURE_VERIFICATION=PASS"
+echo "PM3_1_ELECTROCAD_DRY_RUN=PASS"
 
 echo "=== PM3.1 public template contract ==="
 "$MANAGER" instance template | json_assert \
@@ -167,6 +170,8 @@ echo "PM3_1_DIRECTORY_PICKER=PASS"
 echo "PM3_1_EXTERNAL_AUTH_UX=PASS"
 echo "PM3_1_WIZARD_REFINEMENT=PASS"
 echo "PM3_1_DIRTY_FIELD_SEMANTICS=PASS"
+echo "PM3_1_CLIPBOARD_UX=PASS"
+echo "PM3_1_VERSION_PROJECTION=PASS"
 echo "PM3_1_TEXTUAL_PILOT=PASS"
 
 echo "=== PM3.1 PM3 regression ==="

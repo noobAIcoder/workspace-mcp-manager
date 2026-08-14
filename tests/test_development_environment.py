@@ -162,6 +162,50 @@ class DevelopmentEnvironmentTests(unittest.TestCase):
             )
             self.assertEqual(self._git(repo, "config", "--local", "--get", REMOTE_OWNER_KEY, check=False), "")
 
+    def test_effective_ssh_remote_from_instead_of_is_reversibly_adopted(self) -> None:
+        """Reproduce ElectroCAD: raw HTTPS remote, effective SSH via global insteadOf."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "ElectroCAD"
+            self._init_repo(repo)
+            original_url = "https://github.com/noobAIcoder/ElectroCAD.git"
+            self._git(repo, "remote", "add", "origin", original_url)
+            (root / ".gitconfig").write_text(
+                '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n',
+                encoding="utf-8",
+            )
+
+            desired = self._desired(root, repo, protocol="ssh")
+            reconciler = DevelopmentEnvironmentReconciler(self._paths(root))
+            effective = reconciler._run(desired, ("remote", "get-url", "origin"))  # noqa: SLF001
+            self.assertEqual(effective.exit_code, 0)
+            self.assertEqual(effective.stdout.strip(), "git@github.com:noobAIcoder/ElectroCAD.git")
+
+            observation = reconciler.observe_transport(desired)
+            self.assertEqual(observation.status, DevObservationStatus.ABSENT)
+            self.assertIn("effective Git remote", observation.detail)
+
+            reconciler.converge_transport(desired)
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", "remote.origin.url"),
+                "git@github.com:noobAIcoder/ElectroCAD.git",
+            )
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", REMOTE_ORIGINAL_URL_KEY),
+                original_url,
+            )
+            self.assertEqual(reconciler.observe_transport(desired).status, DevObservationStatus.EXACT)
+
+            absent_raw = desired.to_dict()
+            absent_raw["lifecycle"] = {"deployment": "absent", "runtime": "stopped"}
+            reconciler.converge_transport(DesiredInstance.from_dict(absent_raw))
+            self.assertEqual(
+                self._git(repo, "config", "--local", "--get", "remote.origin.url"),
+                original_url,
+            )
+            self.assertEqual(self._git(repo, "config", "--local", "--get", REMOTE_OWNER_KEY, check=False), "")
+
     def test_created_identity_is_removed_on_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

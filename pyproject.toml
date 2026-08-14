@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-mcp-manager"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic host-level lifecycle manager for coding-tools-mcp and tunnel-client instances"
 requires-python = ">=3.11"
 license = {text = "MIT"}

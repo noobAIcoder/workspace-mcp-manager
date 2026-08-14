@@ -7,6 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
+from unittest import mock
 
 from workspace_mcp_manager.tui import TuiError, TuiOutcomeUnknown
 
@@ -19,6 +20,7 @@ try:
         AccessModal,
         ConfirmModal,
         DashboardScreen,
+        Input as ManagerInput,
         InstanceScreen,
         LogsScreen,
         ReviewChangesScreen,
@@ -64,6 +66,9 @@ class FakeClient:
         self.attention_reasons = ["Pending reconciliation"]
         self.log_categories: list[str] = []
         self.candidate_calls: list[Mapping[str, Any]] = []
+
+    def cli_version(self) -> str:
+        return "9.8.7-test"
 
     def summaries(self) -> Mapping[str, Any]:
         return {
@@ -515,35 +520,77 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_preserves_textual_clipboard_and_quit_bindings(self) -> None:
         from workspace_mcp_manager.tui_textual import WorkspaceManagerApp
 
-        bindings = list(WorkspaceManagerApp.BINDINGS)
-        self.assertFalse(any(binding.key == "ctrl+c" and binding.action == "quit" for binding in bindings))
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        async with app.run_test(size=(80, 24)):
+            active = {key: value.binding for key, value in app.active_bindings.items()}
+            self.assertNotEqual(active["ctrl+c"].action, "quit")
+            self.assertEqual(active["ctrl+q"].action, "quit")
+            self.assertTrue(active["ctrl+q"].priority)
         self.assertTrue(
-            any(
-                binding.key == "ctrl+q" and binding.action == "quit" and binding.priority
-                for binding in bindings
-            )
+            any(binding.key == "f6" and binding.action == "toggle_terminal_selection" for binding in WorkspaceManagerApp.BINDINGS)
         )
+
+    async def test_terminal_copy_paste_fallback_bindings_are_available(self) -> None:
+        bindings = list(ManagerInput.BINDINGS)
+        self.assertTrue(any(binding.key == "ctrl+shift+c" and binding.action == "copy" for binding in bindings))
+        self.assertTrue(any(binding.key == "ctrl+insert" and binding.action == "copy" for binding in bindings))
+        self.assertTrue(any(binding.key == "ctrl+shift+v" and binding.action == "paste" for binding in bindings))
+        self.assertTrue(any(binding.key == "shift+insert" and binding.action == "paste" for binding in bindings))
+
+    async def test_top_bar_shows_tui_and_cli_versions(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        self.assertIn("TUI 0.1.1", str(app.sub_title))
+        self.assertIn("CLI 9.8.7-test", str(app.sub_title))
 
     async def test_input_ctrl_c_and_ctrl_v_round_trip_without_quitting(self) -> None:
         client = FakeClient()
-        app = build_app(client, initial_load=False)
-        async with app.run_test(size=(80, 24)) as pilot:
-            app.push_screen(SettingsScreen("manager-qual", client.desired, "d" * 64))
-            await pilot.pause()
-            port = app.screen.query_one("#setting-2", Input)
-            port.value = "7654"
-            port.focus()
-            await pilot.press("ctrl+shift+a", "ctrl+c")
-            await pilot.pause()
-            self.assertEqual(app.clipboard, "7654")
-            self.assertIsInstance(app.screen, SettingsScreen)
+        with (
+            mock.patch("workspace_mcp_manager.tui_textual._copy_to_host_clipboard"),
+            mock.patch("workspace_mcp_manager.tui_textual._read_host_clipboard", return_value=None),
+        ):
+            app = build_app(client, initial_load=False)
+            async with app.run_test(size=(80, 24)) as pilot:
+                app.push_screen(SettingsScreen("manager-qual", client.desired, "d" * 64))
+                await pilot.pause()
+                port = app.screen.query_one("#setting-2", Input)
+                port.value = "7654"
+                port.focus()
+                await pilot.press("ctrl+shift+a", "ctrl+c")
+                await pilot.pause()
+                self.assertEqual(app.clipboard, "7654")
+                self.assertIsInstance(app.screen, SettingsScreen)
 
-            port.value = ""
-            port.cursor_position = 0
-            await pilot.press("ctrl+v")
-            await pilot.pause()
-            self.assertEqual(port.value, "7654")
-            self.assertIsInstance(app.screen, SettingsScreen)
+                port.value = ""
+                port.cursor_position = 0
+                await pilot.press("ctrl+v")
+                await pilot.pause()
+                self.assertEqual(port.value, "7654")
+                self.assertIsInstance(app.screen, SettingsScreen)
+
+    async def test_wsl_host_clipboard_bridge_handles_copy_and_explicit_paste(self) -> None:
+        client = FakeClient()
+        with (
+            mock.patch("workspace_mcp_manager.tui_textual._copy_to_host_clipboard") as copy_host,
+            mock.patch("workspace_mcp_manager.tui_textual._read_host_clipboard", return_value="8123"),
+        ):
+            app = build_app(client, initial_load=False)
+            async with app.run_test(size=(80, 24)) as pilot:
+                app.push_screen(SettingsScreen("manager-qual", client.desired, "d" * 64))
+                await pilot.pause()
+                port = app.screen.query_one("#setting-2", Input)
+                port.value = "7654"
+                port.focus()
+                await pilot.press("ctrl+shift+a", "ctrl+c")
+                await pilot.pause()
+                copy_host.assert_called_with("7654")
+
+                port.value = ""
+                port.cursor_position = 0
+                await pilot.press("ctrl+v")
+                await pilot.pause()
+                self.assertEqual(port.value, "8123")
 
     async def test_degraded_instance_reason_is_visible_without_raw_json(self) -> None:
         client = FakeClient()
