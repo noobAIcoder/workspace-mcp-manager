@@ -152,6 +152,20 @@ def _github_repo_path(url: str) -> str | None:
     return "/".join(pieces)
 
 
+def _github_remote_protocol(url: str) -> GitRemoteProtocol | None:
+    value = url.strip()
+    if _github_repo_path(value) is None:
+        return None
+    if value.startswith("git@github.com:"):
+        return GitRemoteProtocol.SSH
+    parsed = urlparse(value)
+    if parsed.scheme == "ssh":
+        return GitRemoteProtocol.SSH
+    if parsed.scheme == "https":
+        return GitRemoteProtocol.HTTPS_GH
+    return None
+
+
 def canonical_github_url(repo_path: str, protocol: GitRemoteProtocol) -> str:
     if protocol is GitRemoteProtocol.SSH:
         return f"git@github.com:{repo_path}.git"
@@ -319,6 +333,7 @@ class DevelopmentEnvironmentReconciler:
         repo_path = _github_repo_path(url)
         if repo_path is None:
             return DevObservation(DevObservationStatus.FOREIGN, "configured remote is not a supported GitHub URL")
+        existing_protocol = _github_remote_protocol(url)
         desired_url = canonical_github_url(repo_path, requested.protocol)
         helpers = self._get_all(desired, HTTPS_HELPER_KEY)
         ssh_commands = self._get_all(desired, CORE_SSH_COMMAND_KEY)
@@ -326,11 +341,16 @@ class DevelopmentEnvironmentReconciler:
         helper_exact = helpers == ((helper_path,) if requested.protocol is GitRemoteProtocol.HTTPS_GH else ())
         ssh_exact = ssh_commands == ((git_ssh_command(desired),) if requested.protocol is GitRemoteProtocol.SSH else ())
         if owner is None and version is None:
-            if url != desired_url:
+            if existing_protocol is not requested.protocol:
                 return DevObservation(DevObservationStatus.FOREIGN, "existing Git remote protocol differs from desired state")
             if helpers or ssh_commands:
                 return DevObservation(DevObservationStatus.FOREIGN, "existing repository-local Git transport settings are foreign")
-            return DevObservation(DevObservationStatus.ABSENT, "exact existing Git remote may be adopted")
+            detail = (
+                "exact existing Git remote may be adopted"
+                if url == desired_url
+                else "semantically equivalent existing Git remote may be adopted"
+            )
+            return DevObservation(DevObservationStatus.ABSENT, detail)
         if owner != desired.instance_id.value or version != GIT_CONFIG_OWNERSHIP_VERSION:
             return DevObservation(DevObservationStatus.FOREIGN, "Git remote ownership marker is foreign or unsupported")
         if self._get(desired, REMOTE_NAME_KEY) != requested.name:
@@ -416,7 +436,11 @@ class DevelopmentEnvironmentReconciler:
             raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, "configured Git remote is not a supported GitHub URL")
         desired_url = canonical_github_url(repo_path, requested.protocol)
         if owner is None:
-            if current != desired_url or self._get_all(desired, HTTPS_HELPER_KEY) or self._get_all(desired, CORE_SSH_COMMAND_KEY):
+            if (
+                _github_remote_protocol(current) is not requested.protocol
+                or self._get_all(desired, HTTPS_HELPER_KEY)
+                or self._get_all(desired, CORE_SSH_COMMAND_KEY)
+            ):
                 raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, "refusing to replace foreign Git remote settings")
             self._set(desired, REMOTE_ORIGINAL_URL_KEY, current)
             self._set(desired, REMOTE_NAME_KEY, requested.name)
