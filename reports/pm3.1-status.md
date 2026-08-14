@@ -64,8 +64,13 @@ issues during PM3.1 qualification:
    generated MCP units now declare `SuccessExitStatus=143`, producing the
    intended `inactive/dead` stopped state.
 2. PM2/PM3 pseudo-TTY harnesses had stale assumptions about the isolated Textual
-   runtime/interrupt path; interactive smoke now uses the toolkit Textual runtime
-   and the app has an explicit `Ctrl+C` quit binding.
+   runtime/interrupt path; interactive smoke now uses the toolkit Textual runtime.
+
+A post-qualification clipboard follow-up removed the project-level `Ctrl+C` quit
+override so Textual can handle selected-text copy/cut/paste normally, retained
+`Ctrl+Q` as the explicit quit path, changed the pseudo-TTY smoke termination to
+`Ctrl+Q`, and added focused Pilot coverage for an input `Ctrl+C`/`Ctrl+V`
+round-trip without leaving the active screen.
 
 ## Final baseline
 
