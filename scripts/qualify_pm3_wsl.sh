@@ -244,10 +244,10 @@ echo "PM3_PM2_EXTERNAL_CONTRACTS=PASS"
 
 if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
   set +e
-  (sleep 2; printf '\003') | timeout 10 script -qfec "$TUI" /dev/null >/dev/null 2>&1
+  (sleep 2; printf '\021') | timeout 10 script -qfec "$TUI" /dev/null >/dev/null 2>&1
   PTY_RC=$?
   set -e
-  if [[ $PTY_RC -ne 0 && $PTY_RC -ne 130 ]]; then
+  if [[ $PTY_RC -ne 0 ]]; then
     echo "PM3_FAIL=pseudo-TTY launch returned $PTY_RC" >&2
     exit 1
   fi

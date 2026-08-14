@@ -301,6 +301,10 @@ class HelpScreen(BaseScreen):
                 "Tab        next control / section\n"
                 "Space      toggle/select\n"
                 "Ctrl+P     command palette\n"
+                "Ctrl+C     copy selected text\n"
+                "Ctrl+X     cut selected input text\n"
+                "Ctrl+V     paste copied input text\n"
+                "Ctrl+Q     quit\n"
                 "?          this help\n\n"
                 "State is manager-authoritative. Authentication is external. Raw JSON is diagnostic/read-only."
             )
@@ -1854,7 +1858,6 @@ class WorkspaceManagerApp(App[None]):
     TITLE = "Workspace MCP Manager"
     SUB_TITLE = "Overview → Instance → Task"
     COMMAND_PALETTE_BINDING = "ctrl+p"
-    BINDINGS = [Binding("ctrl+c", "quit", "Quit", show=False)]
     CSS = """
     Screen { background: $surface; }
     .page { width: 100%; height: 100%; padding: 0 1; }

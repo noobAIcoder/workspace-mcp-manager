@@ -512,11 +512,38 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsNot(app.screen, before)
 
-    async def test_ctrl_c_is_an_explicit_quit_binding(self) -> None:
+    async def test_app_preserves_textual_clipboard_and_quit_bindings(self) -> None:
         from workspace_mcp_manager.tui_textual import WorkspaceManagerApp
 
         bindings = list(WorkspaceManagerApp.BINDINGS)
-        self.assertTrue(any(binding.key == "ctrl+c" and binding.action == "quit" for binding in bindings))
+        self.assertFalse(any(binding.key == "ctrl+c" and binding.action == "quit" for binding in bindings))
+        self.assertTrue(
+            any(
+                binding.key == "ctrl+q" and binding.action == "quit" and binding.priority
+                for binding in bindings
+            )
+        )
+
+    async def test_input_ctrl_c_and_ctrl_v_round_trip_without_quitting(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(SettingsScreen("manager-qual", client.desired, "d" * 64))
+            await pilot.pause()
+            port = app.screen.query_one("#setting-2", Input)
+            port.value = "7654"
+            port.focus()
+            await pilot.press("ctrl+shift+a", "ctrl+c")
+            await pilot.pause()
+            self.assertEqual(app.clipboard, "7654")
+            self.assertIsInstance(app.screen, SettingsScreen)
+
+            port.value = ""
+            port.cursor_position = 0
+            await pilot.press("ctrl+v")
+            await pilot.pause()
+            self.assertEqual(port.value, "7654")
+            self.assertIsInstance(app.screen, SettingsScreen)
 
     async def test_degraded_instance_reason_is_visible_without_raw_json(self) -> None:
         client = FakeClient()
