@@ -30,16 +30,20 @@ P15 has two independent layers.
 ### 1. Standalone shared-toolkit installer
 
 A clean host cannot depend on an already-installed manager to install the
-manager. The repository therefore provides a standalone Python installer:
+manager. The repository therefore provides a standalone Bash installer:
 
 ```text
-python3 scripts/install_toolkit.py [--prefix <absolute-path>] [--upgrade]
-python3 scripts/install_toolkit.py --check [--prefix <absolute-path>]
+bash scripts/install_toolkit.sh [--prefix <absolute-path>] [--upgrade]
+bash scripts/install_toolkit.sh --check [--prefix <absolute-path>]
 ```
 
-The installer has no third-party Python dependencies and uses only the standard
-library. It installs the manager source from the current checkout; it does not
-download manager code from the network.
+The installer mechanics are implemented in shell. It MUST NOT depend on a
+Python installer module or on an already-installed manager. Python >= 3.11 is
+still a host prerequisite because it is the runtime of the product being
+installed. The shell installer MAY invoke that runtime for candidate/declaration
+validation and for installing the exact/hash-locked frontend dependency set.
+It installs manager source from the current checkout; it does not download
+manager source from the network.
 
 Default prefix:
 
@@ -54,6 +58,9 @@ Toolkit layout:
   releases/<source-fingerprint>/
     src/workspace_mcp_manager/...
     pyproject.toml
+    requirements-tui.lock
+    install_toolkit.sh
+    tui-runtime/site-packages/...
     bin/workspace-mcp-manager
     bin/workspace-mcp-manager-tui
     bin/workspace-mcp-reboot
@@ -76,6 +83,8 @@ The release fingerprint is SHA-256 over deterministic path/content records for:
 
 ```text
 pyproject.toml
+requirements-tui.lock
+scripts/install_toolkit.sh
 src/workspace_mcp_manager/**/*.py
 ```
 
@@ -92,8 +101,8 @@ Initial installation MUST:
 4. fsync staged regular files/directories where supported;
 5. atomically rename the staged release into `releases/<fingerprint>`;
 6. atomically switch `current` only after the release is complete;
-7. create/repair the two stable `<prefix>/bin` symlinks atomically;
-8. validate both installed entrypoints after the switch.
+7. create/repair the three stable `<prefix>/bin` symlinks atomically;
+8. validate manager/TUI entrypoints and reboot-bridge presence after the switch.
 
 The installer MUST NOT create/update instance declarations or touch systemd.
 

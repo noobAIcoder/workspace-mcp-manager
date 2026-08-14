@@ -47,6 +47,21 @@ class RegistryTests(unittest.TestCase):
                 registry.list()
             self.assertEqual(caught.exception.code, ErrorCode.REGISTRY_INVALID)
 
+    def test_conditional_update_rejects_stale_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            registry = InstanceRegistry(Path(directory))
+            current = DesiredInstance.from_dict(sample_instance())
+            registry.create(current)
+            raw = current.to_dict()
+            raw["lifecycle"]["runtime"] = "stopped"
+            with self.assertRaises(ManagerError) as raised:
+                registry.update(
+                    DesiredInstance.from_dict(raw),
+                    expected_current_fingerprint="0" * 64,
+                )
+            self.assertEqual(raised.exception.code, ErrorCode.STALE_STATE)
+            self.assertEqual(registry.get("sample").fingerprint(), current.fingerprint())
+
 
 if __name__ == "__main__":
     unittest.main()

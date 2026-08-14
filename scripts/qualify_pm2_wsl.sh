@@ -49,7 +49,7 @@ script -qfec "$smoke_cmd" /dev/null >"$TMP_ROOT/smoke.out" 2>&1 \
 TOOLKIT_HOME="$TMP_ROOT/toolkit-home"
 TOOLKIT_PREFIX="$TOOLKIT_HOME/.local"
 mkdir -p "$TOOLKIT_HOME"
-python3 "$REPO/scripts/install_toolkit.py" \
+bash "$REPO/scripts/install_toolkit.sh" \
   --repo "$REPO" \
   --account-home "$TOOLKIT_HOME" \
   --prefix "$TOOLKIT_PREFIX" \

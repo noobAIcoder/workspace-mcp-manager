@@ -11,6 +11,9 @@ license = {text = "MIT"}
 authors = [{name = "workspace-mcp-manager contributors"}]
 dependencies = []
 
+[project.optional-dependencies]
+tui = ["textual==8.2.8"]
+
 [project.scripts]
 workspace-mcp-manager = "workspace_mcp_manager.cli:main"
 workspace-mcp-manager-tui = "workspace_mcp_manager.tui:main"

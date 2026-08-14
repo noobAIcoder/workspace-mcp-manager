@@ -6,10 +6,12 @@ import unittest
 from pathlib import Path
 
 from workspace_mcp_manager.domain import DesiredInstance
+from workspace_mcp_manager.errors import ErrorCode, ManagerError
 from workspace_mcp_manager.generation import ResourceGenerator
 from workspace_mcp_manager.lifecycle import HostApplyService, HostLifecycleWorker
+from workspace_mcp_manager.operator_contracts import observed_plan_inputs, plan_fingerprint
 from workspace_mcp_manager.paths import ManagerPaths
-from workspace_mcp_manager.planning import PlanItem, PlanOperation, ReconciliationPlan
+from workspace_mcp_manager.planning import HostResourceObserver, PlanItem, PlanOperation, ReconciliationPlan
 from workspace_mcp_manager.registry import InstanceRegistry
 
 from tests.helpers import sample_instance
@@ -40,6 +42,9 @@ class FakeSystemd:
     def restart(self, unit: str) -> None:
         self.active.add(unit)
         self.calls.append(("restart", unit))
+
+    def verify_generated_units(self, bundle) -> None:  # type: ignore[no-untyped-def]
+        self.calls.append(("verify", None))
 
 
 def paths_for(root: Path) -> ManagerPaths:
@@ -144,6 +149,48 @@ class LifecycleStopTests(unittest.TestCase):
             registry.create(stopped_desired())
             worker = HostLifecycleWorker(paths, registry)
             self.assertIsInstance(worker.apply_service, HostApplyService)
+
+    def test_reviewed_apply_rejects_stale_plan_inside_instance_lock(self) -> None:
+        class FixedPlanner:
+            def __init__(self, plan: ReconciliationPlan) -> None:
+                self.value = plan
+
+            def plan(self, desired: DesiredInstance) -> ReconciliationPlan:
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            desired = stopped_desired()
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            generator = ResourceGenerator(paths)
+            bundle = generator.generate(desired)
+            plan = ReconciliationPlan(
+                instance_id="sample",
+                desired_fingerprint=desired.fingerprint(),
+                valid=True,
+                operations=(PlanItem(PlanOperation.NOOP, "sample", "converged", None),),
+                warnings=(),
+            )
+            service = HostApplyService(
+                paths,
+                registry,
+                generator=generator,
+                planner=FixedPlanner(plan),  # type: ignore[arg-type]
+                systemd=FakeSystemd(),  # type: ignore[arg-type]
+            )
+            observer = HostResourceObserver()
+            reviewed = plan_fingerprint(
+                plan,
+                bundle,
+                observed_inputs=observed_plan_inputs(plan, bundle, observer),
+            )
+            self.assertEqual(len(reviewed), 64)
+            with self.assertRaises(ManagerError) as raised:
+                service.apply("sample", expected_plan_fingerprint="0" * 64)
+            self.assertEqual(raised.exception.code, ErrorCode.STALE_STATE)
+            self.assertEqual(raised.exception.details["current_plan_fingerprint"], reviewed)
 
 
 if __name__ == "__main__":

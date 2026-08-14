@@ -132,6 +132,45 @@ class AccessTests(unittest.TestCase):
             with self.assertRaisesRegex(ManagerError, "not configured"):
                 AccessManager(paths, registry).remove("qual", alias="missing")
 
+    def test_stale_access_mutation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            desired = empty_access_desired(root)
+            registry.create(desired)
+            with self.assertRaisesRegex(ManagerError, "stale"):
+                AccessManager(paths, registry).add(
+                    "qual",
+                    mode="ro",
+                    alias="docs",
+                    path="/srv/docs",
+                    expected_current_fingerprint="0" * 64,
+                )
+            self.assertEqual(registry.get("qual").fingerprint(), desired.fingerprint())
+
+    def test_access_update_is_atomic_and_preserves_single_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(empty_access_desired(root))
+            manager = AccessManager(paths, registry)
+            added = manager.add("qual", mode="ro", alias="docs", path="/srv/docs")
+            updated = manager.update(
+                "qual",
+                existing_alias="docs",
+                mode="rw",
+                alias="models",
+                path="/srv/models",
+                expected_current_fingerprint=added["desired_fingerprint"],
+            )
+            self.assertEqual(updated["action"], "update")
+            self.assertEqual(
+                [(item["mode"], item["alias"], item["path"]) for item in updated["entries"]],
+                [("rw", "models", "/srv/models")],
+            )
+
     def test_access_change_plans_unit_update_restart_and_mountpoint_creation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

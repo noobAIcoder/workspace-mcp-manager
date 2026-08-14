@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .domain import DesiredInstance, InstanceId
@@ -16,6 +18,25 @@ class InstanceRegistry:
     def path_for(self, instance_id: InstanceId | str) -> Path:
         iid = instance_id if isinstance(instance_id, InstanceId) else InstanceId(instance_id)
         return self.directory / f"{iid.value}.json"
+
+    @contextmanager
+    def _instance_lock(self, instance_id: InstanceId | str):
+        iid = instance_id if isinstance(instance_id, InstanceId) else InstanceId(instance_id)
+        lock_root = self.directory / ".locks"
+        lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(self.directory, 0o700)
+            os.chmod(lock_root, 0o700)
+        except OSError:
+            pass
+        path = lock_root / f"{iid.value}.lock"
+        with path.open("a+", encoding="utf-8") as handle:
+            os.chmod(path, 0o600)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _read(self, path: Path) -> DesiredInstance:
         try:
@@ -47,23 +68,44 @@ class InstanceRegistry:
 
     def create(self, desired: DesiredInstance) -> Path:
         path = self.path_for(desired.instance_id)
-        if path.exists():
-            raise ManagerError(ErrorCode.INSTANCE_EXISTS, f"instance already exists: {desired.instance_id.value}")
-        self._write(path, desired)
+        with self._instance_lock(desired.instance_id):
+            if path.exists():
+                raise ManagerError(ErrorCode.INSTANCE_EXISTS, f"instance already exists: {desired.instance_id.value}")
+            self._write(path, desired)
         return path
 
-    def update(self, desired: DesiredInstance) -> Path:
+    def update(
+        self,
+        desired: DesiredInstance,
+        *,
+        expected_current_fingerprint: str | None = None,
+    ) -> Path:
         path = self.path_for(desired.instance_id)
-        if not path.is_file():
-            raise ManagerError(ErrorCode.INSTANCE_NOT_FOUND, f"instance declaration not found: {desired.instance_id.value}")
-        current = self._read(path)
-        if desired.config_version < current.config_version:
-            raise ManagerError(
-                ErrorCode.CONFIG_VERSION_UNSUPPORTED,
-                "instance config_version downgrade is not supported",
-                {"current": current.config_version, "requested": desired.config_version},
-            )
-        self._write(path, desired)
+        with self._instance_lock(desired.instance_id):
+            if not path.is_file():
+                raise ManagerError(ErrorCode.INSTANCE_NOT_FOUND, f"instance declaration not found: {desired.instance_id.value}")
+            current = self._read(path)
+            current_fingerprint = current.fingerprint()
+            if (
+                expected_current_fingerprint is not None
+                and current_fingerprint != expected_current_fingerprint
+            ):
+                raise ManagerError(
+                    ErrorCode.STALE_STATE,
+                    f"stale declaration for {desired.instance_id.value}",
+                    {
+                        "instance_id": desired.instance_id.value,
+                        "expected_current_fingerprint": expected_current_fingerprint,
+                        "current_fingerprint": current_fingerprint,
+                    },
+                )
+            if desired.config_version < current.config_version:
+                raise ManagerError(
+                    ErrorCode.CONFIG_VERSION_UNSUPPORTED,
+                    "instance config_version downgrade is not supported",
+                    {"current": current.config_version, "requested": desired.config_version},
+                )
+            self._write(path, desired)
         return path
 
     def _write(self, path: Path, desired: DesiredInstance) -> None:

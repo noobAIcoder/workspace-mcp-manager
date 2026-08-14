@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from workspace_mcp_manager.tui import (
-    CursesTui,
-    EditorField,
+    GenerationGate,
     ManagerClient,
     ManagerInvocation,
+    MutationCoordinator,
+    SETTINGS_FIELDS,
     TuiError,
-    available_editor_fields,
+    TuiOutcomeUnknown,
+    apply_settings_values,
     clip_text,
     dashboard_snapshot,
+    default_manager_executable,
     get_nested,
-    parse_editor_value,
     project_v1_to_v2,
+    semantic_plan_diff,
     set_nested,
 )
 
@@ -26,99 +32,198 @@ from tests.helpers import sample_instance
 
 
 class ManagerClientTests(unittest.TestCase):
-    def test_argv_uses_public_manager_and_registry_override_without_shell(self) -> None:
+    def test_argv_uses_public_manager_and_registry_override(self) -> None:
         client = ManagerClient("/opt/bin/workspace-mcp-manager", registry_dir=Path("/tmp/registry"))
         self.assertEqual(
-            client.argv("instance", "list"),
+            client.argv("instance", "summaries"),
             (
                 "/opt/bin/workspace-mcp-manager",
                 "--registry-dir",
                 "/tmp/registry",
                 "instance",
-                "list",
+                "summaries",
             ),
         )
-
-        completed = subprocess.CompletedProcess(
-            ["manager"],
-            0,
-            json.dumps({"ok": True, "instances": []}),
-            "",
-        )
-        with patch("workspace_mcp_manager.tui.subprocess.run", return_value=completed) as run:
-            payload = client.invoke("instance", "list", require_ok=True).payload
-        self.assertTrue(payload["ok"])
-        kwargs = run.call_args.kwargs
-        self.assertNotIn("shell", kwargs)
-        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
 
     def test_structured_manager_error_is_preserved(self) -> None:
         error = {
             "ok": False,
-            "error": {"code": "CONFIG_INVALID", "message": "invalid declaration", "details": {}},
+            "error": {"code": "STALE_STATE", "message": "stale declaration", "details": {}},
         }
-        completed = subprocess.CompletedProcess(["manager"], 2, "", json.dumps(error))
         client = ManagerClient("manager")
-        with patch("workspace_mcp_manager.tui.subprocess.run", return_value=completed):
+        with patch.object(client, "_invoke_process", return_value=(1, "", json.dumps(error))):
             with self.assertRaises(TuiError) as caught:
-                client.invoke("instance", "update", "/tmp/input.json", require_ok=True)
+                client.invoke("instance", "summary", "sample", require_ok=True)
         self.assertEqual(caught.exception.payload, error)
-        self.assertIn("invalid declaration", str(caught.exception))
+        self.assertIn("STALE_STATE", str(caught.exception))
 
-    def test_lifecycle_and_access_are_public_cli_mappings(self) -> None:
+    def test_public_mutation_mappings_include_pm3_preconditions(self) -> None:
         class RecordingClient(ManagerClient):
             def __init__(self) -> None:
                 super().__init__("manager")
-                self.calls: list[tuple[str, ...]] = []
+                self.calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 
-            def invoke(self, *args: str, stdin_text=None, require_ok=False):  # type: ignore[override]
-                self.calls.append(tuple(args))
+            def invoke(self, *args: str, **kwargs):  # type: ignore[override]
+                self.calls.append((tuple(args), dict(kwargs)))
                 return ManagerInvocation(tuple(args), 0, {"ok": True})
 
         client = RecordingClient()
-        client.lifecycle("restart", "sample")
-        client.access_add("sample", mode="ro", alias="docs", path="/srv/docs")
-        client.access_remove("sample", alias="docs")
+        client.apply("sample", expected_plan_fingerprint="a" * 64)
+        client.access_add(
+            "sample",
+            mode="ro",
+            alias="docs",
+            path="/srv/docs",
+            expected_current_fingerprint="b" * 64,
+        )
+        client.access_update(
+            "sample",
+            existing_alias="docs",
+            mode="rw",
+            alias="models",
+            path="/srv/models",
+            expected_current_fingerprint="c" * 64,
+        )
+        client.access_remove(
+            "sample",
+            alias="models",
+            expected_current_fingerprint="d" * 64,
+        )
         self.assertEqual(
-            client.calls,
+            [call[0] for call in client.calls],
             [
-                ("instance", "restart", "sample"),
-                ("access", "add-ro", "sample", "docs", "/srv/docs"),
-                ("access", "remove", "sample", "docs"),
+                ("instance", "apply", "sample", "--expected-plan-fingerprint", "a" * 64),
+                ("access", "add-ro", "sample", "docs", "/srv/docs", "--expected-current-fingerprint", "b" * 64),
+                (
+                    "access",
+                    "update",
+                    "sample",
+                    "docs",
+                    "rw",
+                    "models",
+                    "/srv/models",
+                    "--expected-current-fingerprint",
+                    "c" * 64,
+                ),
+                ("access", "remove", "sample", "models", "--expected-current-fingerprint", "d" * 64),
             ],
         )
+        self.assertTrue(all(call[1].get("mutation") is True for call in client.calls))
 
-    def test_declaration_transport_validates_then_updates_and_deletes_temp_file(self) -> None:
+    def test_declaration_transport_validates_then_conditionally_updates_and_deletes_temp_file(self) -> None:
         class RecordingClient(ManagerClient):
             def __init__(self) -> None:
                 super().__init__("manager")
                 self.calls: list[tuple[str, ...]] = []
-                self.seen_text: str | None = None
-                self.path: Path | None = None
+                self.paths: list[Path] = []
 
-            def invoke(self, *args: str, stdin_text=None, require_ok=False):  # type: ignore[override]
+            def invoke(self, *args: str, **kwargs):  # type: ignore[override]
                 self.calls.append(tuple(args))
-                if len(args) == 3 and args[:2] in {("instance", "validate"), ("instance", "update")}:
-                    self.path = Path(args[2])
-                    self.assert_temp_exists()
-                    self.seen_text = self.path.read_text(encoding="utf-8")
+                if len(args) >= 3 and args[:2] in {("instance", "validate"), ("instance", "update")}:
+                    path = Path(args[2])
+                    self.assert_candidate(path)
+                    self.paths.append(path)
                 return ManagerInvocation(tuple(args), 0, {"ok": True})
 
-            def assert_temp_exists(self) -> None:
-                assert self.path is not None and self.path.is_file()
+            @staticmethod
+            def assert_candidate(path: Path) -> None:
+                assert path.is_file()
+                assert oct(path.stat().st_mode & 0o777) == "0o600"
 
         client = RecordingClient()
         desired = sample_instance()
-        client.save_declaration("update", desired)
+        client.save_declaration("update", desired, expected_current_fingerprint="f" * 64)
         self.assertEqual(client.calls[0][:2], ("instance", "validate"))
-        self.assertEqual(client.calls[1][:2], ("instance", "update"))
-        self.assertIsNotNone(client.seen_text)
-        self.assertEqual(json.loads(client.seen_text or "{}"), desired)
-        assert client.path is not None
-        self.assertFalse(client.path.exists())
+        self.assertEqual(client.calls[1][-2:], ("--expected-current-fingerprint", "f" * 64))
+        self.assertTrue(client.paths)
+        self.assertTrue(all(not path.exists() for path in client.paths))
+
+    def test_mutation_timeout_does_not_terminate_started_process(self) -> None:
+        finished = threading.Event()
+
+        class FakeProcess:
+            stdin = None
+            terminated = False
+            killed = False
+            calls = 0
+
+            def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                if self.calls == 1:
+                    raise subprocess.TimeoutExpired(["manager"], timeout)
+                finished.set()
+                return 0
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.killed = True
+
+        fake = FakeProcess()
+        client = ManagerClient("manager")
+        with patch("workspace_mcp_manager.tui.subprocess.Popen", return_value=fake) as popen:
+            with self.assertRaises(TuiOutcomeUnknown):
+                client._invoke_process(
+                    ("manager", "instance", "apply", "sample"),
+                    stdin_text=None,
+                    timeout=0.01,
+                    mutation=True,
+                )
+        self.assertTrue(finished.wait(1.0))
+        self.assertFalse(fake.terminated)
+        self.assertFalse(fake.killed)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
+    def test_output_capture_is_bounded(self) -> None:
+        client = ManagerClient("manager", output_limit_bytes=8)
+        with tempfile.TemporaryFile(mode="w+b") as handle:
+            handle.write(b"0123456789")
+            with self.assertRaisesRegex(TuiError, "exceeded"):
+                client._bounded_file_text(handle, stream="stdout")
+
+    def test_same_release_environment_manager_takes_precedence(self) -> None:
+        with patch.dict(os.environ, {"WORKSPACE_MCP_MANAGER_BIN": "/release/bin/workspace-mcp-manager"}, clear=False):
+            self.assertEqual(default_manager_executable(), "/release/bin/workspace-mcp-manager")
 
 
 class TuiModelTests(unittest.TestCase):
+    def test_generation_gate_rejects_late_result(self) -> None:
+        gate = GenerationGate()
+        first = gate.next("dashboard")
+        second = gate.next("dashboard")
+        self.assertFalse(gate.accepts("dashboard", first))
+        self.assertTrue(gate.accepts("dashboard", second))
+
+    def test_mutation_coordinator_serializes_same_instance(self) -> None:
+        coordinator = MutationCoordinator()
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+
+        def first() -> None:
+            with coordinator.mutation("sample"):
+                first_entered.set()
+                release_first.wait(1.0)
+
+        def second() -> None:
+            first_entered.wait(1.0)
+            with coordinator.mutation("sample"):
+                second_entered.set()
+
+        t1 = threading.Thread(target=first)
+        t2 = threading.Thread(target=second)
+        t1.start()
+        t2.start()
+        self.assertTrue(first_entered.wait(1.0))
+        time.sleep(0.02)
+        self.assertFalse(second_entered.is_set())
+        release_first.set()
+        t1.join(1.0)
+        t2.join(1.0)
+        self.assertTrue(second_entered.is_set())
+        self.assertFalse(coordinator.any_active())
+
     def test_v1_to_v2_projection_preserves_external_github_profile(self) -> None:
         raw = sample_instance()
         projected = project_v1_to_v2(raw)
@@ -129,22 +234,37 @@ class TuiModelTests(unittest.TestCase):
         self.assertIsNone(projected["git"]["remote"])
         self.assertEqual(projected["agent"], {"mode": "none", "ssh_auth_sock": None})
 
-    def test_v1_to_v2_projection_uses_disabled_when_profile_absent(self) -> None:
-        raw = sample_instance()
-        raw["github"] = {"config_dir": None}
-        projected = project_v1_to_v2(raw)
-        self.assertEqual(projected["github"], {"mode": "disabled", "config_dir": None, "binary": None})
+    def test_settings_are_structured_and_never_offer_authentication_secrets(self) -> None:
+        labels = " ".join(field.label.lower() for field in SETTINGS_FIELDS)
+        for forbidden in ("api key", "token", "private key", "passphrase", "credential"):
+            self.assertNotIn(forbidden, labels)
+        draft = project_v1_to_v2(sample_instance())
+        updated = apply_settings_values(
+            draft,
+            {
+                ("lifecycle", "runtime"): "stopped",
+                ("mcp", "port"): "7777",
+                ("github", "mode"): "disabled",
+                ("recovery", "admission_guard_enabled"): True,
+            },
+        )
+        self.assertEqual(get_nested(updated, ("lifecycle", "runtime")), "stopped")
+        self.assertEqual(get_nested(updated, ("mcp", "port")), 7777)
+        self.assertEqual(get_nested(updated, ("github", "mode")), "disabled")
+        self.assertTrue(get_nested(updated, ("recovery", "admission_guard_enabled")))
 
-    def test_editor_helpers_handle_nested_json_and_choices(self) -> None:
-        raw = project_v1_to_v2(sample_instance())
-        identity_field = next(field for field in available_editor_fields(raw) if field.path == ("git", "identity"))
-        identity = parse_editor_value(identity_field, '{"name":"A","email":"a@example.invalid"}')
-        set_nested(raw, identity_field.path, identity)
-        self.assertEqual(get_nested(raw, identity_field.path), identity)
-        choice = EditorField("mode", ("github", "mode"), "choice", ("disabled", "managed"))
-        self.assertEqual(parse_editor_value(choice, "managed"), "managed")
-        with self.assertRaises(ValueError):
-            parse_editor_value(choice, "external")
+    def test_nested_helpers_are_deterministic(self) -> None:
+        raw: dict[str, object] = {"a": {"b": 1}}
+        set_nested(raw, ("a", "b"), 2)
+        self.assertEqual(get_nested(raw, ("a", "b")), 2)
+
+    def test_semantic_plan_diff_never_requires_raw_json(self) -> None:
+        old = {"semantic_operations": [{"operation": "UPDATE", "description": "Update MCP service"}]}
+        new = {"semantic_operations": [{"operation": "RESTART", "description": "Restart MCP service"}]}
+        self.assertEqual(
+            semantic_plan_diff(old, new),
+            ["- Update MCP service", "+ Restart MCP service"],
+        )
 
     def test_clip_text_is_small_terminal_safe(self) -> None:
         self.assertEqual(clip_text("abcdef", 0), "")
@@ -152,7 +272,7 @@ class TuiModelTests(unittest.TestCase):
         self.assertEqual(clip_text("abcdef", 4), "abc…")
         self.assertEqual(clip_text("abc", 4), "abc")
 
-    def test_dashboard_snapshot_is_bounded_plain_text(self) -> None:
+    def test_dashboard_snapshot_preserves_pm2_external_contract(self) -> None:
         class FakeClient:
             def list_instances(self):
                 return [
@@ -163,33 +283,26 @@ class TuiModelTests(unittest.TestCase):
                 ]
 
             def show(self, instance_id):
-                raw = sample_instance()
-                return {"ok": True, "desired": raw}
+                return {"ok": True, "desired": sample_instance()}
 
-            def view(self, command, instance_id):
+            def plan(self, instance_id):
                 return {"ok": True, "valid": True, "operations": [{"operation": "NOOP"}]}
 
         text = dashboard_snapshot(FakeClient(), instance_id="sample")  # type: ignore[arg-type]
         self.assertIn("instances=1", text)
-        self.assertIn("sample deployment=present runtime=running", text)
+        self.assertIn("- sample deployment=present runtime=running", text)
+        self.assertIn("instance=sample", text)
         self.assertIn("plan_valid=True non_noop=0", text)
+        self.assertLessEqual(len(text.encode("utf-8")), 64 * 1024)
 
-    def test_put_clips_without_raising_on_tiny_screen(self) -> None:
-        class TinyScreen:
-            def getmaxyx(self):
-                return (1, 1)
-
-            def addnstr(self, *args, **kwargs):
-                raise AssertionError("addnstr should not be called when no width is available")
-
-        app = CursesTui(TinyScreen(), ManagerClient("manager"))
-        app._put(0, 0, "hello")
-
-    def test_source_has_no_private_runtime_or_direct_systemd_mutation(self) -> None:
+    def test_source_has_no_private_runtime_curses_or_direct_host_mutation(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "src/workspace_mcp_manager/tui.py").read_text(encoding="utf-8")
         self.assertNotIn('"_runtime"', source)
         self.assertNotIn("systemctl", source)
         self.assertNotIn("systemd-run", source)
+        self.assertNotIn("journalctl", source)
+        self.assertNotIn("import curses", source)
+        self.assertNotIn("from textual", source)
         self.assertNotIn("shell=True", source)
 
 

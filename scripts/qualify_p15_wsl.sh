@@ -4,7 +4,7 @@ set -euo pipefail
 INSTANCE_ID="${INSTANCE_ID:-manager-qual}"
 REPO="${REPO:-/home/cloudtoor/repos/workspace-mcp-manager}"
 MANAGER="${MANAGER:-$HOME/.local/bin/workspace-mcp-manager}"
-INSTALLER="$REPO/scripts/install_toolkit.py"
+INSTALLER="$REPO/scripts/install_toolkit.sh"
 NODE_ROOT="${NODE_ROOT:-$HOME/.nvm/versions/node/v24.15.0}"
 
 fail() {
@@ -13,7 +13,7 @@ fail() {
 }
 
 [ -x "$MANAGER" ] || fail "manager executable is unavailable"
-[ -f "$INSTALLER" ] || fail "standalone toolkit installer is unavailable"
+[ -f "$INSTALLER" ] || fail "standalone shell toolkit installer is unavailable"
 [ -d "$REPO/src/workspace_mcp_manager" ] || fail "manager source package is unavailable"
 
 TMP_ROOT="$(mktemp -d -t workspace-mcp-p15-XXXXXX)"
@@ -36,7 +36,7 @@ PY
 [ ! -e "$HOME/repos/workspace-mcp-manager-qual/.workspace-mcp-access" ] \
   || fail "manager-qual must begin P15 with no external access root"
 
-python3 "$INSTALLER" --repo "$REPO" --account-home "$HOME" --check >"$TMP_ROOT/real-check.json"
+bash "$INSTALLER" --repo "$REPO" --account-home "$HOME" --check >"$TMP_ROOT/real-check.json"
 python3 - "$TMP_ROOT/real-check.json" <<'PY'
 import json, pathlib, sys
 p=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -52,14 +52,20 @@ REPO1="$TMP_ROOT/repo1"
 REPO2="$TMP_ROOT/repo2"
 mkdir -p "$REPO1" "$REPO2"
 cp "$REPO/pyproject.toml" "$REPO1/"
+cp "$REPO/requirements-tui.lock" "$REPO1/"
+mkdir -p "$REPO1/scripts"
+cp "$INSTALLER" "$REPO1/scripts/install_toolkit.sh"
 cp -a "$REPO/src" "$REPO1/"
 cp "$REPO/pyproject.toml" "$REPO2/"
+cp "$REPO/requirements-tui.lock" "$REPO2/"
+mkdir -p "$REPO2/scripts"
+cp "$INSTALLER" "$REPO2/scripts/install_toolkit.sh"
 cp -a "$REPO/src" "$REPO2/"
 
-python3 "$INSTALLER" --repo "$REPO1" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
+bash "$INSTALLER" --repo "$REPO1" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
   >"$TMP_ROOT/install-1.json"
 "$ISO_PREFIX/bin/workspace-mcp-manager" --help >/dev/null
-python3 "$INSTALLER" --repo "$REPO1" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
+bash "$INSTALLER" --repo "$REPO1" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
   >"$TMP_ROOT/install-noop.json"
 OLD_FINGERPRINT="$(python3 - "$TMP_ROOT/install-noop.json" <<'PY'
 import json, pathlib, sys
@@ -69,7 +75,7 @@ PY
 
 printf '\n# p15-live-upgrade-candidate\n' >>"$REPO2/src/workspace_mcp_manager/domain.py"
 set +e
-python3 "$INSTALLER" --repo "$REPO2" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
+bash "$INSTALLER" --repo "$REPO2" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" \
   >"$TMP_ROOT/rejected.out" 2>"$TMP_ROOT/rejected.err"
 REJECT_RC=$?
 set -e
@@ -77,7 +83,7 @@ set -e
 grep -F 'requires explicit --upgrade' "$TMP_ROOT/rejected.err" >/dev/null \
   || fail "toolkit replacement rejection reason is wrong"
 
-python3 "$INSTALLER" --repo "$REPO2" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" --upgrade \
+bash "$INSTALLER" --repo "$REPO2" --account-home "$ISO_HOME" --prefix "$ISO_PREFIX" --upgrade \
   >"$TMP_ROOT/install-upgrade.json"
 NEW_FINGERPRINT="$(python3 - "$TMP_ROOT/install-upgrade.json" <<'PY'
 import json, pathlib, sys

@@ -18,6 +18,8 @@ from .git_diagnostics import GitDiagnosticService
 from .host import HostInspector
 from .host_apply import HostExecutionBridge, HostInstanceStatusService
 from .lifecycle import HostLifecycleWorker
+from .operator_contracts import operator_template
+from .operator_projection import OperatorProjectionService
 from .paths import ManagerPaths
 from .planning import ReconciliationPlanner
 from .reboot import RebootService
@@ -95,12 +97,24 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("validate", "create", "update"):
         item = instance_sub.add_parser(command)
         item.add_argument("file", type=Path)
+        if command == "update":
+            item.add_argument("--expected-current-fingerprint")
         item.add_argument("--pretty", action="store_true")
     list_cmd = instance_sub.add_parser("list")
     list_cmd.add_argument("--pretty", action="store_true")
     show_cmd = instance_sub.add_parser("show")
     show_cmd.add_argument("instance_id")
     show_cmd.add_argument("--pretty", action="store_true")
+    template_cmd = instance_sub.add_parser("template")
+    template_cmd.add_argument("--pretty", action="store_true")
+    preview_cmd = instance_sub.add_parser("preview")
+    preview_cmd.add_argument("file", type=Path)
+    preview_cmd.add_argument("--pretty", action="store_true")
+    summary_cmd = instance_sub.add_parser("summary")
+    summary_cmd.add_argument("instance_id")
+    summary_cmd.add_argument("--pretty", action="store_true")
+    summaries_cmd = instance_sub.add_parser("summaries")
+    summaries_cmd.add_argument("--pretty", action="store_true")
 
     render_cmd = instance_sub.add_parser("render")
     render_cmd.add_argument("instance_id")
@@ -118,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     logs_cmd = instance_sub.add_parser("logs")
     logs_cmd.add_argument("instance_id")
     logs_cmd.add_argument("--lines", type=int, default=100)
+    logs_cmd.add_argument("--category", choices=("all", "mcp", "tunnel", "recovery"), default="all")
     logs_cmd.add_argument("--pretty", action="store_true")
 
     git_cmd = instance_sub.add_parser("git")
@@ -132,6 +147,8 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("apply", "start", "stop", "restart", "remove"):
         item = instance_sub.add_parser(command)
         item.add_argument("instance_id")
+        if command == "apply":
+            item.add_argument("--expected-plan-fingerprint")
         item.add_argument("--pretty", action="store_true")
 
     codex = subparsers.add_parser("codex")
@@ -176,11 +193,21 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("instance_id")
         item.add_argument("alias")
         item.add_argument("path")
+        item.add_argument("--expected-current-fingerprint")
         item.add_argument("--pretty", action="store_true")
     access_remove = access_sub.add_parser("remove")
     access_remove.add_argument("instance_id")
     access_remove.add_argument("alias")
+    access_remove.add_argument("--expected-current-fingerprint")
     access_remove.add_argument("--pretty", action="store_true")
+    access_update = access_sub.add_parser("update")
+    access_update.add_argument("instance_id")
+    access_update.add_argument("existing_alias")
+    access_update.add_argument("mode", choices=("ro", "rw"))
+    access_update.add_argument("alias")
+    access_update.add_argument("path")
+    access_update.add_argument("--expected-current-fingerprint")
+    access_update.add_argument("--pretty", action="store_true")
 
     runtime = subparsers.add_parser("_runtime", help=argparse.SUPPRESS)
     runtime_sub = runtime.add_subparsers(dest="command", required=True)
@@ -189,9 +216,14 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("instance_id")
     runtime_registry = runtime_sub.add_parser("registry-write")
     runtime_registry.add_argument("action", choices=("create", "update"))
+    runtime_registry.add_argument("--expected-current-fingerprint")
     runtime_sub.add_parser("list")
     runtime_show = runtime_sub.add_parser("show")
     runtime_show.add_argument("instance_id")
+    runtime_sub.add_parser("preview")
+    runtime_summary = runtime_sub.add_parser("summary")
+    runtime_summary.add_argument("instance_id")
+    runtime_sub.add_parser("summaries")
     runtime_render = runtime_sub.add_parser("render")
     runtime_render.add_argument("instance_id")
     runtime_render.add_argument("--include-content", action="store_true")
@@ -202,6 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_logs = runtime_sub.add_parser("logs")
     runtime_logs.add_argument("instance_id")
     runtime_logs.add_argument("--lines", type=int, default=100)
+    runtime_logs.add_argument("--category", choices=("all", "mcp", "tunnel", "recovery"), default="all")
     runtime_git = runtime_sub.add_parser("git")
     runtime_git.add_argument("instance_id")
     runtime_cleanup = runtime_sub.add_parser("cleanup")
@@ -224,10 +257,13 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_diagnose.add_argument("instance_id")
     runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
     runtime_access = runtime_sub.add_parser("access")
-    runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove"))
+    runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove", "update"))
     runtime_access.add_argument("instance_id")
     runtime_access.add_argument("alias", nargs="?")
     runtime_access.add_argument("path", nargs="?")
+    runtime_access.add_argument("--existing-alias")
+    runtime_access.add_argument("--mode", choices=("ro", "rw"))
+    runtime_access.add_argument("--expected-current-fingerprint")
     runtime_codex_start = runtime_sub.add_parser("codex-start")
     runtime_codex_start.add_argument("mode", choices=("read", "write"))
     runtime_codex_start.add_argument("instance_id")
@@ -247,6 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_lifecycle = runtime_sub.add_parser("lifecycle")
     runtime_lifecycle.add_argument("action", choices=("apply", "start", "stop", "restart", "remove"))
     runtime_lifecycle.add_argument("instance_id")
+    runtime_lifecycle.add_argument("--expected-plan-fingerprint")
     return parser
 
 
@@ -309,7 +346,19 @@ def _run_instance(
         # Registry state lives under the real account home. Persist it through
         # the same narrow user-systemd host boundary as lifecycle operations so
         # MCP callers do not require broad home-directory write access.
-        return bridge.run_registry_write(args.command, desired)
+        return bridge.run_registry_write(
+            args.command,
+            desired,
+            expected_current_fingerprint=getattr(args, "expected_current_fingerprint", None),
+        )
+    if args.command == "template":
+        return operator_template(paths)
+    if args.command == "preview":
+        return bridge.run_preview(_load_declaration(args.file))
+    if args.command == "summary":
+        return bridge.run_summary(args.instance_id)
+    if args.command == "summaries":
+        return bridge.run_summaries()
     if args.command == "list":
         return bridge.run_list()
     if args.command == "show":
@@ -321,13 +370,17 @@ def _run_instance(
     if args.command == "status":
         return bridge.run_status(args.instance_id)
     if args.command == "logs":
-        return bridge.run_logs(args.instance_id, lines=args.lines)
+        return bridge.run_logs(args.instance_id, lines=args.lines, category=args.category)
     if args.command == "git":
         return bridge.run_git(args.instance_id)
     if args.command == "diagnose":
         return bridge.run_diagnose(args.instance_id, since_seconds=args.since_seconds)
     if args.command in {"apply", "start", "stop", "restart", "remove"}:
-        return bridge.run_lifecycle(args.command, args.instance_id)
+        return bridge.run_lifecycle(
+            args.command,
+            args.instance_id,
+            expected_plan_fingerprint=getattr(args, "expected_plan_fingerprint", None),
+        )
     raise AssertionError(args.command)
 
 
@@ -338,6 +391,9 @@ def _run_access(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]
         args.instance_id,
         alias=getattr(args, "alias", None),
         path=getattr(args, "path", None),
+        existing_alias=getattr(args, "existing_alias", None),
+        mode=getattr(args, "mode", None),
+        expected_current_fingerprint=getattr(args, "expected_current_fingerprint", None),
     )
 
 
@@ -371,7 +427,14 @@ def _run_runtime(
     if args.command == "registry-write":
         text = sys.stdin.read()
         desired = DesiredInstance.from_json(text)
-        path = registry.create(desired) if args.action == "create" else registry.update(desired)
+        path = (
+            registry.create(desired)
+            if args.action == "create"
+            else registry.update(
+                desired,
+                expected_current_fingerprint=args.expected_current_fingerprint,
+            )
+        )
         return {
             "ok": True,
             "action": args.action,
@@ -400,6 +463,13 @@ def _run_runtime(
             "fingerprint": desired.fingerprint(),
             "desired": desired.to_dict(),
         }
+    if args.command == "preview":
+        desired = DesiredInstance.from_json(sys.stdin.read())
+        return OperatorProjectionService(paths, registry).preview(desired)
+    if args.command == "summary":
+        return OperatorProjectionService(paths, registry).summary(args.instance_id)
+    if args.command == "summaries":
+        return OperatorProjectionService(paths, registry).summaries()
     if args.command == "render":
         desired = registry.get(args.instance_id)
         bundle = ResourceGenerator(paths).generate(desired)
@@ -418,11 +488,30 @@ def _run_runtime(
                 mode="ro" if args.action == "add-ro" else "rw",
                 alias=args.alias,
                 path=args.path,
+                expected_current_fingerprint=args.expected_current_fingerprint,
             )
         if args.action == "remove":
             if args.alias is None or args.path is not None:
                 raise ManagerError(ErrorCode.CONFIG_INVALID, "remove requires exactly one alias")
-            return access.remove(args.instance_id, alias=args.alias)
+            return access.remove(
+                args.instance_id,
+                alias=args.alias,
+                expected_current_fingerprint=args.expected_current_fingerprint,
+            )
+        if args.action == "update":
+            if args.alias is None or args.path is None or args.existing_alias is None or args.mode is None:
+                raise ManagerError(
+                    ErrorCode.CONFIG_INVALID,
+                    "access update requires existing alias, mode, alias, and path",
+                )
+            return access.update(
+                args.instance_id,
+                existing_alias=args.existing_alias,
+                mode=args.mode,
+                alias=args.alias,
+                path=args.path,
+                expected_current_fingerprint=args.expected_current_fingerprint,
+            )
         raise AssertionError(args.action)
 
     if args.command == "codex-start":
@@ -490,21 +579,25 @@ def _run_runtime(
         run_admission_guard(desired, paths)
         return None
     if args.command == "plan":
-        generator = ResourceGenerator(paths)
-        bundle = generator.generate(desired)
-        plan = ReconciliationPlanner(paths, registry, generator=generator).plan(desired)
-        plan = project_recoverable_failed_first_apply(paths, desired, bundle, plan)
-        return {"ok": plan.valid, **plan.to_dict()}
+        return OperatorProjectionService(paths, registry).review_plan(args.instance_id)
     if args.command == "status":
         return HostInstanceStatusService(paths, registry).status(args.instance_id)
     if args.command == "logs":
-        return HostInstanceStatusService(paths, registry).logs(args.instance_id, lines=args.lines)
+        return HostInstanceStatusService(paths, registry).logs(
+            args.instance_id,
+            lines=args.lines,
+            category=args.category,
+        )
     if args.command == "git":
         return GitDiagnosticService(paths).run(desired)
     if args.command == "diagnose":
         return ResilienceDiagnosticService(paths).run(desired, since_seconds=args.since_seconds)
     if args.command == "lifecycle":
-        return HostLifecycleWorker(paths, registry).run(args.action, args.instance_id)
+        return HostLifecycleWorker(paths, registry).run(
+            args.action,
+            args.instance_id,
+            expected_plan_fingerprint=args.expected_plan_fingerprint,
+        )
     raise AssertionError(args.command)
 
 

@@ -55,6 +55,44 @@ class CliTests(unittest.TestCase):
         removed = parser.parse_args(["access", "remove", "manager-qual", "docs"])
         self.assertEqual((removed.command, removed.alias), ("remove", "docs"))
 
+    def test_pm3_public_projection_and_concurrency_surface_parses(self) -> None:
+        parser = build_parser()
+        template = parser.parse_args(["instance", "template"])
+        self.assertEqual((template.area, template.command), ("instance", "template"))
+        summary = parser.parse_args(["instance", "summary", "manager-qual"])
+        self.assertEqual(summary.instance_id, "manager-qual")
+        summaries = parser.parse_args(["instance", "summaries"])
+        self.assertEqual(summaries.command, "summaries")
+        preview = parser.parse_args(["instance", "preview", "/tmp/candidate.json"])
+        self.assertEqual(str(preview.file), "/tmp/candidate.json")
+        update = parser.parse_args(
+            ["instance", "update", "/tmp/candidate.json", "--expected-current-fingerprint", "a" * 64]
+        )
+        self.assertEqual(update.expected_current_fingerprint, "a" * 64)
+        apply = parser.parse_args(
+            ["instance", "apply", "manager-qual", "--expected-plan-fingerprint", "b" * 64]
+        )
+        self.assertEqual(apply.expected_plan_fingerprint, "b" * 64)
+        logs = parser.parse_args(["instance", "logs", "manager-qual", "--category", "recovery"])
+        self.assertEqual(logs.category, "recovery")
+        access = parser.parse_args(
+            [
+                "access",
+                "update",
+                "manager-qual",
+                "docs",
+                "rw",
+                "models",
+                "/srv/models",
+                "--expected-current-fingerprint",
+                "c" * 64,
+            ]
+        )
+        self.assertEqual(
+            (access.existing_alias, access.mode, access.alias, access.path, access.expected_current_fingerprint),
+            ("docs", "rw", "models", "/srv/models", "c" * 64),
+        )
+
     def test_instance_git_command_parses_p9_diagnostic(self) -> None:
         args = build_parser().parse_args(["instance", "git", "manager-qual", "--pretty"])
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "git", "manager-qual"))

@@ -23,8 +23,10 @@ from .development_environment import DevelopmentEnvironmentReconciler
 from .domain import AgentMode, DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from .errors import ErrorCode, ManagerError
 from .generation import GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
+from .operator_contracts import observed_plan_inputs, plan_fingerprint
 from .paths import ManagerPaths
 from .planning import HostResourceObserver, ObservationStatus, PlanOperation, ReconciliationPlan, ReconciliationPlanner
+from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object, redact_text, sanitized_subprocess_env
 from .registry import InstanceRegistry
 
@@ -515,7 +517,14 @@ class HostApplyService:
             "recovery_journal": str(recovery_path),
         }
 
-    def apply(self, instance_id: str, *, force_restart: bool = False, action: str = "apply") -> dict[str, Any]:
+    def apply(
+        self,
+        instance_id: str,
+        *,
+        force_restart: bool = False,
+        action: str = "apply",
+        expected_plan_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
             bundle = self.generator.generate(desired)
@@ -531,6 +540,32 @@ class HostApplyService:
             # ownership marker before the authoritative pre-mutation plan is
             # computed. Recovery has its own journaled recovery plan.
             initial = self.planner.plan(desired)
+            reviewed_plan = project_recoverable_failed_first_apply(
+                self.paths,
+                desired,
+                bundle,
+                initial,
+            )
+            observer = getattr(self.planner, "observer", HostResourceObserver())
+            current_plan_fingerprint = plan_fingerprint(
+                reviewed_plan,
+                bundle,
+                observed_inputs=observed_plan_inputs(reviewed_plan, bundle, observer),
+            )
+            if (
+                expected_plan_fingerprint is not None
+                and current_plan_fingerprint != expected_plan_fingerprint
+            ):
+                raise ManagerError(
+                    ErrorCode.STALE_STATE,
+                    f"reviewed reconciliation is stale for {instance_id}",
+                    {
+                        "instance_id": instance_id,
+                        "expected_plan_fingerprint": expected_plan_fingerprint,
+                        "current_plan_fingerprint": current_plan_fingerprint,
+                        "current_plan": reviewed_plan.to_dict(),
+                    },
+                )
             residual_recovery: dict[str, Any] | None = None
             if not initial.valid:
                 residual_recovery = self._recover_failed_first_apply_state(
@@ -1149,8 +1184,15 @@ class HostLifecycleWorker:
         self.registry = registry
         self.apply_service = HostApplyService(paths, registry)
 
-    def run(self, action: str, instance_id: str) -> dict[str, Any]:
+    def run(
+        self,
+        action: str,
+        instance_id: str,
+        *,
+        expected_plan_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
         desired = self.registry.get(instance_id)
+        current_fingerprint = desired.fingerprint()
         force_restart = False
         if action == "apply":
             pass
@@ -1164,13 +1206,13 @@ class HostLifecycleWorker:
                 desired,
                 lifecycle=LifecycleIntent(DeploymentTarget.PRESENT, RuntimeTarget.RUNNING),
             )
-            self.registry.update(desired)
+            self.registry.update(desired, expected_current_fingerprint=current_fingerprint)
         elif action == "stop":
             desired = replace(
                 desired,
                 lifecycle=LifecycleIntent(desired.lifecycle.deployment, RuntimeTarget.STOPPED),
             )
-            self.registry.update(desired)
+            self.registry.update(desired, expected_current_fingerprint=current_fingerprint)
         elif action == "restart":
             if desired.lifecycle.deployment is DeploymentTarget.ABSENT:
                 raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, "cannot restart an absent deployment")
@@ -1178,17 +1220,23 @@ class HostLifecycleWorker:
                 desired,
                 lifecycle=LifecycleIntent(DeploymentTarget.PRESENT, RuntimeTarget.RUNNING),
             )
-            self.registry.update(desired)
+            self.registry.update(desired, expected_current_fingerprint=current_fingerprint)
             force_restart = True
         elif action == "remove":
             desired = replace(
                 desired,
                 lifecycle=LifecycleIntent(DeploymentTarget.ABSENT, RuntimeTarget.STOPPED),
             )
-            self.registry.update(desired)
+            self.registry.update(desired, expected_current_fingerprint=current_fingerprint)
         else:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported lifecycle action: {action}")
-        return self.apply_service.apply(instance_id, force_restart=force_restart, action=action)
+        apply_kwargs: dict[str, Any] = {
+            "force_restart": force_restart,
+            "action": action,
+        }
+        if action == "apply" and expected_plan_fingerprint is not None:
+            apply_kwargs["expected_plan_fingerprint"] = expected_plan_fingerprint
+        return self.apply_service.apply(instance_id, **apply_kwargs)
 
 
 class HostInstanceStatusService:
@@ -1211,8 +1259,19 @@ class HostInstanceStatusService:
 
     def status(self, instance_id: str) -> dict[str, Any]:
         desired = self.registry.get(instance_id)
+        return self.status_for(desired)
+
+    def status_for(self, desired: DesiredInstance) -> dict[str, Any]:
+        """Project host status against one already-read desired declaration.
+
+        PM3 summary projections use this method so workspace/access/Git metadata
+        and lifecycle/plan evidence are derived from the same declaration
+        snapshot instead of re-reading the registry mid-projection.
+        """
+        instance_id = desired.instance_id.value
         bundle = self.generator.generate(desired)
         plan = self.planner.plan(desired)
+        plan = project_recoverable_failed_first_apply(self.paths, desired, bundle, plan)
         units: dict[str, Any] = {}
         for resource in bundle.resources:
             if resource.unit_name:
@@ -1244,11 +1303,44 @@ class HostInstanceStatusService:
 
         transaction_dir = self.paths.state_root / "transactions" / instance_id
         transactions: list[str] = []
+        transaction_evidence: list[dict[str, Any]] = []
         if transaction_dir.is_dir():
             try:
-                transactions = [path.name for path in sorted(transaction_dir.glob("*.json"))[-10:]]
+                transaction_paths = sorted(transaction_dir.glob("*.json"))[-10:]
+                transactions = [path.name for path in transaction_paths]
+                for path in transaction_paths:
+                    try:
+                        decoded = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        transaction_evidence.append(
+                            {
+                                "transaction_id": path.stem,
+                                "status": "unknown",
+                                "error": "transaction evidence is unreadable",
+                            }
+                        )
+                        continue
+                    if not isinstance(decoded, Mapping):
+                        transaction_evidence.append(
+                            {
+                                "transaction_id": path.stem,
+                                "status": "unknown",
+                                "error": "transaction evidence is malformed",
+                            }
+                        )
+                        continue
+                    transaction_evidence.append(
+                        {
+                            "transaction_id": decoded.get("transaction_id", path.stem),
+                            "action": decoded.get("action"),
+                            "status": decoded.get("status"),
+                            "desired_fingerprint": decoded.get("desired_fingerprint"),
+                            "completed_at": decoded.get("completed_at"),
+                        }
+                    )
             except OSError:
                 transactions = []
+                transaction_evidence = []
 
         return {
             "ok": plan.valid,
@@ -1256,23 +1348,46 @@ class HostInstanceStatusService:
             "desired_fingerprint": desired.fingerprint(),
             "lifecycle": desired.lifecycle.to_dict(),
             "plan": plan.to_dict(),
+            "plan_fingerprint": plan_fingerprint(
+                plan,
+                bundle,
+                observed_inputs=observed_plan_inputs(plan, bundle, self.planner.observer),
+            ),
             "units": units,
             "endpoints": endpoints,
             "applied": applied,
             "recent_transactions": transactions,
+            "recent_transaction_evidence": transaction_evidence,
         }
 
-    def logs(self, instance_id: str, *, lines: int = 100) -> dict[str, Any]:
+    def logs(self, instance_id: str, *, lines: int = 100, category: str = "all") -> dict[str, Any]:
+        if category not in {"all", "mcp", "tunnel", "recovery"}:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, f"unsupported log category: {category}")
         desired = self.registry.get(instance_id)
         bundle = self.generator.generate(desired)
         unit_logs: dict[str, str] = {}
         for resource in bundle.resources:
-            if resource.unit_name:
+            if not resource.unit_name:
+                continue
+            include = category == "all"
+            if category == "mcp" and resource.resource_id == "mcp-unit":
+                include = True
+            elif category == "tunnel" and resource.resource_id == "tunnel-unit":
+                include = True
+            elif category == "recovery" and resource.resource_id == "admission-guard-unit":
+                include = True
+            if include:
                 unit_logs[resource.unit_name] = self.systemd.journal_tail(resource.unit_name, lines=lines)
 
         state_dir = self.paths.state_root / "instances" / instance_id
         file_logs: dict[str, str] = {}
         for name in ("mcp.log", "tunnel.log", "tunnel-supervisor.log", "admission-guard.log"):
+            if category == "mcp" and name != "mcp.log":
+                continue
+            if category == "tunnel" and name not in {"tunnel.log", "tunnel-supervisor.log"}:
+                continue
+            if category == "recovery" and name != "admission-guard.log":
+                continue
             path = state_dir / name
             if not path.is_file():
                 continue
@@ -1283,12 +1398,29 @@ class HostInstanceStatusService:
                 continue
             file_logs[name] = redact_text("\n".join(text.splitlines()[-max(1, min(lines, 500)):]))[-20000:]
 
+        recovery_logs: dict[str, Any] = {}
+        if category in {"all", "recovery"}:
+            transaction_dir = self.paths.state_root / "transactions" / instance_id
+            if transaction_dir.is_dir():
+                try:
+                    for path in sorted(transaction_dir.glob("*.json"))[-max(1, min(lines, 20)):]:
+                        try:
+                            decoded = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+                        except (OSError, UnicodeError, json.JSONDecodeError):
+                            recovery_logs[path.name] = {"status": "unknown", "error": "unreadable"}
+                            continue
+                        recovery_logs[path.name] = redact_object(decoded) if isinstance(decoded, Mapping) else {"status": "unknown"}
+                except OSError:
+                    recovery_logs = {}
+
         return {
             "ok": True,
             "instance_id": instance_id,
             "lines": max(1, min(lines, 500)),
+            "category": category,
             "journals": unit_logs,
             "files": file_logs,
+            "recovery": recovery_logs,
         }
 
 
@@ -1305,11 +1437,20 @@ class HostExecutionBridge:
     def __init__(self, paths: ManagerPaths) -> None:
         self.paths = paths
 
-    def run_registry_write(self, action: str, desired: DesiredInstance) -> dict[str, Any]:
+    def run_registry_write(
+        self,
+        action: str,
+        desired: DesiredInstance,
+        *,
+        expected_current_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
         if action not in {"create", "update"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported registry action: {action}")
+        runtime_args = ["_runtime", "registry-write", action]
+        if expected_current_fingerprint is not None:
+            runtime_args.extend(["--expected-current-fingerprint", expected_current_fingerprint])
         return self._run_json(
-            ["_runtime", "registry-write", action],
+            runtime_args,
             input_text=desired.canonical_json() + "\n",
             unit_fragment=f"registry-{action}-{desired.instance_id.value}",
         )
@@ -1326,11 +1467,36 @@ class HostExecutionBridge:
             args.append("--include-content")
         return self._run_json(args, unit_fragment=f"render-{instance_id}")
 
-    def run_lifecycle(self, action: str, instance_id: str) -> dict[str, Any]:
+    def run_lifecycle(
+        self,
+        action: str,
+        instance_id: str,
+        *,
+        expected_plan_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        runtime_args = ["_runtime", "lifecycle", action, instance_id]
+        if expected_plan_fingerprint is not None:
+            runtime_args.extend(["--expected-plan-fingerprint", expected_plan_fingerprint])
         return self._run_json(
-            ["_runtime", "lifecycle", action, instance_id],
+            runtime_args,
             unit_fragment=f"{action}-{instance_id}",
         )
+
+    def run_preview(self, desired: DesiredInstance) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "preview"],
+            input_text=desired.canonical_json() + "\n",
+            unit_fragment=f"preview-{desired.instance_id.value}",
+        )
+
+    def run_summary(self, instance_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "summary", instance_id],
+            unit_fragment=f"summary-{instance_id}",
+        )
+
+    def run_summaries(self) -> dict[str, Any]:
+        return self._run_json(["_runtime", "summaries"], unit_fragment="summaries")
 
     def run_plan(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(["_runtime", "plan", instance_id], unit_fragment=f"plan-{instance_id}")
@@ -1338,9 +1504,12 @@ class HostExecutionBridge:
     def run_status(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(["_runtime", "status", instance_id], unit_fragment=f"status-{instance_id}")
 
-    def run_logs(self, instance_id: str, *, lines: int = 100) -> dict[str, Any]:
+    def run_logs(self, instance_id: str, *, lines: int = 100, category: str = "all") -> dict[str, Any]:
+        args = ["_runtime", "logs", instance_id, "--lines", str(lines)]
+        if category != "all":
+            args.extend(["--category", category])
         return self._run_json(
-            ["_runtime", "logs", instance_id, "--lines", str(lines)],
+            args,
             unit_fragment=f"logs-{instance_id}",
         )
 
@@ -1430,14 +1599,23 @@ class HostExecutionBridge:
         *,
         alias: str | None = None,
         path: str | None = None,
+        existing_alias: str | None = None,
+        mode: str | None = None,
+        expected_current_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        if action not in {"list", "add-ro", "add-rw", "remove"}:
+        if action not in {"list", "add-ro", "add-rw", "remove", "update"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported access action: {action}")
         args = ["_runtime", "access", action, instance_id]
         if alias is not None:
             args.append(alias)
         if path is not None:
             args.append(path)
+        if existing_alias is not None:
+            args.extend(["--existing-alias", existing_alias])
+        if mode is not None:
+            args.extend(["--mode", mode])
+        if expected_current_fingerprint is not None:
+            args.extend(["--expected-current-fingerprint", expected_current_fingerprint])
         return self._run_json(args, unit_fragment=f"access-{action}-{instance_id}")
 
     def _run_json(

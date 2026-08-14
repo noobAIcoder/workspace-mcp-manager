@@ -81,22 +81,54 @@ class AccessManager:
     def list(self, instance_id: str) -> dict[str, Any]:
         return self._payload(self.registry.get(instance_id))
 
-    def add(self, instance_id: str, *, mode: str, alias: str, path: str) -> dict[str, Any]:
+    @staticmethod
+    def _require_expected(desired: DesiredInstance, expected_current_fingerprint: str | None) -> None:
+        if expected_current_fingerprint is None:
+            return
+        current = desired.fingerprint()
+        if current != expected_current_fingerprint:
+            raise ManagerError(
+                ErrorCode.STALE_STATE,
+                f"stale access state for {desired.instance_id.value}",
+                {
+                    "instance_id": desired.instance_id.value,
+                    "expected_current_fingerprint": expected_current_fingerprint,
+                    "current_fingerprint": current,
+                },
+            )
+
+    def add(
+        self,
+        instance_id: str,
+        *,
+        mode: str,
+        alias: str,
+        path: str,
+        expected_current_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
         if mode not in {"ro", "rw"}:
             raise ManagerError(ErrorCode.CONFIG_INVALID, f"unsupported access mode: {mode}")
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
+            self._require_expected(desired, expected_current_fingerprint)
             raw = desired.to_dict()
             key = "read_only" if mode == "ro" else "read_write"
             raw["access"][key].append({"alias": alias, "path": path})
             updated = DesiredInstance.from_dict(raw)
-            self.registry.update(updated)
+            self.registry.update(updated, expected_current_fingerprint=desired.fingerprint())
         return self._payload(updated, action=f"add-{mode}", apply_required=True)
 
-    def remove(self, instance_id: str, *, alias: str) -> dict[str, Any]:
+    def remove(
+        self,
+        instance_id: str,
+        *,
+        alias: str,
+        expected_current_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
         normalized = _normalized_alias(alias)
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
+            self._require_expected(desired, expected_current_fingerprint)
             raw = desired.to_dict()
             removed: dict[str, str] | None = None
             for key, mode in (("read_only", "ro"), ("read_write", "rw")):
@@ -111,9 +143,51 @@ class AccessManager:
             if removed is None:
                 raise config_error("access alias is not configured", alias=alias)
             updated = DesiredInstance.from_dict(raw)
-            self.registry.update(updated)
+            self.registry.update(updated, expected_current_fingerprint=desired.fingerprint())
         result = self._payload(updated, action="remove", apply_required=True)
         result["removed"] = removed
+        return result
+
+    def update(
+        self,
+        instance_id: str,
+        *,
+        existing_alias: str,
+        mode: str,
+        alias: str,
+        path: str,
+        expected_current_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        if mode not in {"ro", "rw"}:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, f"unsupported access mode: {mode}")
+        normalized = _normalized_alias(existing_alias)
+        with self._instance_lock(instance_id):
+            desired = self.registry.get(instance_id)
+            self._require_expected(desired, expected_current_fingerprint)
+            raw = desired.to_dict()
+            previous: dict[str, str] | None = None
+            for key, previous_mode in (("read_only", "ro"), ("read_write", "rw")):
+                retained: list[dict[str, str]] = []
+                for item in raw["access"][key]:
+                    folder = AccessFolder.from_dict(item, f"access.{key}")
+                    if folder.normalized_alias == normalized:
+                        previous = {
+                            "alias": folder.alias,
+                            "mode": previous_mode,
+                            "path": folder.path,
+                        }
+                        continue
+                    retained.append(item)
+                raw["access"][key] = retained
+            if previous is None:
+                raise config_error("access alias is not configured", alias=existing_alias)
+            target = "read_only" if mode == "ro" else "read_write"
+            raw["access"][target].append({"alias": alias, "path": path})
+            updated = DesiredInstance.from_dict(raw)
+            self.registry.update(updated, expected_current_fingerprint=desired.fingerprint())
+        result = self._payload(updated, action="update", apply_required=True)
+        result["previous"] = previous
+        result["updated"] = {"alias": alias, "mode": mode, "path": path}
         return result
 
 
