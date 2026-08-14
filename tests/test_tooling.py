@@ -52,12 +52,13 @@ class ToolingAuditTests(unittest.TestCase):
             self.assertEqual(payload["node_roots"][0]["root"], str(nvm))
             self.assertTrue(payload["node_roots"][0]["codex"]["present"])
 
-    def test_agents_configure_is_reserved_post_mvp(self) -> None:
+    def test_agents_configure_defers_to_pm1_instance_authority(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service = ToolingService(paths_for(Path(directory)))
             with self.assertRaises(ManagerError) as caught:
                 service.agents_configure()
             self.assertEqual(caught.exception.code, ErrorCode.FEATURE_NOT_IMPLEMENTED)
+            self.assertIn("config_version=2", caught.exception.message)
 
 
 class CodexToolingTests(unittest.TestCase):

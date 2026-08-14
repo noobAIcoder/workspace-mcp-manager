@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .access import stale_applied_access_resources
-from .admission_recovery import stale_applied_guard_resources
-from .domain import DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
+from .admission_recovery import stale_applied_development_resources, stale_applied_guard_resources
+from .development_environment import DevelopmentEnvironmentReconciler
+from .domain import AgentMode, DeploymentTarget, DesiredInstance, LifecycleIntent, RuntimeTarget
 from .errors import ErrorCode, ManagerError
 from .generation import GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
 from .paths import ManagerPaths
@@ -646,11 +647,24 @@ class HostApplyService:
         for resource in stale_guard_resources:
             by_id.setdefault(resource.resource_id, resource)
         stale_guard_ids = {resource.resource_id for resource in stale_guard_resources}
+        stale_development_resources = stale_applied_development_resources(self.paths, desired, bundle)
+        for resource in stale_development_resources:
+            by_id.setdefault(resource.resource_id, resource)
+        stale_development_ids = {resource.resource_id for resource in stale_development_resources}
         operations = list(plan.operations)
+        resource_operations = [
+            item
+            for item in operations
+            if item.resource_id not in {"dev-git-identity", "dev-git-transport"}
+        ]
         present = desired.lifecycle.deployment is DeploymentTarget.PRESENT
 
         if present:
-            file_ops = [item for item in operations if item.operation in {PlanOperation.CREATE, PlanOperation.UPDATE}]
+            file_ops = [
+                item
+                for item in resource_operations
+                if item.operation in {PlanOperation.CREATE, PlanOperation.UPDATE}
+            ]
             access_file_ops = [
                 item
                 for item in file_ops
@@ -664,6 +678,7 @@ class HostApplyService:
                     target_root=Path(desired.workspace_path) / ".workspace-mcp-access",
                 )
             self._apply_resource_operations(other_file_ops, by_id, rollback, journal, journal_path)
+            self._apply_development_operations(operations, desired, rollback, journal, journal_path)
             unit_file_changed = any(
                 item.resource_id in by_id
                 and by_id[item.resource_id].kind is ResourceKind.SYSTEMD_UNIT
@@ -711,7 +726,23 @@ class HostApplyService:
                 self.systemd.disable(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
 
-            remove_ops = [item for item in operations if item.operation is PlanOperation.REMOVE]
+            stale_development_ops = [
+                item for item in operations if item.resource_id in stale_development_ids
+            ]
+            for item in self._ordered_unit_ops(
+                stale_development_ops, {PlanOperation.STOP}, start_order=False
+            ):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
+                self.systemd.stop(item.target)
+                self._record(journal, journal_path, item.operation.value, item.target)
+            for item in self._ordered_unit_ops(
+                stale_development_ops, {PlanOperation.DISABLE}, start_order=False
+            ):
+                self._attempt(journal, journal_path, item.operation.value, item.target)
+                self.systemd.disable(item.target)
+                self._record(journal, journal_path, item.operation.value, item.target)
+
+            remove_ops = [item for item in resource_operations if item.operation is PlanOperation.REMOVE]
             if remove_ops:
                 self._validate_destructive_operations(remove_ops, by_id)
                 unit_file_removed = any(
@@ -727,19 +758,20 @@ class HostApplyService:
         else:
             # Re-verify destructive ownership and residual contents immediately
             # before the first stop/disable/remove mutation.
-            self._validate_destructive_operations(operations, by_id)
+            self._validate_destructive_operations(resource_operations, by_id)
 
             # Stop and disable before deleting any unit/profile/state resource.
-            for item in self._ordered_unit_ops(operations, {PlanOperation.STOP}, start_order=False):
+            for item in self._ordered_unit_ops(resource_operations, {PlanOperation.STOP}, start_order=False):
                 self._attempt(journal, journal_path, item.operation.value, item.target)
                 self.systemd.stop(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
-            for item in self._ordered_unit_ops(operations, {PlanOperation.DISABLE}, start_order=False):
+            for item in self._ordered_unit_ops(resource_operations, {PlanOperation.DISABLE}, start_order=False):
                 self._attempt(journal, journal_path, item.operation.value, item.target)
                 self.systemd.disable(item.target)
                 self._record(journal, journal_path, item.operation.value, item.target)
 
-            remove_ops = [item for item in operations if item.operation is PlanOperation.REMOVE]
+            self._apply_development_operations(operations, desired, rollback, journal, journal_path)
+            remove_ops = [item for item in resource_operations if item.operation is PlanOperation.REMOVE]
             unit_file_changed = any(
                 item.resource_id in by_id
                 and by_id[item.resource_id].kind is ResourceKind.SYSTEMD_UNIT
@@ -855,6 +887,8 @@ class HostApplyService:
     @staticmethod
     def _unit_priority(unit: str, *, start_order: bool) -> tuple[int, str]:
         if start_order:
+            if unit.startswith("workspace-mcp-ssh-agent-"):
+                return (5, unit)
             if unit.startswith("coding-tools-mcp-"):
                 return (10, unit)
             if "admission-guard" in unit:
@@ -868,6 +902,8 @@ class HostApplyService:
                 return (20, unit)
             if unit.startswith("coding-tools-mcp-"):
                 return (30, unit)
+            if unit.startswith("workspace-mcp-ssh-agent-"):
+                return (40, unit)
         return (50, unit)
 
     def _ordered_unit_ops(
@@ -880,6 +916,33 @@ class HostApplyService:
         result = [item for item in operations if item.operation in accepted]
         result.sort(key=lambda item: self._unit_priority(item.target, start_order=start_order))
         return result
+
+    def _apply_development_operations(
+        self,
+        operations: Iterable[Any],
+        desired: DesiredInstance,
+        rollback: "_RollbackState",
+        journal: dict[str, Any],
+        journal_path: Path,
+    ) -> None:
+        pending = [
+            item
+            for item in operations
+            if item.resource_id in {"dev-git-identity", "dev-git-transport"}
+            and item.operation is not PlanOperation.NOOP
+        ]
+        if not pending:
+            return
+        development = DevelopmentEnvironmentReconciler(self.paths)
+        config_path = development.local_config_path(desired)
+        rollback.backup(config_path)
+        for item in pending:
+            self._attempt(journal, journal_path, item.operation.value, item.target)
+            if item.resource_id == "dev-git-identity":
+                development.converge_identity(desired)
+            else:
+                development.converge_transport(desired)
+            self._record(journal, journal_path, item.operation.value, item.target)
 
     def _apply_resource_operations(
         self,
@@ -979,10 +1042,16 @@ class HostApplyService:
         iid = desired.instance_id.value
         mcp_unit = f"coding-tools-mcp-{iid}.service"
         tunnel_unit = f"tunnel-client-{iid}.service"
+        agent_unit = (
+            f"workspace-mcp-ssh-agent-{iid}.service"
+            if desired.agent.mode is AgentMode.MANAGED_SSH_AGENT
+            else None
+        )
         present = desired.lifecycle.deployment is DeploymentTarget.PRESENT
         running = desired.lifecycle.runtime is RuntimeTarget.RUNNING
         if not present or not running:
-            if self.systemd.is_active(tunnel_unit) or self.systemd.is_active(mcp_unit):
+            agent_active = agent_unit is not None and self.systemd.is_active(agent_unit)
+            if self.systemd.is_active(tunnel_unit) or self.systemd.is_active(mcp_unit) or agent_active:
                 raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, "runtime units remain active after stop/remove")
             return
 
@@ -995,6 +1064,7 @@ class HostApplyService:
             last = {
                 "mcp_unit_active": self.systemd.is_active(mcp_unit),
                 "tunnel_unit_active": self.systemd.is_active(tunnel_unit),
+                "agent_unit_active": True if agent_unit is None else self.systemd.is_active(agent_unit),
                 "discovery": _http_status(discovery),
                 "health": _http_status(health),
                 "ready": _http_status(ready),
@@ -1002,6 +1072,7 @@ class HostApplyService:
             if (
                 last["mcp_unit_active"]
                 and last["tunnel_unit_active"]
+                and last["agent_unit_active"]
                 and last["discovery"] == 200
                 and last["health"] == 200
                 and last["ready"] == 200

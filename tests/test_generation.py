@@ -11,7 +11,7 @@ from workspace_mcp_manager.domain import DesiredInstance
 from workspace_mcp_manager.generation import ResourceGenerator
 from workspace_mcp_manager.paths import ManagerPaths
 
-from helpers import sample_instance
+from helpers import sample_instance, sample_v2_instance
 
 
 class GenerationTests(unittest.TestCase):
@@ -109,6 +109,52 @@ class GenerationTests(unittest.TestCase):
             first = generator.generate(desired).to_dict(include_content=True)
             second = generator.generate(desired).to_dict(include_content=True)
             self.assertEqual(first, second)
+
+    def test_pm1_managed_profile_agent_and_helper_resources(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = sample_v2_instance()
+            raw["github"]["config_dir"] = str(
+                root / ".config/workspace-mcp-manager/github/sample"
+            )
+            desired = DesiredInstance.from_dict(raw)
+            paths = self._paths(root)
+            resources = {
+                item.resource_id: item
+                for item in ResourceGenerator(paths).generate(desired).resources
+            }
+            self.assertIn("github-profile-dir", resources)
+            self.assertIn("github-profile-owner", resources)
+            self.assertFalse(resources["github-profile-dir"].remove_when_absent)
+            self.assertFalse(resources["github-profile-owner"].remove_when_absent)
+            self.assertIn("ssh-agent-unit", resources)
+            self.assertNotIn("github-cli-helper", resources)
+
+            agent = resources["ssh-agent-unit"].content or ""
+            self.assertIn("ExecStart=/usr/bin/ssh-agent -D -a /run/user/", agent)
+            self.assertIn("/workspace-mcp-manager-sample/ssh-agent.sock", agent)
+            mcp = resources["mcp-unit"].content or ""
+            self.assertIn("Requires=workspace-mcp-ssh-agent-sample.service", mcp)
+            self.assertIn("After=workspace-mcp-ssh-agent-sample.service", mcp)
+            self.assertIn("SSH_AUTH_SOCK=/run/user/", mcp)
+            self.assertIn("workspace-mcp-manager-sample/ssh-agent.sock", mcp)
+
+            raw["git"]["remote"]["protocol"] = "https-gh"
+            desired = DesiredInstance.from_dict(raw)
+            resources = {
+                item.resource_id: item
+                for item in ResourceGenerator(paths).generate(desired).resources
+            }
+            helper = resources["github-cli-helper"]
+            self.assertEqual(helper.mode, 0o755)
+            self.assertEqual(
+                helper.path,
+                str(root / ".local/bin/sample-git-credential-github"),
+            )
+            helper_text = helper.content or ""
+            self.assertIn("GH_CONFIG_DIR=", helper_text)
+            self.assertIn("exec /usr/bin/gh auth git-credential \"$@\"", helper_text)
+            self.assertNotIn("eval ", helper_text)
 
     def test_resource_fingerprints_match_golden_contract(self) -> None:
         root = Path("/home/operator")

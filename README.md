@@ -101,6 +101,24 @@ explicit paths for Codex, GitHub CLI, and SSH/GPG-agent prerequisites without
 managing authentication, private keys, or session credentials. Persistent
 manager-owned agent activation remains the post-MVP portion of CAP-123.
 
+P16 adds deterministic manager-owned per-instance launchers at
+`~/.local/bin/<instance>-mcp`. Each launcher is a narrow frontend over the
+authoritative manager registry/CLI, exposes only existing instance/access/Codex
+operations, rejects generic host/private passthrough, and is reconciled through
+the normal instance lifecycle. P16 is live-qualified on `manager-qual` and
+completes the frozen MVP capability set.
+
+PM1 begins post-MVP development-environment management. Declaration schema v2
+adds explicit GitHub-profile, repository-local Git identity/transport, and
+agent-provider policy while preserving v1 declarations and fingerprints. The
+manager can own a retained per-instance `GH_CONFIG_DIR`, reversible local Git
+identity/transport keys, an HTTPS GitHub-CLI helper, or a per-instance
+`ssh-agent` service/socket. Authentication tokens, private keys, passphrases,
+known-host data, Codex sessions, and GPG key/trust stores remain external. PM1
+is implemented, pure-verified, and reversibly live-qualified on disposable
+`manager-qual` across managed GitHub profile, Git identity, SSH agent, HTTPS
+helper, cleanup/restoration, final all-NOOP convergence, and endpoint health.
+
 ## Run from source
 
 ```sh
@@ -179,8 +197,10 @@ P7 through P12 are complete and live-qualified. P13 implementation and pure
 verification are complete. Its WSL platform gate is qualified to fail closed as
 unsupported; WSL restart is deferred. Native-Linux physical reboot acceptance
 has not yet been run for the greenfield manager. P14 implementation, pure
-verification, and synthetic WSL legacy-cleanup qualification are complete. P15
-is implemented and WSL-qualified; P16 has not started.
+verification, and synthetic WSL legacy-cleanup qualification are complete.
+P15 and P16 are implemented and WSL-qualified, completing the frozen MVP. PM1
+is also implemented, pure-verified, and reversibly WSL-qualified on
+`manager-qual`.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

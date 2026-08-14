@@ -56,6 +56,13 @@ class InstanceRegistry:
         path = self.path_for(desired.instance_id)
         if not path.is_file():
             raise ManagerError(ErrorCode.INSTANCE_NOT_FOUND, f"instance declaration not found: {desired.instance_id.value}")
+        current = self._read(path)
+        if desired.config_version < current.config_version:
+            raise ManagerError(
+                ErrorCode.CONFIG_VERSION_UNSUPPORTED,
+                "instance config_version downgrade is not supported",
+                {"current": current.config_version, "requested": desired.config_version},
+            )
         self._write(path, desired)
         return path
 

@@ -40,3 +40,28 @@ def sample_instance() -> dict:
         }
     )
 
+
+def sample_v2_instance() -> dict:
+    value = sample_instance()
+    value["config_version"] = 2
+    value["github"] = {
+        "mode": "managed",
+        "config_dir": "/home/operator/.config/workspace-mcp-manager/github/sample",
+        "binary": "/usr/bin/gh",
+    }
+    value["git"] = {
+        "identity": {
+            "name": "Example Operator",
+            "email": "operator@example.invalid",
+        },
+        "remote": {
+            "name": "origin",
+            "protocol": "ssh",
+        },
+    }
+    value["agent"] = {
+        "mode": "managed-ssh-agent",
+        "ssh_auth_sock": None,
+    }
+    return value
+

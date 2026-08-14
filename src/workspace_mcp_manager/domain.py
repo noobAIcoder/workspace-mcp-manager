@@ -12,11 +12,13 @@ from typing import Any, Mapping, Sequence
 from .errors import ErrorCode, ManagerError, config_error
 
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
+SUPPORTED_CONFIG_VERSIONS = (1, 2)
 INSTANCE_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 ACCESS_ALIAS_RE = re.compile(r"^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$")
 TUNNEL_ID_RE = re.compile(r"^tunnel_[A-Za-z0-9]+$")
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+GIT_REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class PermissionMode(StrEnum):
@@ -39,6 +41,23 @@ class DeploymentTarget(StrEnum):
 class RuntimeTarget(StrEnum):
     RUNNING = "running"
     STOPPED = "stopped"
+
+
+class GithubConfigMode(StrEnum):
+    DISABLED = "disabled"
+    EXTERNAL = "external"
+    MANAGED = "managed"
+
+
+class GitRemoteProtocol(StrEnum):
+    SSH = "ssh"
+    HTTPS_GH = "https-gh"
+
+
+class AgentMode(StrEnum):
+    NONE = "none"
+    EXTERNAL = "external"
+    MANAGED_SSH_AGENT = "managed-ssh-agent"
 
 
 def _strict_object(
@@ -309,17 +328,128 @@ class AccessConfig:
 
 @dataclass(frozen=True, slots=True)
 class GithubConfig:
+    mode: GithubConfigMode
     config_dir: str | None
+    binary: str | None
 
     @classmethod
-    def from_dict(cls, value: Any) -> "GithubConfig":
-        data = _strict_object(value, field="github", required={"config_dir"})
-        if data["config_dir"] is None:
-            return cls(config_dir=None)
-        return cls(config_dir=_absolute_path(data["config_dir"], "github.config_dir"))
+    def from_dict(cls, value: Any, *, config_version: int) -> "GithubConfig":
+        if config_version == 1:
+            data = _strict_object(value, field="github", required={"config_dir"})
+            if data["config_dir"] is None:
+                return cls(mode=GithubConfigMode.DISABLED, config_dir=None, binary=None)
+            return cls(
+                mode=GithubConfigMode.EXTERNAL,
+                config_dir=_absolute_path(data["config_dir"], "github.config_dir"),
+                binary=None,
+            )
 
-    def to_dict(self) -> dict[str, str | None]:
-        return {"config_dir": self.config_dir}
+        data = _strict_object(value, field="github", required={"mode", "config_dir", "binary"})
+        mode = _enum(GithubConfigMode, data["mode"], "github.mode")
+        config_dir = None if data["config_dir"] is None else _absolute_path(data["config_dir"], "github.config_dir")
+        binary = None if data["binary"] is None else _absolute_path(data["binary"], "github.binary")
+        if mode is GithubConfigMode.DISABLED and config_dir is not None:
+            raise config_error("github.mode=disabled requires github.config_dir=null")
+        if mode is GithubConfigMode.EXTERNAL and config_dir is None:
+            raise config_error("github.mode=external requires github.config_dir")
+        if mode is GithubConfigMode.MANAGED and config_dir is None:
+            raise config_error("github.mode=managed requires explicit github.config_dir")
+        return cls(mode=mode, config_dir=config_dir, binary=binary)
+
+    def to_dict(self, *, config_version: int) -> dict[str, Any]:
+        if config_version == 1:
+            return {"config_dir": self.config_dir}
+        return {
+            "mode": self.mode.value,
+            "config_dir": self.config_dir,
+            "binary": self.binary,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GitIdentityConfig:
+    name: str
+    email: str
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "GitIdentityConfig":
+        data = _strict_object(value, field="git.identity", required={"name", "email"})
+        return cls(
+            name=_nonempty_string(data["name"], "git.identity.name"),
+            email=_nonempty_string(data["email"], "git.identity.email"),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {"name": self.name, "email": self.email}
+
+
+@dataclass(frozen=True, slots=True)
+class GitRemoteConfig:
+    name: str
+    protocol: GitRemoteProtocol
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "GitRemoteConfig":
+        data = _strict_object(value, field="git.remote", required={"name", "protocol"})
+        name = _nonempty_string(data["name"], "git.remote.name")
+        if not GIT_REMOTE_RE.fullmatch(name):
+            raise config_error("git.remote.name contains unsupported characters")
+        return cls(
+            name=name,
+            protocol=_enum(GitRemoteProtocol, data["protocol"], "git.remote.protocol"),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {"name": self.name, "protocol": self.protocol.value}
+
+
+@dataclass(frozen=True, slots=True)
+class GitConfig:
+    identity: GitIdentityConfig | None
+    remote: GitRemoteConfig | None
+
+    @classmethod
+    def empty(cls) -> "GitConfig":
+        return cls(identity=None, remote=None)
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "GitConfig":
+        data = _strict_object(value, field="git", required={"identity", "remote"})
+        identity = None if data["identity"] is None else GitIdentityConfig.from_dict(data["identity"])
+        remote = None if data["remote"] is None else GitRemoteConfig.from_dict(data["remote"])
+        return cls(identity=identity, remote=remote)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identity": None if self.identity is None else self.identity.to_dict(),
+            "remote": None if self.remote is None else self.remote.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConfig:
+    mode: AgentMode
+    ssh_auth_sock: str | None
+
+    @classmethod
+    def none(cls) -> "AgentConfig":
+        return cls(mode=AgentMode.NONE, ssh_auth_sock=None)
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "AgentConfig":
+        data = _strict_object(value, field="agent", required={"mode", "ssh_auth_sock"})
+        mode = _enum(AgentMode, data["mode"], "agent.mode")
+        socket = None if data["ssh_auth_sock"] is None else _absolute_path(data["ssh_auth_sock"], "agent.ssh_auth_sock")
+        if mode is AgentMode.NONE and socket is not None:
+            raise config_error("agent.mode=none requires agent.ssh_auth_sock=null")
+        if mode is AgentMode.MANAGED_SSH_AGENT and socket is not None:
+            raise config_error("agent.mode=managed-ssh-agent requires agent.ssh_auth_sock=null")
+        if mode is AgentMode.EXTERNAL and socket is None:
+            raise config_error("agent.mode=external requires agent.ssh_auth_sock")
+        return cls(mode=mode, ssh_auth_sock=socket)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"mode": self.mode.value, "ssh_auth_sock": self.ssh_auth_sock}
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,46 +494,64 @@ class DesiredInstance:
     tunnel: TunnelConfig
     access: AccessConfig
     github: GithubConfig
+    git: GitConfig
+    agent: AgentConfig
     recovery: RecoveryPolicy
 
     @classmethod
     def from_dict(cls, value: Any) -> "DesiredInstance":
-        data = _strict_object(
-            value,
-            field="instance",
-            required={
-                "config_version",
-                "instance_id",
-                "workspace_path",
-                "lifecycle",
-                "mcp",
-                "tunnel",
-                "access",
-                "github",
-                "recovery",
-            },
-        )
-        version = data["config_version"]
-        if version != CONFIG_VERSION:
+        if not isinstance(value, Mapping):
+            raise config_error("instance must be an object")
+        if "config_version" not in value:
+            raise config_error("instance missing required fields", fields=["config_version"])
+        version = value.get("config_version")
+        version_is_integer = isinstance(version, int) and not isinstance(version, bool)
+        if not version_is_integer or version not in SUPPORTED_CONFIG_VERSIONS:
             raise ManagerError(
                 ErrorCode.CONFIG_VERSION_UNSUPPORTED,
                 f"unsupported config_version: {version!r}",
-                {"supported": [CONFIG_VERSION]},
+                {"supported": list(SUPPORTED_CONFIG_VERSIONS)},
             )
+        required = {
+            "config_version",
+            "instance_id",
+            "workspace_path",
+            "lifecycle",
+            "mcp",
+            "tunnel",
+            "access",
+            "github",
+            "recovery",
+        }
+        if version == 2:
+            required |= {"git", "agent"}
+        data = _strict_object(value, field="instance", required=required)
         workspace_path = _absolute_path(data["workspace_path"], "workspace_path")
         mcp = McpConfig.from_dict(data["mcp"])
         tunnel = TunnelConfig.from_dict(data["tunnel"])
         if mcp.host == tunnel.health_host and mcp.port == tunnel.health_port:
             raise config_error("mcp.port and tunnel.health_port collide on the same host")
+        github = GithubConfig.from_dict(data["github"], config_version=version)
+        git = GitConfig.empty() if version == 1 else GitConfig.from_dict(data["git"])
+        agent = AgentConfig.none() if version == 1 else AgentConfig.from_dict(data["agent"])
+        if git.remote is not None and git.remote.protocol is GitRemoteProtocol.SSH and agent.mode is AgentMode.NONE:
+            raise config_error("git.remote.protocol=ssh requires an agent provider")
+        if git.remote is not None and git.remote.protocol is GitRemoteProtocol.HTTPS_GH:
+            if github.config_dir is None:
+                raise config_error("git.remote.protocol=https-gh requires github.config_dir")
+            if github.binary is None:
+                raise config_error("git.remote.protocol=https-gh requires github.binary")
         return cls(
-            config_version=CONFIG_VERSION,
+            config_version=version,
             instance_id=InstanceId(_nonempty_string(data["instance_id"], "instance_id")),
             workspace_path=workspace_path,
             lifecycle=LifecycleIntent.from_dict(data["lifecycle"]),
             mcp=mcp,
             tunnel=tunnel,
             access=AccessConfig.from_dict(data["access"], workspace_path=workspace_path),
-            github=GithubConfig.from_dict(data["github"]),
+            github=github,
+            git=git,
+            agent=agent,
             recovery=RecoveryPolicy.from_dict(data["recovery"]),
         )
 
@@ -416,7 +564,7 @@ class DesiredInstance:
         return cls.from_dict(value)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "config_version": self.config_version,
             "instance_id": self.instance_id.value,
             "workspace_path": self.workspace_path,
@@ -424,9 +572,13 @@ class DesiredInstance:
             "mcp": self.mcp.to_dict(),
             "tunnel": self.tunnel.to_dict(),
             "access": self.access.to_dict(),
-            "github": self.github.to_dict(),
+            "github": self.github.to_dict(config_version=self.config_version),
             "recovery": self.recovery.to_dict(),
         }
+        if self.config_version >= 2:
+            result["git"] = self.git.to_dict()
+            result["agent"] = self.agent.to_dict()
+        return result
 
     def canonical_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))

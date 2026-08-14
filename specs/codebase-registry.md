@@ -1,21 +1,29 @@
 # Codebase registry
 
-| Path | Responsibility | M0 mutation |
+| Path | Responsibility | Mutation authority |
 |---|---|---|
-| `src/workspace_mcp_manager/domain.py` | Strict desired/observed/applied domain model | none outside explicit registry writes |
-| `src/workspace_mcp_manager/registry.py` | Atomic desired-state persistence | manager config state only |
-| `src/workspace_mcp_manager/host.py` | Read-only host discovery/doctor | none |
-| `src/workspace_mcp_manager/redaction.py` | Cross-cutting output/env redaction | none |
+| `src/workspace_mcp_manager/domain.py` | Strict v1/v2 desired-state model and validation | none |
+| `src/workspace_mcp_manager/registry.py` | Atomic declaration persistence and one-way schema upgrades | manager registry only |
 | `src/workspace_mcp_manager/paths.py` | Real-account/config/state path abstraction | none |
-| `src/workspace_mcp_manager/cli.py` | Thin CLI over application services | registry writes only in `create/update` |
-| `src/workspace_mcp_manager/generation.py` | P4 deterministic generated-resource model/renderers | none |
-| `src/workspace_mcp_manager/planning.py` | P5 desired/observed reconciliation planner | none |
-| `src/workspace_mcp_manager/runtime.py` | Secret-safe tunnel runtime helper referenced by generated tunnel units; admission runtime remains deferred | none unless invoked later by systemd |
-| `specs/capabilities.tsv` | Frozen P0 capability dispositions | none |
+| `src/workspace_mcp_manager/host.py` | Host discovery/doctor | read-only |
+| `src/workspace_mcp_manager/redaction.py` | Cross-cutting output/environment redaction | none |
+| `src/workspace_mcp_manager/generation.py` | Deterministic manager-owned files, units, profiles, launchers and PM1 resources | render only |
+| `src/workspace_mcp_manager/planning.py` | Desired/observed reconciliation and ownership-gated plans | observe only |
+| `src/workspace_mcp_manager/host_apply.py` | Locked, journaled host reconciliation and rollback | generated resources, systemd, owned PM1 Git keys |
+| `src/workspace_mcp_manager/lifecycle.py` | Complete lifecycle wrapper including present/stopped execution | delegates to host apply |
+| `src/workspace_mcp_manager/development_environment.py` | PM1 GitHub profile, local Git identity/transport and agent-provider reconciliation | exact repository-local owned keys only |
+| `src/workspace_mcp_manager/admission_recovery.py` | Admission guard plus applied-evidence reconstruction for obsolete owned resources | reconstruction only |
+| `src/workspace_mcp_manager/git_diagnostics.py` | Instance Git/GitHub diagnostics under effective environment | read-only |
+| `src/workspace_mcp_manager/runtime.py` | Secret-safe tunnel/admission runtime helpers used by systemd | runtime-scoped |
+| `src/workspace_mcp_manager/cli.py` | Thin public/private command routing | delegates only |
+| `scripts/qualify_*.sh` | Reproducible live qualification harnesses | disposable qualification targets only |
+| `specs/capabilities.tsv` | Capability disposition authority | none |
 | `specs/external-contracts.md` | Verified external runtime contracts | none |
-| `tests/` | Stdlib-only M0 qualification | temp directories only |
+| `specs/pm1-development-environment.md` | CAP-117/119/120/123 post-MVP authority | none |
+| `tests/` | Stdlib-first pure verification | temporary fixtures/repositories only |
 
-No CLI/TUI layer may directly manipulate systemd resources. Future host
-mutation MUST enter through application/reconciliation services. P4/P5 are
-strictly render/observe/plan phases.
+CLI/TUI code MUST NOT manipulate host resources directly. Host mutations enter
+through the host-boundary application/reconciliation services. Authentication,
+private keys, tokens, passphrases, known-host databases and trust stores remain
+outside manager ownership.
 

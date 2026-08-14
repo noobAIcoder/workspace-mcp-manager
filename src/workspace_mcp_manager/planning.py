@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .access import stale_applied_access_resources
-from .admission_recovery import stale_applied_guard_resources
+from .admission_recovery import stale_applied_development_resources, stale_applied_guard_resources
+from .development_environment import (
+    DevObservationStatus,
+    DevelopmentEnvironmentReconciler,
+    transport_is_requested,
+    validate_pm1_host_preconditions,
+)
 from .domain import DeploymentTarget, DesiredInstance, RuntimeTarget
 from .errors import ManagerError
 from .generation import OWNER_PREFIX, GeneratedBundle, GeneratedResource, ResourceGenerator, ResourceKind
@@ -404,11 +410,13 @@ class ReconciliationPlanner:
         *,
         generator: ResourceGenerator | None = None,
         observer: HostResourceObserver | None = None,
+        git_reconciler: DevelopmentEnvironmentReconciler | None = None,
     ) -> None:
         self.paths = paths
         self.registry = registry
         self.generator = generator or ResourceGenerator(paths)
         self.observer = observer or HostResourceObserver()
+        self.git_reconciler = git_reconciler or DevelopmentEnvironmentReconciler(paths)
 
     def _registry_conflicts(self, desired: DesiredInstance) -> list[PlanItem]:
         result: list[PlanItem] = []
@@ -467,6 +475,15 @@ class ReconciliationPlanner:
                     path,
                     f"{label} precondition failed: {observation.detail}",
                     resource_id="precondition",
+                )
+            )
+        for problem in validate_pm1_host_preconditions(self.paths, desired):
+            result.append(
+                PlanItem(
+                    PlanOperation.CONFLICT,
+                    desired.instance_id.value,
+                    f"PM1 precondition failed: {problem}",
+                    resource_id="pm1-precondition",
                 )
             )
         return result
@@ -800,6 +817,75 @@ class ReconciliationPlanner:
             )
         return operations
 
+    def _stale_development_operations(
+        self,
+        desired: DesiredInstance,
+        bundle: GeneratedBundle,
+    ) -> list[PlanItem]:
+        try:
+            resources = stale_applied_development_resources(self.paths, desired, bundle)
+        except ManagerError as exc:
+            return [
+                PlanItem(
+                    PlanOperation.CONFLICT,
+                    str(self.paths.state_root / "applied" / f"{desired.instance_id.value}.json"),
+                    exc.message,
+                    resource_id="development-ownership",
+                )
+            ]
+        operations: list[PlanItem] = []
+        for resource in resources:
+            observation = self.observer.observe_resource(resource)
+            if observation.status is ObservationStatus.ABSENT:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.NOOP,
+                        resource.path,
+                        "obsolete development resource is already absent",
+                        resource.resource_id,
+                    )
+                )
+                continue
+            if observation.status is not ObservationStatus.EXACT:
+                operations.append(
+                    PlanItem(
+                        PlanOperation.CONFLICT,
+                        resource.path,
+                        f"obsolete development resource cannot be safely removed: {observation.detail}",
+                        resource.resource_id,
+                    )
+                )
+                continue
+            if resource.unit_name:
+                unit = self.observer.observe_unit(resource.unit_name)
+                if unit.active:
+                    operations.append(
+                        PlanItem(
+                            PlanOperation.STOP,
+                            resource.unit_name,
+                            "obsolete development unit must stop before removal",
+                            resource.resource_id,
+                        )
+                    )
+                if unit.enabled:
+                    operations.append(
+                        PlanItem(
+                            PlanOperation.DISABLE,
+                            resource.unit_name,
+                            "obsolete development unit must be disabled before removal",
+                            resource.resource_id,
+                        )
+                    )
+            operations.append(
+                PlanItem(
+                    PlanOperation.REMOVE,
+                    resource.path,
+                    "obsolete manager-owned development resource must be removed",
+                    resource.resource_id,
+                )
+            )
+        return operations
+
     def _unit_operations(
         self,
         desired: DesiredInstance,
@@ -848,7 +934,63 @@ class ReconciliationPlanner:
                     operations.append(
                         PlanItem(PlanOperation.DISABLE, resource.unit_name, "deployment target is absent", resource.resource_id)
                     )
+        if present and running and "mcp-unit" in changed:
+            tunnel = next((resource for resource in resources if resource.resource_id == "tunnel-unit"), None)
+            tunnel_already_scheduled = any(
+                item.resource_id == "tunnel-unit"
+                and item.operation in {PlanOperation.START, PlanOperation.RESTART}
+                for item in operations
+            )
+            if tunnel is not None and tunnel.unit_name and not tunnel_already_scheduled:
+                observed_tunnel = self.observer.observe_unit(tunnel.unit_name)
+                if observed_tunnel.active:
+                    operations.append(
+                        PlanItem(
+                            PlanOperation.RESTART,
+                            tunnel.unit_name,
+                            "MCP dependency is restarting",
+                            tunnel.resource_id,
+                        )
+                    )
         return operations
+
+    @staticmethod
+    def _dev_operation(observation: Any, requested: bool) -> PlanOperation:
+        if observation.status is DevObservationStatus.EXACT:
+            return PlanOperation.NOOP
+        if observation.status is DevObservationStatus.ABSENT:
+            return PlanOperation.CREATE
+        if observation.status is DevObservationStatus.DIFFERENT:
+            return PlanOperation.UPDATE if requested else PlanOperation.REMOVE
+        return PlanOperation.CONFLICT
+
+    def _development_git_operations(self, desired: DesiredInstance) -> list[PlanItem]:
+        if desired.config_version < 2:
+            return []
+        identity_observation = self.git_reconciler.observe_identity(desired)
+        identity_requested = (
+            desired.lifecycle.deployment is DeploymentTarget.PRESENT
+            and desired.git.identity is not None
+        )
+        result = [
+            PlanItem(
+                self._dev_operation(identity_observation, identity_requested),
+                f"{desired.workspace_path}::dev-git-identity",
+                f"repository-local Git identity: {identity_observation.detail}",
+                "dev-git-identity",
+            )
+        ]
+        transport_observation = self.git_reconciler.observe_transport(desired)
+        transport_requested = transport_is_requested(desired)
+        result.append(
+            PlanItem(
+                self._dev_operation(transport_observation, transport_requested),
+                f"{desired.workspace_path}::dev-git-transport",
+                f"repository-local Git transport: {transport_observation.detail}",
+                "dev-git-transport",
+            )
+        )
+        return result
 
     def plan(self, desired: DesiredInstance) -> ReconciliationPlan:
         bundle = self.generator.generate(desired)
@@ -858,18 +1000,24 @@ class ReconciliationPlanner:
             operations.extend(self._managed_host_conflicts(desired))
             operations.extend(self._listener_conflicts(desired, bundle))
         file_ops, changed = self._file_operations(desired, bundle)
+        development_git_ops = self._development_git_operations(desired)
         stale_access_ops = self._stale_access_operations(desired, bundle)
         stale_guard_ops = self._stale_guard_operations(desired, bundle)
+        stale_development_ops = self._stale_development_operations(desired, bundle)
         unit_ops = self._unit_operations(desired, bundle, changed)
         if desired.lifecycle.deployment is DeploymentTarget.PRESENT:
             operations.extend(file_ops)
+            operations.extend(development_git_ops)
             operations.extend(unit_ops)
             operations.extend(stale_guard_ops)
+            operations.extend(stale_development_ops)
             operations.extend(stale_access_ops)
         else:
             operations.extend(unit_ops)
+            operations.extend(development_git_ops)
             operations.extend(file_ops)
             operations.extend(stale_guard_ops)
+            operations.extend(stale_development_ops)
             operations.extend(stale_access_ops)
         warnings: list[str] = []
         valid = not any(item.operation is PlanOperation.CONFLICT for item in operations)

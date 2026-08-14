@@ -140,6 +140,12 @@ class P7ListenerUpdateRegressionTests(unittest.TestCase):
                     for item in plan.operations
                 )
             )
+            self.assertTrue(
+                any(
+                    item.operation is PlanOperation.RESTART and item.resource_id == "tunnel-unit"
+                    for item in plan.operations
+                )
+            )
 
     def test_active_owned_listener_does_not_mask_changed_endpoint_collision(self) -> None:
         with TemporaryDirectory() as temp:

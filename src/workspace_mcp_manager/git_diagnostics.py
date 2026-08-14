@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -8,9 +7,10 @@ from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import urlparse
 
+from .development_environment import development_subprocess_env, effective_ssh_auth_sock
 from .domain import DesiredInstance
 from .paths import ManagerPaths
-from .redaction import redact_text, sanitized_subprocess_env
+from .redaction import redact_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,15 +50,7 @@ class GitDiagnosticService:
         self.paths = paths
 
     def _environment(self, desired: DesiredInstance) -> dict[str, str]:
-        env = sanitized_subprocess_env(os.environ)
-        env["HOME"] = str(self.paths.account_home)
-        env["PATH"] = desired.mcp.exec_path
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        if desired.github.config_dir:
-            env["GH_CONFIG_DIR"] = desired.github.config_dir
-        else:
-            env.pop("GH_CONFIG_DIR", None)
-        return env
+        return development_subprocess_env(self.paths, desired)
 
     @staticmethod
     def _which(name: str, desired: DesiredInstance) -> str | None:
@@ -108,6 +100,7 @@ class GitDiagnosticService:
                     "home": str(self.paths.account_home),
                     "path": desired.mcp.exec_path,
                     "gh_config_dir": desired.github.config_dir,
+                    "ssh_auth_sock": effective_ssh_auth_sock(desired),
                 },
                 "repository": {"present": False},
                 "working_tree": {"clean": None, "entry_count": None},
@@ -221,6 +214,7 @@ class GitDiagnosticService:
                 "home": str(self.paths.account_home),
                 "path": desired.mcp.exec_path,
                 "gh_config_dir": desired.github.config_dir,
+                "ssh_auth_sock": effective_ssh_auth_sock(desired),
             },
             "repository": {"present": repository_present},
             "working_tree": {"clean": clean, "entry_count": entry_count},

@@ -5,7 +5,7 @@ import unittest
 from workspace_mcp_manager.domain import DesiredInstance
 from workspace_mcp_manager.errors import ErrorCode, ManagerError
 
-from tests.helpers import sample_instance
+from tests.helpers import sample_instance, sample_v2_instance
 
 
 class DesiredInstanceTests(unittest.TestCase):
@@ -29,10 +29,66 @@ class DesiredInstanceTests(unittest.TestCase):
 
     def test_unsupported_version_has_specific_error(self) -> None:
         value = sample_instance()
-        value["config_version"] = 2
+        value["config_version"] = 3
         with self.assertRaises(ManagerError) as caught:
             DesiredInstance.from_dict(value)
         self.assertEqual(caught.exception.code, ErrorCode.CONFIG_VERSION_UNSUPPORTED)
+
+    def test_v1_round_trip_does_not_gain_pm1_fields(self) -> None:
+        desired = DesiredInstance.from_dict(sample_instance())
+        self.assertEqual(desired.config_version, 1)
+        self.assertNotIn("git", desired.to_dict())
+        self.assertNotIn("agent", desired.to_dict())
+        self.assertEqual(desired.github.mode.value, "external")
+        self.assertIsNone(desired.git.identity)
+        self.assertIsNone(desired.git.remote)
+        self.assertEqual(desired.agent.mode.value, "none")
+
+    def test_v2_round_trip_is_strict_and_stable(self) -> None:
+        first = DesiredInstance.from_dict(sample_v2_instance())
+        second = DesiredInstance.from_json(first.canonical_json())
+        self.assertEqual(first.to_dict(), second.to_dict())
+        self.assertEqual(first.fingerprint(), second.fingerprint())
+        self.assertEqual(first.github.mode.value, "managed")
+        self.assertEqual(first.git.remote.protocol.value, "ssh")
+        self.assertEqual(first.agent.mode.value, "managed-ssh-agent")
+
+    def test_v2_requires_pm1_root_fields(self) -> None:
+        value = sample_v2_instance()
+        del value["agent"]
+        with self.assertRaisesRegex(ManagerError, "missing required fields"):
+            DesiredInstance.from_dict(value)
+
+    def test_managed_github_requires_explicit_config_path(self) -> None:
+        value = sample_v2_instance()
+        value["github"]["config_dir"] = None
+        with self.assertRaisesRegex(ManagerError, "managed.*config_dir"):
+            DesiredInstance.from_dict(value)
+
+    def test_external_agent_requires_socket_path(self) -> None:
+        value = sample_v2_instance()
+        value["agent"] = {"mode": "external", "ssh_auth_sock": None}
+        with self.assertRaisesRegex(ManagerError, "external.*ssh_auth_sock"):
+            DesiredInstance.from_dict(value)
+
+    def test_ssh_remote_requires_agent_provider(self) -> None:
+        value = sample_v2_instance()
+        value["agent"] = {"mode": "none", "ssh_auth_sock": None}
+        with self.assertRaisesRegex(ManagerError, "ssh.*agent"):
+            DesiredInstance.from_dict(value)
+
+    def test_https_remote_requires_gh_profile_and_binary(self) -> None:
+        value = sample_v2_instance()
+        value["git"]["remote"]["protocol"] = "https-gh"
+        value["github"]["binary"] = None
+        with self.assertRaisesRegex(ManagerError, "https-gh.*github.binary"):
+            DesiredInstance.from_dict(value)
+
+    def test_v2_unknown_nested_field_fails_closed(self) -> None:
+        value = sample_v2_instance()
+        value["git"]["surprise"] = True
+        with self.assertRaisesRegex(ManagerError, "unknown fields"):
+            DesiredInstance.from_dict(value)
 
     def test_instance_id_rejects_double_hyphen(self) -> None:
         value = sample_instance()

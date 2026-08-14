@@ -381,7 +381,7 @@ class ToolingService:
     def agents_configure(self) -> dict[str, Any]:
         raise ManagerError(
             ErrorCode.FEATURE_NOT_IMPLEMENTED,
-            "persistent manager-owned SSH-agent activation is deferred to the post-MVP portion of CAP-123",
+            "host-wide agent activation is intentionally unsupported; use config_version=2 per-instance agent.mode",
             {
                 "ssh_agent_present": _is_regular_executable(Path("/usr/bin/ssh-agent")),
                 "gpg_agent_present": _is_regular_executable(Path("/usr/bin/gpg-agent")),

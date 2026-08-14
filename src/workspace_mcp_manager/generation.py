@@ -9,7 +9,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .domain import DesiredInstance
+from .development_environment import (
+    effective_ssh_auth_sock,
+    github_cli_helper_path,
+    managed_agent_runtime_dir,
+)
+from .domain import AgentMode, DesiredInstance, GitRemoteProtocol, GithubConfigMode
 from .errors import config_error
 from .paths import ManagerPaths
 
@@ -221,6 +226,11 @@ class ResourceGenerator:
         roots = list(desired.mcp.external_roots)
         if desired.github.config_dir and desired.github.config_dir not in roots:
             roots.append(desired.github.config_dir)
+        ssh_auth_sock = effective_ssh_auth_sock(desired)
+        if ssh_auth_sock:
+            socket_parent = str(Path(ssh_auth_sock).parent)
+            if socket_parent not in roots:
+                roots.append(socket_parent)
         return tuple(roots)
 
     def _render_mcp_unit(self, desired: DesiredInstance) -> str:
@@ -255,6 +265,11 @@ class ResourceGenerator:
             environment_lines.append(
                 f"Environment={systemd_quote('GH_CONFIG_DIR=' + desired.github.config_dir)}"
             )
+        ssh_auth_sock = effective_ssh_auth_sock(desired)
+        if ssh_auth_sock:
+            environment_lines.append(
+                f"Environment={systemd_quote('SSH_AUTH_SOCK=' + ssh_auth_sock)}"
+            )
         access_lines: list[str] = []
         access_root = Path(desired.workspace_path) / ".workspace-mcp-access"
         folders = [(folder, True) for folder in desired.access.read_only] + [
@@ -268,6 +283,10 @@ class ResourceGenerator:
         if access_lines:
             environment_lines.append("PrivateUsers=true")
             environment_lines.extend(access_lines)
+        unit_dependencies: list[str] = []
+        if desired.agent.mode is AgentMode.MANAGED_SSH_AGENT:
+            agent_unit = f"workspace-mcp-ssh-agent-{iid}.service"
+            unit_dependencies.extend([f"Requires={agent_unit}", f"After={agent_unit}"])
         return "\n".join(
             [
                 _owner_marker(iid).rstrip("\n"),
@@ -275,6 +294,7 @@ class ResourceGenerator:
                 "[Unit]",
                 f"Description=Coding Tools MCP - {iid}",
                 "After=network.target",
+                *unit_dependencies,
                 "",
                 "[Service]",
                 "Type=simple",
@@ -287,6 +307,48 @@ class ResourceGenerator:
                 "KillMode=mixed",
                 f"StandardOutput=append:{systemd_path(str(state_dir / 'mcp.log'))}",
                 f"StandardError=append:{systemd_path(str(state_dir / 'mcp.log'))}",
+                "",
+                "[Install]",
+                "WantedBy=default.target",
+                "",
+            ]
+        )
+
+    def _render_git_credential_helper(self, desired: DesiredInstance) -> str:
+        if desired.github.config_dir is None or desired.github.binary is None:
+            raise config_error("https-gh helper requires github.config_dir and github.binary")
+        iid = desired.instance_id.value
+        config_dir = shlex.quote(desired.github.config_dir)
+        gh = shlex.quote(desired.github.binary)
+        return "\n".join(
+            [
+                "#!/bin/sh",
+                _owner_marker(iid).rstrip("\n"),
+                "set -eu",
+                f"GH_CONFIG_DIR={config_dir}",
+                "export GH_CONFIG_DIR",
+                f"exec {gh} auth git-credential \"$@\"",
+                "",
+            ]
+        )
+
+    def _render_ssh_agent_unit(self, desired: DesiredInstance) -> str:
+        iid = desired.instance_id.value
+        runtime_name = f"workspace-mcp-manager-{iid}"
+        socket = managed_agent_runtime_dir(desired) / "ssh-agent.sock"
+        return "\n".join(
+            [
+                _owner_marker(iid).rstrip("\n"),
+                "[Unit]",
+                f"Description=Workspace MCP SSH agent - {iid}",
+                "",
+                "[Service]",
+                "Type=simple",
+                f"RuntimeDirectory={runtime_name}",
+                "RuntimeDirectoryMode=0700",
+                f"ExecStart=/usr/bin/ssh-agent -D -a {systemd_path(str(socket))}",
+                "Restart=on-failure",
+                "RestartSec=2",
                 "",
                 "[Install]",
                 "WantedBy=default.target",
@@ -462,6 +524,71 @@ class ResourceGenerator:
                 ),
             ]
         )
+        if desired.config_version >= 2 and desired.github.mode is GithubConfigMode.MANAGED:
+            if desired.github.config_dir is None:
+                raise config_error("managed GitHub profile requires github.config_dir")
+            github_profile = Path(desired.github.config_dir)
+            github_root = self.paths.config_root / "github"
+            github_owner = github_profile / ".owner"
+            resources.extend(
+                [
+                    GeneratedResource(
+                        "github-profile-root",
+                        ResourceKind.DIRECTORY,
+                        str(github_root),
+                        0o700,
+                        remove_when_absent=False,
+                    ),
+                    GeneratedResource(
+                        "github-profile-dir",
+                        ResourceKind.DIRECTORY,
+                        str(github_profile),
+                        0o700,
+                        ownership_token=marker,
+                        ownership_marker_path=str(github_owner),
+                        remove_when_absent=False,
+                    ),
+                    GeneratedResource(
+                        "github-profile-owner",
+                        ResourceKind.FILE,
+                        str(github_owner),
+                        0o600,
+                        content=f"{OWNER_PREFIX}{iid}\n",
+                        ownership_token=marker,
+                        remove_when_absent=False,
+                    ),
+                ]
+            )
+        if (
+            desired.config_version >= 2
+            and desired.git.remote is not None
+            and desired.git.remote.protocol is GitRemoteProtocol.HTTPS_GH
+        ):
+            resources.append(
+                GeneratedResource(
+                    "github-cli-helper",
+                    ResourceKind.FILE,
+                    str(github_cli_helper_path(self.paths, desired)),
+                    0o755,
+                    content=self._render_git_credential_helper(desired),
+                    ownership_token=marker,
+                )
+            )
+        if desired.config_version >= 2 and desired.agent.mode is AgentMode.MANAGED_SSH_AGENT:
+            agent_unit = f"workspace-mcp-ssh-agent-{iid}.service"
+            resources.append(
+                GeneratedResource(
+                    "ssh-agent-unit",
+                    ResourceKind.SYSTEMD_UNIT,
+                    str(self._unit_path(agent_unit)),
+                    0o600,
+                    content=self._render_ssh_agent_unit(desired),
+                    ownership_token=marker,
+                    unit_name=agent_unit,
+                    enable_when_present=True,
+                    active_when_running=True,
+                )
+            )
         folders = [(folder, "ro") for folder in desired.access.read_only] + [
             (folder, "rw") for folder in desired.access.read_write
         ]
