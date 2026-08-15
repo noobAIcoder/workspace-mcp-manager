@@ -116,7 +116,7 @@ CAP-114	B	PRESERVE	P9	GitHub CLI auth diagnostic
 CAP-115	B	PRESERVE	P9	Git identity diagnostic
 CAP-116	B	PRESERVE	P12	Time-aware tunnel-log classification
 CAP-117	C	PRESERVE	PM1	Create/manage per-instance `GH_CONFIG_DIR`
-CAP-118	C	EXTERNAL	N/A	`gh auth login` / PAT onboarding
+CAP-118	C	PRESERVE	PM3.1.1	Per-instance managed `gh auth login` / PAT onboarding orchestration
 CAP-119	C	PRESERVE	PM1	Configure Git repo identity
 CAP-120	C	PRESERVE	PM1	Configure repository credential helper / protocol
 CAP-121	C	DEFER	P15	Install/configure Codex CLI

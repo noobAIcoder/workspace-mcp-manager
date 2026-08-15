@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .development_environment import (
+    MANAGED_GITHUB_ENV_REMOVE,
     effective_ssh_auth_sock,
     github_cli_helper_path,
     managed_agent_runtime_dir,
@@ -256,6 +257,8 @@ class ResourceGenerator:
             'Environment="PYTHONUNBUFFERED=1"',
             f"Environment={systemd_quote('PATH=' + desired.mcp.exec_path)}",
         ]
+        if desired.config_version >= 2 and desired.github.mode is GithubConfigMode.MANAGED:
+            environment_lines.append("UnsetEnvironment=" + " ".join(MANAGED_GITHUB_ENV_REMOVE))
         roots = self._effective_external_roots(desired)
         if roots:
             environment_lines.append(
@@ -321,13 +324,22 @@ class ResourceGenerator:
         iid = desired.instance_id.value
         config_dir = shlex.quote(desired.github.config_dir)
         gh = shlex.quote(desired.github.binary)
+        account_home = shlex.quote(str(self.paths.account_home))
+        exec_path = shlex.quote(desired.mcp.exec_path)
+        unset_values = " ".join(MANAGED_GITHUB_ENV_REMOVE)
         return "\n".join(
             [
                 "#!/bin/sh",
                 _owner_marker(iid).rstrip("\n"),
                 "set -eu",
+                f"unset {unset_values}",
+                f"HOME={account_home}",
+                f"PATH={exec_path}",
                 f"GH_CONFIG_DIR={config_dir}",
-                "export GH_CONFIG_DIR",
+                "GIT_TERMINAL_PROMPT=0",
+                "GH_PROMPT_DISABLED=1",
+                "GH_NO_UPDATE_NOTIFIER=1",
+                "export HOME PATH GH_CONFIG_DIR GIT_TERMINAL_PROMPT GH_PROMPT_DISABLED GH_NO_UPDATE_NOTIFIER",
                 f"exec {gh} auth git-credential \"$@\"",
                 "",
             ]

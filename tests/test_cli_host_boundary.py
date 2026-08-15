@@ -166,6 +166,30 @@ class CliHostBoundaryTests(unittest.TestCase):
             bridge.run_candidate.assert_called_once_with(request)
             bridge.run_ports.assert_called_once_with()
 
+    def test_pm3_1_1_status_verify_use_host_bridge_but_configure_is_foreground_direct(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 patch("workspace_mcp_manager.cli.GithubAccessService") as github_type, \
+                 redirect_stdout(StringIO()):
+                bridge = bridge_type.return_value
+                bridge.run_github_access.return_value = {"ok": True, "github_access_projection_version": 1}
+                github_type.return_value.configure.return_value = {
+                    "ok": True,
+                    "instance_id": "sample",
+                    "operation": {"outcome": "succeeded", "reason_code": None},
+                }
+                self.assertEqual(main(["instance", "github-access", "status", "sample"]), 0)
+                self.assertEqual(main(["instance", "github-access", "verify", "sample"]), 0)
+                self.assertEqual(main(["instance", "github-access", "configure", "sample"]), 0)
+            self.assertEqual(
+                bridge.run_github_access.call_args_list,
+                [unittest.mock.call("status", "sample"), unittest.mock.call("verify", "sample")],
+            )
+            github_type.return_value.configure.assert_called_once_with("sample")
+
     def test_public_reboot_commands_use_host_bridge_and_reason_stdin_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

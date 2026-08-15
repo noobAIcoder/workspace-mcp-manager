@@ -16,6 +16,7 @@ from .domain import DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
 from .git_diagnostics import GitDiagnosticService
+from .github_access import GithubAccessService
 from .host import HostInspector
 from .host_apply import HostExecutionBridge, HostInstanceStatusService
 from .lifecycle import HostLifecycleWorker
@@ -152,6 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_cmd.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
     diagnose_cmd.add_argument("--pretty", action="store_true")
 
+    github_access_cmd = instance_sub.add_parser("github-access")
+    github_access_sub = github_access_cmd.add_subparsers(dest="github_access_action", required=True)
+    for github_access_action in ("status", "verify", "configure"):
+        item = github_access_sub.add_parser(github_access_action)
+        item.add_argument("instance_id")
+        item.add_argument("--pretty", action="store_true")
+
     for command in ("apply", "start", "stop", "restart", "remove"):
         item = instance_sub.add_parser(command)
         item.add_argument("instance_id")
@@ -268,6 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_diagnose = runtime_sub.add_parser("diagnose")
     runtime_diagnose.add_argument("instance_id")
     runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
+    runtime_github_access = runtime_sub.add_parser("github-access")
+    runtime_github_access.add_argument("action", choices=("status", "verify"))
+    runtime_github_access.add_argument("instance_id")
     runtime_access = runtime_sub.add_parser("access")
     runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove", "update"))
     runtime_access.add_argument("instance_id")
@@ -400,6 +411,10 @@ def _run_instance(
         return bridge.run_git(args.instance_id)
     if args.command == "diagnose":
         return bridge.run_diagnose(args.instance_id, since_seconds=args.since_seconds)
+    if args.command == "github-access":
+        if args.github_access_action == "configure":
+            return GithubAccessService(paths, registry).configure(args.instance_id)
+        return bridge.run_github_access(args.github_access_action, args.instance_id)
     if args.command in {"apply", "start", "stop", "restart", "remove"}:
         return bridge.run_lifecycle(
             args.command,
@@ -641,6 +656,9 @@ def _run_runtime(
         return GitDiagnosticService(paths).run(desired)
     if args.command == "diagnose":
         return ResilienceDiagnosticService(paths).run(desired, since_seconds=args.since_seconds)
+    if args.command == "github-access":
+        service = GithubAccessService(paths, registry)
+        return service.status(args.instance_id) if args.action == "status" else service.verify(args.instance_id)
     if args.command == "lifecycle":
         return HostLifecycleWorker(paths, registry).run(
             args.action,

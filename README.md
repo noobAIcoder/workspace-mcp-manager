@@ -137,6 +137,19 @@ and secret values do not enter public setup contracts or TUI state. PM3.1 is
 pure/Pilot/live WSL-qualified with PM3 and PM2 regression gates and final
 `manager-qual` all-NOOP convergence.
 
+PM3.1.1 narrowly supersedes PM3.1's external-authentication rule for
+`github.mode=managed`. The manager now owns orchestration of GitHub CLI
+credential onboarding into the canonical per-instance `GH_CONFIG_DIR`, while
+GitHub CLI remains authoritative for credential representation and persistence.
+Managed execution strips ambient GitHub token/config overrides, verification is
+bounded and freshness/context-aware, and GitHub CLI/API readiness remains
+independent from repository Git transport. Credential entry occurs only in a
+foreground controlling-terminal helper with intentionally visible terminal
+echo; credential bytes do not enter manager/TUI contracts, argv, token-bearing
+environment variables, logs, diagnostics, or verification records. Automated
+implementation qualification remains separate from operator real-credential
+validation.
+
 ## Run from source
 
 ```sh
@@ -198,6 +211,9 @@ workspace-mcp-manager instance status <id>
 workspace-mcp-manager instance logs <id>
 workspace-mcp-manager instance git <id>
 workspace-mcp-manager instance diagnose <id> [--since-seconds N]
+workspace-mcp-manager instance github-access status <id>
+workspace-mcp-manager instance github-access verify <id>
+workspace-mcp-manager instance github-access configure <id>
 workspace-mcp-manager instance apply <id>
 workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
@@ -233,6 +249,9 @@ is also implemented, pure-verified, and reversibly WSL-qualified on
 `manager-qual`. PM2 external terminal contracts remain qualified; PM3 is the
 qualified Textual operator frontend; PM3.1 is qualified for context-aware,
 manager-authoritative instance setup with PM3/PM2 regression preservation.
+PM3.1.1 implements per-instance managed GitHub access onboarding and remains
+`AWAITING_OPERATOR_VALIDATION` until one real manager-owned profile is configured
+and its sanitized manager/MCP/repository verification results are reviewed.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

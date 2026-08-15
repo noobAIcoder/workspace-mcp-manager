@@ -275,8 +275,10 @@ This keeps P15 non-privileged and deterministic. Acquisition of the official
 GitHub CLI release artifact is outside the manager mutation itself; the manager
 does not add package repositories or use sudo.
 
-`gh auth login`, tokens, and actual auth state remain external under CAP-118 and
-CAP-126. Existing P9 diagnostics remain the authority for reporting auth state.
+PM3.1.1 narrowly supersedes CAP-118 for manager-owned per-instance `gh auth login`
+orchestration. Token creation/contents remain external under CAP-126. PM3.1.1's
+GitHub-access projection supersedes the generic P9 auth diagnostic for registered
+instances without changing P9's historical contract.
 
 ## SSH/GPG agents — P15 portion of CAP-123
 

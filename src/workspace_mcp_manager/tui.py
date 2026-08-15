@@ -362,6 +362,43 @@ class ManagerClient:
     def git(self, instance_id: str) -> Mapping[str, Any]:
         return self.invoke("instance", "git", instance_id).payload
 
+    def github_access_status(self, instance_id: str) -> Mapping[str, Any]:
+        return self.invoke(
+            "instance",
+            "github-access",
+            "status",
+            instance_id,
+            require_ok=True,
+        ).payload
+
+    def github_access_verify(self, instance_id: str) -> Mapping[str, Any]:
+        return self.invoke(
+            "instance",
+            "github-access",
+            "verify",
+            instance_id,
+            timeout=LONG_READ_TIMEOUT_SECONDS,
+        ).payload
+
+    def github_access_configure_foreground(self, instance_id: str) -> int:
+        """Run credential onboarding on the controlling terminal without capture/detach."""
+
+        argv = self.argv("instance", "github-access", "configure", instance_id)
+        try:
+            completed = subprocess.run(
+                argv,
+                stdin=None,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                start_new_session=False,
+                timeout=150.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise TuiError("GitHub access foreground configuration did not complete") from exc
+        return completed.returncode
+
     def diagnose(self, instance_id: str) -> Mapping[str, Any]:
         return self.invoke(
             "instance",
@@ -636,7 +673,7 @@ SETTINGS_FIELDS: tuple[SettingsField, ...] = (
 
 def settings_field_applicable(field: SettingsField, draft: Mapping[str, Any]) -> bool:
     if field.path in {("github", "config_dir"), ("github", "binary")}:
-        return get_nested(draft, ("github", "mode")) in {"external", "managed"}
+        return get_nested(draft, ("github", "mode")) == "external"
     if field.path == ("agent", "ssh_auth_sock"):
         return get_nested(draft, ("agent", "mode")) == "external"
     return True

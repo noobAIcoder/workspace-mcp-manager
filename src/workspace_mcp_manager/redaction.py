@@ -11,12 +11,14 @@ SECRET_ENV_KEYS = frozenset(
         "OPENAI_API_KEY",
         "GITHUB_TOKEN",
         "GH_TOKEN",
+        "GITHUB_ENTERPRISE_TOKEN",
+        "GH_ENTERPRISE_TOKEN",
         "GIT_ASKPASS",
     }
 )
 
 _ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(CONTROL_PLANE_API_KEY|OPENAI_API_KEY|GITHUB_TOKEN|GH_TOKEN)\s*=\s*([^\s]+)"
+    r"(?i)\b(CONTROL_PLANE_API_KEY|OPENAI_API_KEY|GITHUB_TOKEN|GH_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_ENTERPRISE_TOKEN)\s*=\s*([^\s]+)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 

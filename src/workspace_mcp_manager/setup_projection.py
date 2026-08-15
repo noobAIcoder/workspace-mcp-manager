@@ -22,6 +22,7 @@ from .development_environment import (
     IDENTITY_VERSION_KEY,
     REMOTE_OWNER_KEY,
     REMOTE_VERSION_KEY,
+    managed_github_profile_path_for_instance,
 )
 from .domain import DesiredInstance
 from .endpoint_projection import (
@@ -1085,6 +1086,23 @@ class SetupProjectionService:
 
         normalized_edits: list[dict[str, Any]] = []
         seen_edit_paths: set[str] = set()
+        github_mode_edit = next(
+            (
+                item.get("value")
+                for item in field_edits
+                if isinstance(item, Mapping)
+                and item.get("path") == "/github/mode"
+                and item.get("operation") == "set"
+            ),
+            None,
+        )
+        effective_github_mode = str(github_mode_edit or candidate.get("github", {}).get("mode") or "disabled")
+        if (
+            matched_instance is not None
+            and matched_instance.github.mode.value == "external"
+            and effective_github_mode == "managed"
+        ):
+            raise config_error("external to managed GitHub profile migration is not supported")
         for index, raw in enumerate(field_edits):
             if not isinstance(raw, Mapping):
                 raise config_error("field edit must be an object", index=index)
@@ -1096,6 +1114,8 @@ class SetupProjectionService:
                 if pointer == "/tunnel/profile":
                     raise config_error("tunnel.profile is manager-derived for new candidates")
                 raise config_error("field edit path is not editable", path=pointer)
+            if pointer in {"/github/config_dir", "/github/binary"} and effective_github_mode == "managed":
+                raise config_error("managed GitHub profile path and binary are manager-derived", path=pointer)
             _pointer_parts(pointer)
             if pointer in seen_edit_paths:
                 raise config_error("candidate request contains duplicate field edit path", path=pointer)
@@ -1124,15 +1144,47 @@ class SetupProjectionService:
             normalized_edits.append({"path": pointer, "operation": operation, **({"value": value} if operation == "set" else {})})
 
         github = candidate.get("github") if isinstance(candidate.get("github"), dict) else None
-        if github is not None and github.get("mode") == "disabled" and github.get("config_dir") is not None:
-            github["config_dir"] = None
+        if github is not None and github.get("mode") == "disabled":
+            for key in ("config_dir", "binary"):
+                if github.get(key) is not None:
+                    github[key] = None
+                    _mark_provenance(
+                        provenance,
+                        None,
+                        f"/github/{key}",
+                        "manager_derived",
+                        "/github/mode",
+                        f"disabled GitHub mode requires github.{key}=null",
+                    )
+        elif github is not None and github.get("mode") == "managed":
+            instance_id = str(candidate.get("instance_id") or "")
+            if not instance_id:
+                raise config_error("managed GitHub mode requires an effective instance ID")
+            config_dir = str(managed_github_profile_path_for_instance(self.paths, instance_id))
+            github["config_dir"] = config_dir
             _mark_provenance(
                 provenance,
-                None,
+                config_dir,
                 "/github/config_dir",
                 "manager_derived",
-                "/github/mode",
-                "disabled GitHub mode requires no profile directory",
+                instance_id,
+                "canonical PM1 managed GitHub profile",
+            )
+            resolved_gh = shutil.which("gh", path=str(candidate.get("mcp", {}).get("exec_path") or ""))
+            if resolved_gh:
+                try:
+                    resolved_gh = str(Path(resolved_gh).resolve(strict=True))
+                except OSError:
+                    resolved_gh = None
+            github["binary"] = resolved_gh
+            _mark_provenance(
+                provenance,
+                resolved_gh,
+                "/github/binary",
+                "manager_derived",
+                "/mcp/exec_path",
+                "resolved from effective MCP execution PATH" if resolved_gh else "GitHub CLI is unavailable on effective MCP execution PATH",
+                status="effective" if resolved_gh else "unresolved",
             )
         agent = candidate.get("agent") if isinstance(candidate.get("agent"), dict) else None
         if agent is not None and agent.get("mode") != "external" and agent.get("ssh_auth_sock") is not None:

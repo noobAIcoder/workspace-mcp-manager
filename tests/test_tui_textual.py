@@ -5,6 +5,7 @@ import copy
 import os
 import threading
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Mapping
 from unittest import mock
@@ -66,6 +67,8 @@ class FakeClient:
         self.attention_reasons = ["Pending reconciliation"]
         self.log_categories: list[str] = []
         self.candidate_calls: list[Mapping[str, Any]] = []
+        self.github_verify_calls = 0
+        self.github_configure_calls = 0
 
     def cli_version(self) -> str:
         return "9.8.7-test"
@@ -123,6 +126,47 @@ class FakeClient:
 
     def git(self, instance_id: str) -> Mapping[str, Any]:
         return {"ok": True, "repository": True, "remote": "origin", "transport": "ssh"}
+
+    def github_access_status(self, instance_id: str) -> Mapping[str, Any]:
+        github = self.desired.get("github") if isinstance(self.desired.get("github"), Mapping) else {}
+        mode = str(github.get("mode") or "disabled")
+        managed = mode == "managed"
+        return {
+            "ok": True,
+            "github_access_projection_version": 1,
+            "instance_id": instance_id,
+            "profile": {
+                "mode": mode,
+                "state": "ready" if managed else ("not_applicable" if mode == "disabled" else "ready"),
+                "path": github.get("config_dir"),
+            },
+            "github_cli": {"version": "2.45.0", "supported": True, "available": True},
+            "authentication": {"state": "authenticated" if managed else "not_applicable", "account": "example-user" if managed else None},
+            "verification": {
+                "profile": "passed" if managed else "not_applicable",
+                "manager_environment": "passed" if managed else "not_applicable",
+                "mcp_execution": "passed" if managed else "not_applicable",
+                "repository_read": "passed" if managed else "not_applicable",
+                "observed_at": "2026-08-16T00:00:00+00:00" if managed else None,
+                "freshness": "fresh" if managed else "never",
+                "reason_code": None,
+            },
+            "git_transport": {"protocol": "ssh", "status": "ready"},
+            "setup": {
+                "enable_managed_allowed": mode == "disabled",
+                "configure_allowed": managed,
+                "reconfigure_allowed": managed,
+                "token_management_url": "https://github.com/settings/tokens",
+            },
+        }
+
+    def github_access_verify(self, instance_id: str) -> Mapping[str, Any]:
+        self.github_verify_calls += 1
+        return self.github_access_status(instance_id)
+
+    def github_access_configure_foreground(self, instance_id: str) -> int:
+        self.github_configure_calls += 1
+        return 0
 
     def plan(self, instance_id: str) -> Mapping[str, Any]:
         return {
@@ -782,6 +826,66 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             paths = {item["path"] for item in screen.field_edits}
             self.assertEqual(paths, {"/mcp/port"})
             self.assertEqual(screen.access_edits, [])
+
+    async def test_pm3_1_1_wizard_exposes_managed_intent_and_never_credential_input(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(90, 30)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(5):
+                await pilot.pause()
+            screen = app.screen
+            self.assertIsInstance(screen, NewInstanceScreen)
+            self.assertEqual(screen.STEPS[3], "Git, GitHub & Folder Access")
+            self.assertIsInstance(screen.query_one("#new-github-mode"), Select)
+            self.assertIsInstance(screen.query_one("#new-github-configure-timing"), Select)
+            input_ids = {str(widget.id).lower() for widget in screen.query(Input)}
+            self.assertFalse(
+                any(any(term in widget_id for term in ("credential", "token", "password", "secret")) for widget_id in input_ids)
+            )
+            self.assertIn("GitHub CLI API access", str(screen.query_one("#new-github-summary").render()))
+
+    async def test_pm3_1_1_instance_renders_github_access_separately_and_rechecks(self) -> None:
+        client = FakeClient()
+        client.desired["github"] = {
+            "mode": "managed",
+            "config_dir": "/home/operator/.config/workspace-mcp-manager/github/manager-qual",
+            "binary": "/usr/bin/gh",
+        }
+        app = build_app(client, initial_load=False)
+        async with app.run_test(size=(100, 34)) as pilot:
+            app.push_screen(InstanceScreen("manager-qual"))
+            for _ in range(5):
+                await pilot.pause()
+            rendered = str(app.screen.query_one("#git-content").render())
+            self.assertIn("GitHub CLI Access", rendered)
+            self.assertIn("Git Transport", rendered)
+            self.assertIn("example-user", rendered)
+            self.assertNotIn("github_pat_", rendered)
+            app.screen.query_one("#github-access-verify", Button).press()
+            for _ in range(5):
+                await pilot.pause()
+            self.assertEqual(client.github_verify_calls, 1)
+
+    async def test_pm3_1_1_foreground_configure_uses_suspend_boundary(self) -> None:
+        client = FakeClient()
+        client.desired["github"] = {
+            "mode": "managed",
+            "config_dir": "/home/operator/.config/workspace-mcp-manager/github/manager-qual",
+            "binary": "/usr/bin/gh",
+        }
+        app = build_app(client, initial_load=False)
+        async with app.run_test(size=(90, 30)) as pilot:
+            app.push_screen(InstanceScreen("manager-qual"))
+            for _ in range(5):
+                await pilot.pause()
+            with mock.patch.object(app, "suspend", return_value=nullcontext()) as suspended:
+                app.configure_github_foreground("manager-qual")
+            self.assertEqual(client.github_configure_calls, 1)
+            suspended.assert_called_once_with()
+            self.assertNotIn("token", str(app.screen.query(Input)).casefold())
 
 
 if __name__ == "__main__":

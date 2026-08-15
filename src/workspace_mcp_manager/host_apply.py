@@ -1535,6 +1535,14 @@ class HostExecutionBridge:
             unit_fragment=f"diagnose-{instance_id}",
         )
 
+    def run_github_access(self, action: str, instance_id: str) -> dict[str, Any]:
+        if action not in {"status", "verify"}:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, "unsupported GitHub-access host-boundary action")
+        return self._run_json(
+            ["_runtime", "github-access", action, instance_id],
+            unit_fragment=f"github-access-{action}-{instance_id}",
+        )
+
     def run_tooling(self, runtime_args: Sequence[str], *, unit_fragment: str) -> dict[str, Any]:
         if (
             len(runtime_args) < 2

@@ -562,6 +562,7 @@ class InstanceScreen(BaseScreen):
         self.show_payload: Mapping[str, Any] = {}
         self.access_payload: Mapping[str, Any] = {}
         self.git_payload: Mapping[str, Any] = {}
+        self.github_access_payload: Mapping[str, Any] = {}
         self.access_entries: list[dict[str, Any]] = []
         self.pending_access: dict[str, Any] | None = None
 
@@ -590,6 +591,11 @@ class InstanceScreen(BaseScreen):
                 with TabPane("Git & GitHub", id="git"):
                     with VerticalScroll():
                         yield Static("", id="git-content")
+                    with Horizontal(classes="actions"):
+                        yield Button("Re-check GitHub access", id="github-access-verify")
+                        yield Button("Configure GitHub access", id="github-access-configure", classes="mutation-action")
+                        yield Button("Enable managed GitHub access", id="github-access-enable")
+                        yield Button("Create/manage GitHub token", id="github-access-token")
                 with TabPane("Diagnostics", id="diagnostics"):
                     with VerticalScroll():
                         yield Static("Run diagnostics to collect current manager evidence.", id="diagnostics-content")
@@ -623,12 +629,14 @@ class InstanceScreen(BaseScreen):
             show = self.client.show(self.instance_id)
             access = self.client.access_list(self.instance_id)
             git = self.client.git(self.instance_id)
+            github_method = getattr(self.client, "github_access_status", None)
+            github_access = github_method(self.instance_id) if callable(github_method) else {}
         except TuiError as exc:
             if not worker.is_cancelled:
                 self.app.call_from_thread(self._apply_error, generation, exc)
             return
         if not worker.is_cancelled:
-            self.app.call_from_thread(self._apply_refresh, generation, summary, show, access, git)
+            self.app.call_from_thread(self._apply_refresh, generation, summary, show, access, git, github_access)
 
     def _apply_error(self, generation: int, exc: TuiError) -> None:
         if self.gate.accepts("instance", generation):
@@ -641,6 +649,7 @@ class InstanceScreen(BaseScreen):
         show: Mapping[str, Any],
         access: Mapping[str, Any],
         git: Mapping[str, Any],
+        github_access: Mapping[str, Any],
     ) -> None:
         if not self.gate.accepts("instance", generation):
             return
@@ -648,6 +657,7 @@ class InstanceScreen(BaseScreen):
         self.show_payload = show
         self.access_payload = access
         self.git_payload = git
+        self.github_access_payload = github_access
         self.pending_access = None
         self._render_header()
         self._render_overview()
@@ -696,6 +706,12 @@ class InstanceScreen(BaseScreen):
 
     def _render_git(self) -> None:
         projection = self.summary_payload.get("git") if isinstance(self.summary_payload.get("git"), Mapping) else {}
+        github = self.github_access_payload
+        profile = github.get("profile") if isinstance(github.get("profile"), Mapping) else {}
+        cli = github.get("github_cli") if isinstance(github.get("github_cli"), Mapping) else {}
+        authentication = github.get("authentication") if isinstance(github.get("authentication"), Mapping) else {}
+        verification = github.get("verification") if isinstance(github.get("verification"), Mapping) else {}
+        transport = github.get("git_transport") if isinstance(github.get("git_transport"), Mapping) else {}
         lines = [
             "[b]Configuration managed by manager[/b]",
             f"Repository: {projection.get('workspace', '?')}",
@@ -705,11 +721,33 @@ class InstanceScreen(BaseScreen):
             f"Remote transport: {projection.get('remote_protocol') or 'not configured'}",
             f"Agent provider: {projection.get('agent_mode', 'none')}",
             "",
-            "[b]Authentication external[/b]",
-            "The manager/TUI never requests tokens, private keys, passphrases, or API keys.",
+            "[b]GitHub CLI Access[/b]",
+            f"Profile: {profile.get('mode', 'unknown')} / {profile.get('state', 'unknown')}",
+            f"Path: {profile.get('path') or '—'}",
+            f"GitHub CLI: {cli.get('version') or 'unavailable'} / {'supported' if cli.get('supported') else 'not qualified'}",
+            f"Authentication: {authentication.get('state', 'unknown')}",
+            f"Account: {authentication.get('account') or '—'}",
+            f"Verification: profile={verification.get('profile', 'unknown')} manager={verification.get('manager_environment', 'unknown')} MCP={verification.get('mcp_execution', 'unknown')} repo={verification.get('repository_read', 'unknown')}",
+            f"Checked: {verification.get('observed_at') or 'never'} / {verification.get('freshness', 'never')}",
+            f"Reason: {verification.get('reason_code') or '—'}",
+            "",
+            "[b]Git Transport[/b]",
+            f"Protocol: {transport.get('protocol') or projection.get('remote_protocol') or 'not configured'}",
+            f"Status: {transport.get('status', 'unknown')}",
+            "GitHub CLI/API authentication and repository Git transport are independent authorities.",
         ]
         lines.extend("• " + line for line in _semantic_lines(self.git_payload, max_depth=2)[:30])
         self.query_one("#git-content", Static).update("\n".join(lines))
+        setup = github.get("setup") if isinstance(github.get("setup"), Mapping) else {}
+        mode = profile.get("mode")
+        configure = self.query_one("#github-access-configure", Button)
+        enable = self.query_one("#github-access-enable", Button)
+        verify_button = self.query_one("#github-access-verify", Button)
+        configure.styles.display = "block" if mode == "managed" else "none"
+        configure.disabled = not bool(setup.get("configure_allowed"))
+        configure.label = "Reconfigure GitHub access" if authentication.get("state") == "authenticated" else "Configure GitHub access"
+        enable.styles.display = "block" if mode == "disabled" else "none"
+        verify_button.disabled = mode == "disabled"
 
     def _render_settings_summary(self) -> None:
         desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else {}
@@ -846,6 +884,45 @@ class InstanceScreen(BaseScreen):
         elif button_id == "raw-declaration":
             desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else {}
             self.app.push_screen(RawJsonScreen(f"{self.instance_id} — Raw declaration", desired))
+        elif button_id == "github-access-verify":
+            self._github_verify_worker()
+        elif button_id == "github-access-configure":
+            self.manager_app.configure_github_foreground(self.instance_id)
+        elif button_id == "github-access-enable":
+            desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else None
+            fingerprint = self._expected_fingerprint()
+            if desired and fingerprint:
+                self.app.push_screen(SettingsScreen(self.instance_id, desired, fingerprint))
+                self.set_status("Select managed GitHub profile mode, then Preview & Save before configuring credentials")
+        elif button_id == "github-access-token":
+            setup = self.github_access_payload.get("setup") if isinstance(self.github_access_payload.get("setup"), Mapping) else {}
+            url = setup.get("token_management_url")
+            if isinstance(url, str) and url.startswith("https://github.com/"):
+                webbrowser.open(url)
+                self.set_status("Opened manager-projected GitHub token management")
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _github_verify_worker(self) -> None:
+        worker = get_current_worker()
+        verify = getattr(self.client, "github_access_verify", None)
+        if not callable(verify):
+            if not worker.is_cancelled:
+                self.app.call_from_thread(self.set_status, "GitHub access verification is unavailable in this frontend")
+            return
+        try:
+            payload = verify(self.instance_id)
+        except TuiError as exc:
+            if not worker.is_cancelled:
+                self.app.call_from_thread(self.set_status, f"✗ GitHub access verification failed: {exc}")
+            return
+        if not worker.is_cancelled:
+            self.app.call_from_thread(self._github_verified, payload)
+
+    def _github_verified(self, payload: Mapping[str, Any]) -> None:
+        self.github_access_payload = payload
+        self._render_git()
+        reason = payload.get("verification", {}).get("reason_code") if isinstance(payload.get("verification"), Mapping) else None
+        self.set_status("✓ GitHub access re-checked" if not reason else f"! GitHub access re-checked: {reason}")
 
     def run_diagnostics(self) -> None:
         self.set_status("Running manager diagnostics…")
@@ -1131,7 +1208,7 @@ class SettingsScreen(BaseScreen):
             wrapper = self.query_one(f"#{self._wrap_id(index)}")
             applicable = True
             if field.path in {("github", "config_dir"), ("github", "binary")}:
-                applicable = modes.get(("github", "mode"), "disabled") in {"external", "managed"}
+                applicable = modes.get(("github", "mode"), "disabled") == "external"
             elif field.path == ("agent", "ssh_auth_sock"):
                 applicable = modes.get(("agent", "mode"), "none") == "external"
             wrapper.styles.display = "block" if applicable else "none"
@@ -1355,7 +1432,7 @@ class DirectoryPicker(ModalScreen[Path | None]):
 
 
 class NewInstanceScreen(BaseScreen):
-    STEPS = ("Workspace", "Runtime", "Tunnel", "Git & Access", "Review")
+    STEPS = ("Workspace", "Runtime", "Tunnel", "Git, GitHub & Folder Access", "Review")
     REUSABLE_EDIT_PATHS = {
         "/mcp/binary",
         "/mcp/host",
@@ -1440,9 +1517,26 @@ class NewInstanceScreen(BaseScreen):
                     yield Static("Loading external authentication status…", id="new-auth-status", classes="card")
                     yield Button("Open credential setup", id="new-auth-setup")
                 with Vertical(id="wizard-git", classes="wizard-step"):
-                    yield Label("Git repository and adoption")
+                    yield Label("Git Repository")
                     yield Static("Loading manager Git discovery…", id="new-git-summary", classes="card")
-                    yield Label("External folder access")
+                    yield Label("GitHub CLI Access")
+                    yield Select(
+                        (("Managed per-instance GitHub access", "managed"), ("Not enabled", "disabled")),
+                        value="managed",
+                        allow_blank=False,
+                        id="new-github-mode",
+                    )
+                    yield Select(
+                        (("Configure during creation", "now"), ("Configure later", "later")),
+                        value="later",
+                        allow_blank=False,
+                        id="new-github-configure-timing",
+                    )
+                    yield Static("Setup occurs only after declaration registration.", id="new-github-summary", classes="card")
+                    yield Button("Create/manage GitHub token", id="new-github-token")
+                    yield Label("Git Transport")
+                    yield Static("Loading repository transport…", id="new-git-transport", classes="card")
+                    yield Label("Folder Access")
                     yield Static("No additional folders configured", id="new-access-summary", classes="card")
                     yield Select([], allow_blank=True, id="new-access-selection")
                     with Horizontal(classes="actions"):
@@ -1670,6 +1764,31 @@ class NewInstanceScreen(BaseScreen):
         if desired_remote:
             git_lines.append(f"Remote adoption: {desired_remote.get('protocol')} via manager candidate")
         self.query_one("#new-git-summary", Static).update("\n".join(git_lines))
+        desired_github = desired.get("github") if isinstance(desired.get("github"), Mapping) else {}
+        desired_mode = str(desired_github.get("mode") or "disabled")
+        if desired_mode in {"managed", "disabled"}:
+            self._populating = True
+            self.query_one("#new-github-mode", Select).value = desired_mode
+            self._populating = False
+        if desired_mode == "managed":
+            github_lines = [
+                "Managed per-instance profile",
+                f"Profile: {desired_github.get('config_dir') or 'manager-derived after instance ID resolution'}",
+                f"GitHub CLI: {desired_github.get('binary') or 'unavailable on effective PATH'}",
+                "Status: setup required until registered and verified",
+            ]
+        else:
+            github_lines = ["GitHub CLI API access is not enabled for this instance."]
+        self.query_one("#new-github-summary", Static).update("\n".join(github_lines))
+        self.query_one("#new-git-transport", Static).update(
+            "\n".join(
+                [
+                    f"Repository transport: {remote.get('transport') or (desired_remote.get('protocol') if desired_remote else 'not configured')}",
+                    f"SSH agent: {local_git.get('ssh_agent', {}).get('status', 'unknown') if isinstance(local_git.get('ssh_agent'), Mapping) else 'unknown'}",
+                    "GitHub CLI authentication is independent of repository transport.",
+                ]
+            )
+        )
 
         access = desired.get("access") if isinstance(desired.get("access"), Mapping) else {}
         access_lines: list[str] = []
@@ -1762,6 +1881,10 @@ class NewInstanceScreen(BaseScreen):
                 self._set_field_edit("/tunnel/health_port", int(health_text))
             self._dirty_paths -= {"/tunnel/id", "/tunnel/health_port"}
             self._request_candidate("tunnel intent")
+        elif self.step == 3:
+            mode = self._select_value(self.query_one("#new-github-mode", Select)) or "disabled"
+            self._set_field_edit("/github/mode", mode)
+            self._request_candidate("GitHub access intent")
 
     @on(Input.Changed)
     def input_changed(self, event: Input.Changed) -> None:
@@ -1797,6 +1920,14 @@ class NewInstanceScreen(BaseScreen):
             return
         if self._select_value(self.query_one("#new-source-mode", Select)) == "copy":
             self._request_candidate("copy source changed")
+
+    @on(Select.Changed, "#new-github-mode")
+    def github_mode_changed(self, event: Select.Changed) -> None:
+        if self._populating:
+            return
+        mode = "disabled" if event.value is Select.BLANK else str(event.value)
+        timing = self.query_one("#new-github-configure-timing", Select)
+        timing.disabled = mode != "managed"
 
     def _workspace_picked(self, path: Path | None) -> None:
         if path is None:
@@ -1936,6 +2067,10 @@ class NewInstanceScreen(BaseScreen):
             webbrowser.open(self.setup_action_url)
             self.set_status("Opened manager-projected external authentication setup")
             return
+        if button_id == "new-github-token":
+            webbrowser.open("https://github.com/settings/tokens")
+            self.set_status("Opened manager-projected GitHub token management")
+            return
         if button_id in {"wizard-create", "wizard-deploy"}:
             if not self.preview_payload or not self.preview_payload.get("plan_fingerprint") or not self.candidate_payload:
                 self.set_status("? Preview is not current; review again before creation")
@@ -1949,6 +2084,10 @@ class NewInstanceScreen(BaseScreen):
                 effective,
                 reviewed_plan_fingerprint=str(self.preview_payload["plan_fingerprint"]),
                 deploy=button_id == "wizard-deploy",
+                configure_github=(
+                    self._select_value(self.query_one("#new-github-mode", Select)) == "managed"
+                    and self._select_value(self.query_one("#new-github-configure-timing", Select)) == "now"
+                ),
             )
 
 
@@ -2163,6 +2302,7 @@ class WorkspaceManagerApp(App[None]):
         *,
         reviewed_plan_fingerprint: str,
         deploy: bool,
+        configure_github: bool = False,
     ) -> None:
         instance_id = str(candidate.get("instance_id", ""))
         if not instance_id or instance_id in self.busy_instances:
@@ -2170,16 +2310,68 @@ class WorkspaceManagerApp(App[None]):
         self.busy_instances.add(instance_id)
         self._screen_busy(instance_id, True)
         self._screen_status("Creating declaration…")
-        self._create_worker(copy.deepcopy(dict(candidate)), reviewed_plan_fingerprint, deploy)
+        self._create_worker(
+            copy.deepcopy(dict(candidate)),
+            reviewed_plan_fingerprint,
+            deploy,
+            configure_github,
+        )
 
     @work(thread=True, exit_on_error=False)
-    def _create_worker(self, candidate: Mapping[str, Any], reviewed_plan_fingerprint: str, deploy: bool) -> None:
+    def _create_worker(
+        self,
+        candidate: Mapping[str, Any],
+        reviewed_plan_fingerprint: str,
+        deploy: bool,
+        configure_github: bool,
+    ) -> None:
         instance_id = str(candidate["instance_id"])
         try:
             self.client.save_declaration("create", candidate)
         except TuiError as exc:
             self.call_from_thread(self._mutation_error, "Create declaration", instance_id, exc)
             return
+        if configure_github:
+            self.call_from_thread(
+                self._configure_created_github,
+                instance_id,
+                reviewed_plan_fingerprint,
+                deploy,
+            )
+            return
+        self._finish_created_deployment(instance_id, reviewed_plan_fingerprint, deploy)
+
+    def _configure_created_github(
+        self,
+        instance_id: str,
+        reviewed_plan_fingerprint: str,
+        deploy: bool,
+    ) -> None:
+        self._screen_status("Declaration registered; entering foreground GitHub access setup…")
+        try:
+            with self.suspend():
+                returncode = self.client.github_access_configure_foreground(instance_id)
+        except Exception as exc:
+            # Credential bytes never enter this exception path; the foreground
+            # client exposes only a sanitized process-level failure.
+            self._screen_status(f"! GitHub access setup did not complete: {exc}")
+            returncode = 1
+        if returncode == 0:
+            self._screen_status("GitHub access setup completed; refreshing authoritative state…")
+        else:
+            self._screen_status("GitHub access setup returned without success; final state will be re-observed")
+        self._post_github_create_worker(instance_id, reviewed_plan_fingerprint, deploy)
+
+    @work(thread=True, exit_on_error=False)
+    def _post_github_create_worker(
+        self,
+        instance_id: str,
+        reviewed_plan_fingerprint: str,
+        deploy: bool,
+    ) -> None:
+        self._finish_created_deployment(instance_id, reviewed_plan_fingerprint, deploy)
+
+    def _finish_created_deployment(self, instance_id: str, reviewed_plan_fingerprint: str, deploy: bool) -> None:
         if not deploy:
             self.call_from_thread(self._create_finished, instance_id, "Declaration created; deployment remains pending")
             return
@@ -2210,6 +2402,29 @@ class WorkspaceManagerApp(App[None]):
             )
             return
         self.call_from_thread(self._create_finished, instance_id, "Declaration created and reviewed plan applied")
+
+    def configure_github_foreground(self, instance_id: str) -> None:
+        if instance_id in self.busy_instances or instance_id in self.uncertain_instances:
+            self._screen_status("! Another mutation or outcome-resolution is active for this instance")
+            return
+        self.busy_instances.add(instance_id)
+        self._screen_busy(instance_id, True)
+        self._screen_status("Suspending TUI for visible GitHub credential entry…")
+        try:
+            with self.suspend():
+                returncode = self.client.github_access_configure_foreground(instance_id)
+        except Exception as exc:
+            self._screen_status(f"✗ GitHub access setup failed to launch: {exc}")
+        else:
+            self._screen_status(
+                "✓ GitHub access setup finished; refreshing authoritative status"
+                if returncode == 0
+                else "! GitHub access setup finished without success; refreshing observed status"
+            )
+        finally:
+            self.busy_instances.discard(instance_id)
+            self._screen_busy(instance_id, False)
+            self.refresh_current()
 
     def _create_finished(self, instance_id: str, message: str) -> None:
         self.busy_instances.discard(instance_id)

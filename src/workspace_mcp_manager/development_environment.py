@@ -36,6 +36,18 @@ REMOTE_ORIGINAL_URL_KEY = "workspaceMcpManager.remoteOriginalUrl"
 HTTPS_HELPER_KEY = "credential.https://github.com.helper"
 CORE_SSH_COMMAND_KEY = "core.sshCommand"
 
+MANAGED_GITHUB_ENV_REMOVE = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GH_HOST",
+    "GH_DEBUG",
+    "GH_FORCE_TTY",
+    "GH_REPO",
+    "GH_PATH",
+)
+
 
 class DevObservationStatus(StrEnum):
     ABSENT = "absent"
@@ -53,6 +65,10 @@ class DevObservation:
 
 def managed_github_profile_path(paths: ManagerPaths, desired: DesiredInstance) -> Path:
     return paths.config_root / "github" / desired.instance_id.value
+
+
+def managed_github_profile_path_for_instance(paths: ManagerPaths, instance_id: str) -> Path:
+    return paths.config_root / "github" / instance_id
 
 
 def managed_agent_runtime_dir(desired: DesiredInstance) -> Path:
@@ -77,6 +93,9 @@ def github_cli_helper_path(paths: ManagerPaths, desired: DesiredInstance) -> Pat
 
 def development_subprocess_env(paths: ManagerPaths, desired: DesiredInstance) -> dict[str, str]:
     env = sanitized_subprocess_env(os.environ)
+    if desired.config_version >= 2 and desired.github.mode is GithubConfigMode.MANAGED:
+        for key in MANAGED_GITHUB_ENV_REMOVE:
+            env.pop(key, None)
     env["HOME"] = str(paths.account_home)
     env["PATH"] = desired.mcp.exec_path
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -87,6 +106,45 @@ def development_subprocess_env(paths: ManagerPaths, desired: DesiredInstance) ->
     socket = effective_ssh_auth_sock(desired)
     if socket:
         env["SSH_AUTH_SOCK"] = socket
+    else:
+        env.pop("SSH_AUTH_SOCK", None)
+    return env
+
+
+def managed_github_subprocess_env(
+    paths: ManagerPaths,
+    desired: DesiredInstance,
+    *,
+    source: dict[str, str] | None = None,
+    include_ssh_auth_sock: bool = False,
+) -> dict[str, str]:
+    """Construct the authoritative token-free environment for managed GitHub CLI."""
+
+    if desired.config_version < 2 or desired.github.mode is not GithubConfigMode.MANAGED:
+        raise ManagerError(ErrorCode.CONFIG_INVALID, "managed GitHub environment requires github.mode=managed")
+    expected = managed_github_profile_path(paths, desired)
+    if desired.github.config_dir != str(expected):
+        raise ManagerError(
+            ErrorCode.CONFIG_INVALID,
+            "managed GitHub profile path is not manager-authoritative",
+            {"instance_id": desired.instance_id.value, "expected": str(expected)},
+        )
+    base = os.environ if source is None else source
+    env = sanitized_subprocess_env(base)
+    for key in MANAGED_GITHUB_ENV_REMOVE:
+        env.pop(key, None)
+    env["HOME"] = str(paths.account_home)
+    env["PATH"] = desired.mcp.exec_path
+    env["GH_CONFIG_DIR"] = str(expected)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GH_PROMPT_DISABLED"] = "1"
+    env["GH_NO_UPDATE_NOTIFIER"] = "1"
+    if include_ssh_auth_sock:
+        socket = effective_ssh_auth_sock(desired)
+        if socket:
+            env["SSH_AUTH_SOCK"] = socket
+        else:
+            env.pop("SSH_AUTH_SOCK", None)
     else:
         env.pop("SSH_AUTH_SOCK", None)
     return env

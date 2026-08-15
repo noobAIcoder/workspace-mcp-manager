@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from .domain import DeploymentTarget, DesiredInstance
+from .development_environment import MANAGED_GITHUB_ENV_REMOVE
+from .domain import DeploymentTarget, DesiredInstance, GithubConfigMode
 from .errors import ErrorCode, ManagerError, config_error
 from .paths import ManagerPaths
 from .redaction import SECRET_ENV_KEYS, redact_text
@@ -109,6 +110,9 @@ class CodexJobManager:
 
     def _execution_env(self, desired: DesiredInstance) -> dict[str, str]:
         env = {key: value for key, value in os.environ.items() if key not in SECRET_ENV_KEYS}
+        if desired.config_version >= 2 and desired.github.mode is GithubConfigMode.MANAGED:
+            for key in MANAGED_GITHUB_ENV_REMOVE:
+                env.pop(key, None)
         env["HOME"] = str(self.paths.account_home)
         env["PATH"] = desired.mcp.exec_path
         env["CODEX_HOME"] = str(self.paths.account_home / ".codex")
