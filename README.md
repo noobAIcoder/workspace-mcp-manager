@@ -235,6 +235,13 @@ workspace-mcp-manager-tui
 workspace-mcp-manager-tui --snapshot [--instance <id>]
 ```
 
+For managed GitHub access, the CLI foreground prompt and Textual GitHub-access
+screen show the recommended fine-grained PAT profile for coding-tools repository
+work: **Only select repositories**, with **Contents RW**, **Issues RW**,
+**Metadata RO (required)**, and **Pull requests RW**. Repository identity is
+shown when the manager can derive it. The token itself is accepted only by the
+foreground terminal helper and never by a TUI field or CLI argument.
+
 `plan` remains explicitly non-mutating. Lifecycle mutations execute through the
 manager's narrow host-worker boundary and never require manual systemd/profile
 editing.

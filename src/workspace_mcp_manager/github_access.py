@@ -42,6 +42,7 @@ from .github_auth_helper import (
     HELPER_TTY_REQUIRED,
     QUALIFIED_LOGIN_ARGS,
 )
+from .github_token_guidance import PROVIDER_TOKEN_URL, fine_grained_pat_guidance
 from .paths import ManagerPaths
 from .registry import InstanceRegistry
 
@@ -61,7 +62,6 @@ MCP_OUTPUT_LIMIT = 8_192
 MCP_PREVIEW_LIMIT = 4_096
 MCP_PROTOCOL_VERSION = "2025-11-25"
 QUALIFIED_MCP_VERSION = "0.2.2"
-PROVIDER_TOKEN_URL = "https://github.com/settings/tokens"
 
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 GH_VERSION_RE = re.compile(r"^gh version ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
@@ -601,6 +601,9 @@ class GithubAccessService:
                 "configure_allowed": configure_allowed,
                 "reconfigure_allowed": configure_allowed,
                 "token_management_url": PROVIDER_TOKEN_URL,
+                "token_guidance": fine_grained_pat_guidance(
+                    str(repository.get("repository")) if isinstance(repository, Mapping) and repository.get("repository") else None
+                ),
             },
         }
 
@@ -1020,6 +1023,7 @@ class GithubAccessService:
                 "status": self.status(instance_id),
             }
         profile = managed_github_profile_path(self.paths, desired)
+        repository = self._repository(desired)
         helper_env = dict(os.environ)
         for key in MANAGED_GITHUB_ENV_REMOVE:
             helper_env.pop(key, None)
@@ -1040,6 +1044,8 @@ class GithubAccessService:
             "--timeout-seconds",
             "120",
         ]
+        if repository and repository.get("repository"):
+            helper_argv.extend(["--repository", str(repository["repository"])])
         try:
             completed = subprocess.run(
                 helper_argv,

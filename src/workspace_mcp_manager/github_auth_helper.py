@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .development_environment import MANAGED_GITHUB_ENV_REMOVE
+from .github_token_guidance import fine_grained_pat_instruction_lines
 
 
 QUALIFIED_LOGIN_ARGS = (
@@ -32,11 +33,16 @@ HELPER_INPUT_TOO_LARGE = 26
 MAX_CREDENTIAL_BYTES = 16 * 1024
 
 
-def _warning(instance_id: str, profile: str) -> str:
+def _warning(instance_id: str, profile: str, repository: str | None) -> str:
+    token_guidance = "\n".join(fine_grained_pat_instruction_lines(repository))
     return f"""GitHub access setup — {instance_id}
 
 Profile:
   {profile}
+
+Recommended coding-tools token configuration:
+
+{token_guidance}
 
 Paste the GitHub access token below.
 
@@ -111,6 +117,7 @@ def run_helper(
     home: str,
     exec_path: str,
     timeout_seconds: float,
+    repository: str | None = None,
 ) -> int:
     if not Path(gh_binary).is_absolute() or not Path(profile).is_absolute() or not Path(home).is_absolute():
         return HELPER_LOGIN_FAILED
@@ -121,7 +128,7 @@ def run_helper(
     try:
         if not os.isatty(tty_fd):
             return HELPER_TTY_REQUIRED
-        os.write(tty_fd, _warning(instance_id, profile).encode("utf-8", errors="strict"))
+        os.write(tty_fd, _warning(instance_id, profile, repository).encode("utf-8", errors="strict"))
         read_status, credential = _read_visible_line(tty_fd)
         if read_status != HELPER_OK or credential is None:
             return read_status
@@ -172,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--home", required=True)
     parser.add_argument("--exec-path", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--repository")
     return parser
 
 
@@ -184,6 +192,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         home=args.home,
         exec_path=args.exec_path,
         timeout_seconds=max(1.0, min(float(args.timeout_seconds), 120.0)),
+        repository=args.repository,
     )
 
 

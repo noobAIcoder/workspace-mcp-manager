@@ -157,6 +157,19 @@ class FakeClient:
                 "configure_allowed": managed,
                 "reconfigure_allowed": managed,
                 "token_management_url": "https://github.com/settings/tokens",
+                "token_guidance": {
+                    "token_type": "fine_grained_personal_access_token",
+                    "resource_owner": "noobAIcoder",
+                    "repository_access": "only_select_repositories",
+                    "repositories": ["noobAIcoder/workspace-mcp-manager"],
+                    "repository_permissions": [
+                        {"name": "Contents", "access": "read_write", "required": False},
+                        {"name": "Issues", "access": "read_write", "required": False},
+                        {"name": "Metadata", "access": "read_only", "required": True},
+                        {"name": "Pull requests", "access": "read_write", "required": False},
+                    ],
+                    "purpose": "recommended_coding_tools_repository_access",
+                },
             },
         }
 
@@ -846,6 +859,10 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
                 any(any(term in widget_id for term in ("credential", "token", "password", "secret")) for widget_id in input_ids)
             )
             self.assertIn("GitHub CLI API access", str(screen.query_one("#new-github-summary").render()))
+            rendered = str(screen.query_one("#new-github-summary").render())
+            self.assertIn("Recommended fine-grained PAT", rendered)
+            self.assertIn("Contents: Read and write", rendered)
+            self.assertIn("Metadata: Read-only (required)", rendered)
 
     async def test_pm3_1_1_instance_renders_github_access_separately_and_rechecks(self) -> None:
         client = FakeClient()
@@ -863,6 +880,8 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("GitHub CLI Access", rendered)
             self.assertIn("Git Transport", rendered)
             self.assertIn("example-user", rendered)
+            self.assertIn("Recommended fine-grained PAT", rendered)
+            self.assertIn("Pull requests: Read and write", rendered)
             self.assertNotIn("github_pat_", rendered)
             app.screen.query_one("#github-access-verify", Button).press()
             for _ in range(5):

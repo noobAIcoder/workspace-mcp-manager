@@ -35,6 +35,10 @@ from textual.widgets import (
 )
 
 from . import __version__
+from .github_token_guidance import (
+    PROVIDER_TOKEN_URL,
+    fine_grained_pat_guidance,
+)
 from .tui import (
     SETTINGS_FIELDS,
     GenerationGate,
@@ -50,6 +54,31 @@ from .tui import (
 
 
 HOST_CLIPBOARD_MAX_BYTES = 256 * 1024
+
+
+def _token_guidance_lines(guidance: Mapping[str, Any]) -> list[str]:
+    if guidance.get("token_type") != "fine_grained_personal_access_token":
+        return []
+    repositories = guidance.get("repositories") if isinstance(guidance.get("repositories"), list) else []
+    repository = str(repositories[0]) if repositories else "the repository used by this MCP instance"
+    owner = guidance.get("resource_owner") or "the repository owner"
+    permissions = guidance.get("repository_permissions") if isinstance(guidance.get("repository_permissions"), list) else []
+    access_labels = {"read_write": "Read and write", "read_only": "Read-only"}
+    lines = [
+        "[b]Recommended fine-grained PAT[/b]",
+        f"Resource owner: {owner}",
+        "Repository access: Only select repositories",
+        f"Repository: {repository}",
+    ]
+    for permission in permissions:
+        if not isinstance(permission, Mapping):
+            continue
+        name = str(permission.get("name") or "")
+        access = access_labels.get(str(permission.get("access") or ""), str(permission.get("access") or "unknown"))
+        required = " (required)" if permission.get("required") else ""
+        if name:
+            lines.append(f"{name}: {access}{required}")
+    return lines
 
 
 def _windows_powershell() -> str | None:
@@ -712,6 +741,8 @@ class InstanceScreen(BaseScreen):
         authentication = github.get("authentication") if isinstance(github.get("authentication"), Mapping) else {}
         verification = github.get("verification") if isinstance(github.get("verification"), Mapping) else {}
         transport = github.get("git_transport") if isinstance(github.get("git_transport"), Mapping) else {}
+        setup = github.get("setup") if isinstance(github.get("setup"), Mapping) else {}
+        token_guidance = setup.get("token_guidance") if isinstance(setup.get("token_guidance"), Mapping) else {}
         lines = [
             "[b]Configuration managed by manager[/b]",
             f"Repository: {projection.get('workspace', '?')}",
@@ -731,14 +762,19 @@ class InstanceScreen(BaseScreen):
             f"Checked: {verification.get('observed_at') or 'never'} / {verification.get('freshness', 'never')}",
             f"Reason: {verification.get('reason_code') or '—'}",
             "",
-            "[b]Git Transport[/b]",
-            f"Protocol: {transport.get('protocol') or projection.get('remote_protocol') or 'not configured'}",
-            f"Status: {transport.get('status', 'unknown')}",
-            "GitHub CLI/API authentication and repository Git transport are independent authorities.",
         ]
+        lines.extend(_token_guidance_lines(token_guidance))
+        lines.extend(
+            [
+                "",
+                "[b]Git Transport[/b]",
+                f"Protocol: {transport.get('protocol') or projection.get('remote_protocol') or 'not configured'}",
+                f"Status: {transport.get('status', 'unknown')}",
+                "GitHub CLI/API authentication and repository Git transport are independent authorities.",
+            ]
+        )
         lines.extend("• " + line for line in _semantic_lines(self.git_payload, max_depth=2)[:30])
         self.query_one("#git-content", Static).update("\n".join(lines))
-        setup = github.get("setup") if isinstance(github.get("setup"), Mapping) else {}
         mode = profile.get("mode")
         configure = self.query_one("#github-access-configure", Button)
         enable = self.query_one("#github-access-enable", Button)
@@ -1533,7 +1569,7 @@ class NewInstanceScreen(BaseScreen):
                         id="new-github-configure-timing",
                     )
                     yield Static("Setup occurs only after declaration registration.", id="new-github-summary", classes="card")
-                    yield Button("Create/manage GitHub token", id="new-github-token")
+                    yield Button("Create/manage fine-grained PAT", id="new-github-token")
                     yield Label("Git Transport")
                     yield Static("Loading repository transport…", id="new-git-transport", classes="card")
                     yield Label("Folder Access")
@@ -1770,6 +1806,8 @@ class NewInstanceScreen(BaseScreen):
             self._populating = True
             self.query_one("#new-github-mode", Select).value = desired_mode
             self._populating = False
+        detected_repository = str(remote.get("repository")) if remote.get("repository") else None
+        guidance = fine_grained_pat_guidance(detected_repository)
         if desired_mode == "managed":
             github_lines = [
                 "Managed per-instance profile",
@@ -1779,6 +1817,7 @@ class NewInstanceScreen(BaseScreen):
             ]
         else:
             github_lines = ["GitHub CLI API access is not enabled for this instance."]
+        github_lines.extend(_token_guidance_lines(guidance))
         self.query_one("#new-github-summary", Static).update("\n".join(github_lines))
         self.query_one("#new-git-transport", Static).update(
             "\n".join(
@@ -2068,8 +2107,8 @@ class NewInstanceScreen(BaseScreen):
             self.set_status("Opened manager-projected external authentication setup")
             return
         if button_id == "new-github-token":
-            webbrowser.open("https://github.com/settings/tokens")
-            self.set_status("Opened manager-projected GitHub token management")
+            webbrowser.open(PROVIDER_TOKEN_URL)
+            self.set_status("Opened GitHub fine-grained PAT management")
             return
         if button_id in {"wizard-create", "wizard-deploy"}:
             if not self.preview_payload or not self.preview_payload.get("plan_fingerprint") or not self.candidate_payload:

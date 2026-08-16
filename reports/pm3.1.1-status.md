@@ -56,6 +56,11 @@ Textual: 8.2.8
 - Credential input intentionally uses normal terminal echo. The helper passes
   the credential only to one qualified `gh auth login` invocation through
   stdin, discards secret-bearing child output, and performs no automatic retry.
+- CLI and Textual onboarding now show the same fine-grained PAT setup guidance
+  for coding-tools repository work: select only the target repository, with
+  Contents RW, Issues RW, Metadata RO (required), and Pull requests RW. Where
+  known, the exact repository owner/name is projected without exposing secret
+  material.
 - Qualified `gh 2.45.0` login is pinned to:
 
   ```text
@@ -118,7 +123,7 @@ refresh afterward.
 Final source suite:
 
 ```text
-Ran 321 tests
+Ran 322 tests
 OK (skipped=29)
 ```
 
@@ -138,6 +143,8 @@ MCP exec_command request/identity-match contract: PASS
 secret-sentinel scan: PASS
 ElectroCAD non-mutating dry run: PASS
 all 27 Textual Pilot tests in isolated Textual 8.2.8 runtime: PASS
+fine-grained PAT CLI/TUI guidance projection and rendering: PASS
+pseudo-TTY fine-grained PAT permission instructions: PASS
 pseudo-TTY visible terminal echo in isolated runtime: PASS
 ```
 
@@ -271,8 +278,18 @@ ready).
    ```
 
    The helper MUST display the visible-input warning. Paste the real GitHub
-   credential only into that terminal prompt. Do not capture or return the
-   credential-bearing terminal transcript.
+   fine-grained PAT only into that terminal prompt. Before the prompt, both the
+   TUI and CLI helper show the recommended repository-scoped permissions:
+
+   ```text
+   Repository access: Only select repositories
+   Contents: Read and write
+   Issues: Read and write
+   Metadata: Read-only (required)
+   Pull requests: Read and write
+   ```
+
+   Do not capture or return the token-bearing terminal transcript.
 
 3. Run fresh verification:
 

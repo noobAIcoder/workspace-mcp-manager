@@ -34,6 +34,7 @@ from workspace_mcp_manager.github_access import (
     SUPPORTED_GH_VERSIONS,
 )
 from workspace_mcp_manager.github_auth_helper import QUALIFIED_LOGIN_ARGS
+from workspace_mcp_manager.github_token_guidance import fine_grained_pat_guidance
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.registry import InstanceRegistry
 from workspace_mcp_manager.setup_projection import PortProjectionService, SetupProjectionService
@@ -221,6 +222,18 @@ class ProjectionAndVerificationTests(unittest.TestCase):
             self.assertEqual(payload["authentication"]["state"], "unknown")
             self.assertEqual(payload["verification"]["freshness"], "never")
             self.assertEqual(payload["git_transport"]["status"], "not_configured")
+            guidance = payload["setup"]["token_guidance"]
+            self.assertEqual(guidance["token_type"], "fine_grained_personal_access_token")
+            self.assertEqual(guidance["repository_access"], "only_select_repositories")
+            self.assertEqual(
+                [(item["name"], item["access"]) for item in guidance["repository_permissions"]],
+                [
+                    ("Contents", "read_write"),
+                    ("Issues", "read_write"),
+                    ("Metadata", "read_only"),
+                    ("Pull requests", "read_write"),
+                ],
+            )
 
     def test_unsupported_version_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -565,6 +578,16 @@ class VisibleCredentialHelperTests(unittest.TestCase):
             except OSError as exc:
                 self.skipTest(f"PTY allocation unavailable: {exc}")
             if child == 0:
+                child_env = dict(os.environ)
+                source_root = str(Path(__file__).resolve().parents[1] / "src")
+                existing_pythonpath = child_env.get("PYTHONPATH")
+                child_env["PYTHONPATH"] = (
+                    source_root + os.pathsep + existing_pythonpath
+                    if existing_pythonpath
+                    else source_root
+                )
+                child_env["GH_TOKEN"] = SENTINEL
+                child_env["GITHUB_TOKEN"] = SENTINEL
                 os.execvpe(
                     sys.executable,
                     [
@@ -583,8 +606,10 @@ class VisibleCredentialHelperTests(unittest.TestCase):
                         f"{root}:/usr/bin:/bin",
                         "--timeout-seconds",
                         "5",
+                        "--repository",
+                        "example/sample",
                     ],
-                    {**os.environ, "GH_TOKEN": SENTINEL, "GITHUB_TOKEN": SENTINEL},
+                    child_env,
                 )
                 raise AssertionError("exec returned")
 
@@ -597,6 +622,13 @@ class VisibleCredentialHelperTests(unittest.TestCase):
                         break
                     transcript.extend(chunk)
                 self.assertIn(b"Input is VISIBLE", transcript)
+                self.assertIn(b"Fine-grained personal access token settings", transcript)
+                self.assertIn(b"Repository access: Only select repositories", transcript)
+                self.assertIn(b"Repository: example/sample", transcript)
+                self.assertIn(b"Contents: Read and write", transcript)
+                self.assertIn(b"Issues: Read and write", transcript)
+                self.assertIn(b"Metadata: Read-only (required)", transcript)
+                self.assertIn(b"Pull requests: Read and write", transcript)
                 os.write(fd, SENTINEL.encode() + b"\n")
                 while time.monotonic() < deadline:
                     chunk = self._read_pty(fd)
@@ -619,6 +651,13 @@ class VisibleCredentialHelperTests(unittest.TestCase):
 
 
 class ContractConstantTests(unittest.TestCase):
+    def test_fine_grained_pat_guidance_is_non_secret_and_pinned(self) -> None:
+        guidance = fine_grained_pat_guidance("noobAIcoder/ElectroCAD")
+        self.assertEqual(guidance["resource_owner"], "noobAIcoder")
+        self.assertEqual(guidance["repositories"], ["noobAIcoder/ElectroCAD"])
+        self.assertEqual(guidance["repository_permissions"][2], {"name": "Metadata", "access": "read_only", "required": True})
+        self.assertNotIn(SENTINEL, json.dumps(guidance))
+
     def test_exact_qualified_vectors_and_version_table(self) -> None:
         self.assertEqual(SUPPORTED_GH_VERSIONS, frozenset({"2.45.0"}))
         self.assertEqual(AUTH_STATUS_ARGS, ("auth", "status", "--hostname", "github.com"))

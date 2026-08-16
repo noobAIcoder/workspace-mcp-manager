@@ -116,6 +116,37 @@ The qualified login argv is exactly:
 
 `--git-protocol` and `gh auth setup-git` MUST NOT be used.
 
+### Recommended fine-grained PAT profile for coding-tools repository work
+
+The manager MUST show non-secret operator guidance in both CLI and Textual
+onboarding for the repository-scoped fine-grained PAT profile already used by
+the coding-tools workflow:
+
+```text
+Resource owner
+  repository owner
+
+Repository access
+  Only select repositories
+  select the repository used by the MCP instance
+
+Repository permissions
+  Contents       Read and write
+  Issues         Read and write
+  Metadata       Read-only (required)
+  Pull requests  Read and write
+```
+
+Where repository identity is known, the manager SHOULD project the exact
+`owner/repository` and derive the resource owner from it. This guidance is a
+recommended coding-tools repository-access profile; it MUST NOT be described
+as the minimum permission set required solely by PM3.1.1's account-identity and
+repository-read verification probes.
+
+The guidance is non-secret observational/setup information. It MUST NOT create,
+inspect, parse, or persist token contents and MUST NOT weaken the credential
+boundary.
+
 For `gh 2.45.0` with this invocation, profile-local credential persistence is
 qualified only when `<GH_CONFIG_DIR>/hosts.yml` exists after a successful
 login and is a non-symlink regular file owned by the current UID with no
@@ -179,6 +210,7 @@ absolute qualified gh binary
 real HOME
 effective PATH
 bounded timeout
+sanitized owner/repository identity when known
 ```
 
 The helper MUST:
