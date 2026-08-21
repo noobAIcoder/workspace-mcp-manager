@@ -23,7 +23,7 @@ launch context
 
 ```text
 template_version              = 2
-discovery_version             = 1
+discovery_version             = 1  # frozen PM3.1 baseline; PM3.1.2 supersedes current discovery to v2
 candidate_request_version     = 1
 candidate_version             = 1
 port_projection_version       = 1

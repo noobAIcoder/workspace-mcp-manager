@@ -134,6 +134,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.since_seconds, 321)
         self.assertTrue(args.pretty)
 
+    def test_p7_1_session_continuity_surface_parses(self) -> None:
+        args = build_parser().parse_args(["instance", "session-continuity", "electrocad", "--pretty"])
+        self.assertEqual((args.area, args.command, args.instance_id), ("instance", "session-continuity", "electrocad"))
+        self.assertTrue(args.pretty)
+
     def test_codex_command_surface_parses_p10_operations(self) -> None:
         parser = build_parser()
         started = parser.parse_args(

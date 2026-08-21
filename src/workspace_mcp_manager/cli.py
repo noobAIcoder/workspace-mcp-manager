@@ -30,6 +30,7 @@ from .redaction import redact_object
 from .registry import InstanceRegistry
 from .runtime import run_admission_guard, run_tunnel
 from .setup_projection import PortProjectionService, SetupProjectionService
+from .session_continuity import SessionContinuityService
 from .tooling import ToolingService
 
 
@@ -152,6 +153,10 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_cmd.add_argument("instance_id")
     diagnose_cmd.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
     diagnose_cmd.add_argument("--pretty", action="store_true")
+
+    session_continuity_cmd = instance_sub.add_parser("session-continuity")
+    session_continuity_cmd.add_argument("instance_id")
+    session_continuity_cmd.add_argument("--pretty", action="store_true")
 
     github_access_cmd = instance_sub.add_parser("github-access")
     github_access_sub = github_access_cmd.add_subparsers(dest="github_access_action", required=True)
@@ -276,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_diagnose = runtime_sub.add_parser("diagnose")
     runtime_diagnose.add_argument("instance_id")
     runtime_diagnose.add_argument("--since-seconds", type=int, default=DEFAULT_SINCE_SECONDS)
+    runtime_session_continuity = runtime_sub.add_parser("session-continuity")
+    runtime_session_continuity.add_argument("instance_id")
     runtime_github_access = runtime_sub.add_parser("github-access")
     runtime_github_access.add_argument("action", choices=("status", "verify"))
     runtime_github_access.add_argument("instance_id")
@@ -411,6 +418,8 @@ def _run_instance(
         return bridge.run_git(args.instance_id)
     if args.command == "diagnose":
         return bridge.run_diagnose(args.instance_id, since_seconds=args.since_seconds)
+    if args.command == "session-continuity":
+        return bridge.run_session_continuity(args.instance_id)
     if args.command == "github-access":
         if args.github_access_action == "configure":
             return GithubAccessService(paths, registry).configure(args.instance_id)
@@ -656,6 +665,8 @@ def _run_runtime(
         return GitDiagnosticService(paths).run(desired)
     if args.command == "diagnose":
         return ResilienceDiagnosticService(paths).run(desired, since_seconds=args.since_seconds)
+    if args.command == "session-continuity":
+        return SessionContinuityService(paths, registry).run(args.instance_id)
     if args.command == "github-access":
         service = GithubAccessService(paths, registry)
         return service.status(args.instance_id) if args.action == "status" else service.verify(args.instance_id)

@@ -1543,6 +1543,12 @@ class HostExecutionBridge:
             unit_fragment=f"github-access-{action}-{instance_id}",
         )
 
+    def run_session_continuity(self, instance_id: str) -> dict[str, Any]:
+        return self._run_json(
+            ["_runtime", "session-continuity", instance_id],
+            unit_fragment=f"session-continuity-{instance_id}",
+        )
+
     def run_tooling(self, runtime_args: Sequence[str], *, unit_fragment: str) -> dict[str, Any]:
         if (
             len(runtime_args) < 2

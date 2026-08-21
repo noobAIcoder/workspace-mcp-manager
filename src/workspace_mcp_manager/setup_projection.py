@@ -24,6 +24,10 @@ from .development_environment import (
     REMOTE_VERSION_KEY,
     managed_github_profile_path_for_instance,
 )
+from .development_toolchain import (
+    project_development_toolchain,
+    recommended_toolchain_values,
+)
 from .domain import DesiredInstance
 from .endpoint_projection import (
     PORT_PROJECTION_VERSION,
@@ -42,7 +46,7 @@ from .redaction import sanitized_subprocess_env
 from .registry import InstanceRegistry
 
 
-DISCOVERY_VERSION = 1
+DISCOVERY_VERSION = 2
 CANDIDATE_REQUEST_VERSION = 1
 CANDIDATE_VERSION = 1
 AUTHENTICATION_STATUS_VERSION = 1
@@ -479,6 +483,12 @@ def discover_workspace(paths: ManagerPaths, registry: InstanceRegistry, raw_path
     identity = canonical_workspace_identity(workspace)
     match_state, matches = _match_workspace(registry, identity)
     local_git, auth = discover_local_git(paths, resolved, repository_root)
+    matched_desired = matches[0] if match_state == "single" and len(matches) == 1 else None
+    development_toolchain = project_development_toolchain(
+        paths,
+        workspace,
+        desired=matched_desired,
+    )
 
     matched_ids = {item.instance_id.value for item in matches}
     identity_owner = local_git.get("identity", {}).get("owner") if isinstance(local_git.get("identity"), Mapping) else None
@@ -494,6 +504,9 @@ def discover_workspace(paths: ManagerPaths, registry: InstanceRegistry, raw_path
     warnings: list[str] = []
     if match_state == "conflict":
         warnings.append("Multiple declarations resolve to the same canonical workspace identity")
+    toolchain_warnings = development_toolchain.get("warnings")
+    if isinstance(toolchain_warnings, list):
+        warnings.extend(str(item) for item in toolchain_warnings)
     evidence = {
         "workspace_identity": identity,
         "repository_root": None if repository_root is None else str(repository_root),
@@ -501,6 +514,7 @@ def discover_workspace(paths: ManagerPaths, registry: InstanceRegistry, raw_path
         "instance_id_suggestion": suggestion,
         "local_git": local_git,
         "authentication_status": auth,
+        "development_toolchain": development_toolchain,
     }
     return {
         "ok": True,
@@ -516,6 +530,7 @@ def discover_workspace(paths: ManagerPaths, registry: InstanceRegistry, raw_path
         "instance_id_suggestion": suggestion,
         "local_git": local_git,
         "authentication_status": auth,
+        "development_toolchain": development_toolchain,
         "warnings": warnings,
         "discovery_fingerprint": _fingerprint(
             {"discovery_version": DISCOVERY_VERSION, **evidence}
@@ -1053,6 +1068,39 @@ class SetupProjectionService:
                         _mark_provenance(provenance, candidate["agent"], "/agent", "manager_derived", "ssh-agent", "external SSH capability required by adopted remote")
                     else:
                         _mark_provenance(provenance, candidate["github"], "/github", "manager_derived", "github-cli", "external GitHub CLI capability required by adopted remote")
+
+            development = (
+                discovery.get("development_toolchain")
+                if isinstance(discovery.get("development_toolchain"), Mapping)
+                else {}
+            )
+            selection = development.get("selection") if isinstance(development.get("selection"), Mapping) else {}
+            node_root = selection.get("node_root")
+            if selection.get("state") == "ready" and isinstance(node_root, str) and node_root:
+                exec_path, external_roots = recommended_toolchain_values(
+                    self.paths,
+                    node_root=node_root,
+                    current_exec_path=str(candidate["mcp"]["exec_path"]),
+                    current_external_roots=tuple(str(item) for item in candidate["mcp"]["external_roots"]),
+                )
+                candidate["mcp"]["exec_path"] = exec_path
+                candidate["mcp"]["external_roots"] = external_roots
+                _mark_provenance(
+                    provenance,
+                    exec_path,
+                    "/mcp/exec_path",
+                    "workspace_discovery",
+                    str(discovery["discovery_fingerprint"]),
+                    "compatible repository Node/pnpm toolchain selected from installed NVM roots",
+                )
+                _mark_provenance(
+                    provenance,
+                    external_roots,
+                    "/mcp/external_roots",
+                    "workspace_discovery",
+                    str(discovery["discovery_fingerprint"]),
+                    "complete selected NVM version root is required by the MCP execution sandbox",
+                )
 
             mcp_recommendation = ports.recommend(purpose="MCP", host=str(candidate["mcp"]["host"]))
             if mcp_recommendation["port"] is not None:

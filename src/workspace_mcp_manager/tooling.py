@@ -186,6 +186,8 @@ class ToolingService:
                     "root": str(root),
                     "node": self._tool(bin_dir / "node", env=node_env),
                     "npm": self._tool(bin_dir / "npm", env=node_env),
+                    "corepack": self._tool(bin_dir / "corepack", env=node_env),
+                    "pnpm": self._tool(bin_dir / "pnpm", env=node_env),
                     "codex": self._tool(bin_dir / "codex", env=node_env),
                 }
             )

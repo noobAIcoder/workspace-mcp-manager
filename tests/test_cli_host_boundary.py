@@ -28,6 +28,24 @@ def paths_for(root: Path) -> ManagerPaths:
 
 
 class CliHostBoundaryTests(unittest.TestCase):
+    def test_p7_1_session_continuity_uses_host_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = paths_for(Path(directory))
+            output = StringIO()
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
+                 redirect_stdout(output):
+                bridge_type.return_value.run_session_continuity.return_value = {
+                    "ok": True,
+                    "session_continuity_projection_version": 1,
+                    "instance_id": "electrocad",
+                    "result": "passed",
+                }
+                rc = main(["instance", "session-continuity", "electrocad"])
+            self.assertEqual(rc, 0)
+            bridge_type.return_value.run_session_continuity.assert_called_once_with("electrocad")
+            self.assertEqual(json.loads(output.getvalue())["result"], "passed")
+
     def test_create_persists_through_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

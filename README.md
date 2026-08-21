@@ -214,6 +214,7 @@ workspace-mcp-manager instance diagnose <id> [--since-seconds N]
 workspace-mcp-manager instance github-access status <id>
 workspace-mcp-manager instance github-access verify <id>
 workspace-mcp-manager instance github-access configure <id>
+workspace-mcp-manager instance session-continuity <id>
 workspace-mcp-manager instance apply <id>
 workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
@@ -259,6 +260,14 @@ manager-authoritative instance setup with PM3/PM2 regression preservation.
 PM3.1.1 implements per-instance managed GitHub access onboarding and remains
 `AWAITING_OPERATOR_VALIDATION` until one real manager-owned profile is configured
 and its sanitized manager/MCP/repository verification results are reviewed.
+PM3.1.2 adds repository-aware Node/pnpm discovery and deterministic NVM
+selection so context-aware setup can project the compatible Node version into
+`mcp.exec_path` and the complete version root into `mcp.external_roots` rather
+than hard-coding a Node-less PATH. P7.1 adds an explicit local MCP
+session-continuity qualifier; direct MCP and the installed tunnel-client local
+dev proxy preserve session state, while the observed ChatGPT connector path
+still starts a fresh MCP session per tool invocation and remains an upstream
+continuity dependency.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

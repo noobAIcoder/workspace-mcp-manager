@@ -237,6 +237,24 @@ class FakeClient:
         template["tunnel"]["health_port"] = None
         return {"ok": True, "defaults": template}
 
+    def discover(self, path: str) -> Mapping[str, Any]:
+        return {
+            "ok": True,
+            "workspace_path": path,
+            "development_toolchain": {
+                "development_toolchain_projection_version": 1,
+                "kind": "node",
+                "requirements": {
+                    "node": {"range": ">=24.18.0 <25"},
+                    "package_manager": {"name": "pnpm", "version": "11.17.0"},
+                },
+                "installed": {"node_roots": [{"node": {"version": "24.18.0"}}]},
+                "selection": {"state": "ready", "reason_code": "READY", "node_version": "24.18.0"},
+                "declaration": {"state": "ready", "reason_code": "READY"},
+                "warnings": [],
+            },
+        }
+
     def candidate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         self.candidate_calls.append(copy.deepcopy(dict(request)))
         workspace = str(request.get("workspace_path") or "/home/operator/repos/new")
@@ -378,6 +396,18 @@ class FakeClient:
                             "setup_action": {"label": "Setup", "url": "https://github.com/settings/tokens"},
                         }
                     ],
+                },
+                "development_toolchain": {
+                    "development_toolchain_projection_version": 1,
+                    "kind": "node",
+                    "requirements": {
+                        "node": {"range": ">=24.18.0 <25"},
+                        "package_manager": {"name": "pnpm", "version": "11.17.0"},
+                    },
+                    "installed": {"node_roots": [{"node": {"version": "24.18.0"}}]},
+                    "selection": {"state": "ready", "reason_code": "READY", "node_version": "24.18.0"},
+                    "declaration": {"state": "unknown"},
+                    "warnings": [],
                 },
             },
         }
@@ -859,6 +889,9 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
                 any(any(term in widget_id for term in ("credential", "token", "password", "secret")) for widget_id in input_ids)
             )
             self.assertIn("GitHub CLI API access", str(screen.query_one("#new-github-summary").render()))
+            toolchain = str(screen.query_one("#new-development-toolchain").render())
+            self.assertIn("Node required: >=24.18.0 <25", toolchain)
+            self.assertIn("Package manager: pnpm 11.17.0", toolchain)
             rendered = str(screen.query_one("#new-github-summary").render())
             self.assertIn("Recommended fine-grained PAT", rendered)
             self.assertIn("Contents: Read and write", rendered)
@@ -877,6 +910,9 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 await pilot.pause()
             rendered = str(app.screen.query_one("#git-content").render())
+            overview = str(app.screen.query_one("#overview-content").render())
+            self.assertIn("Development Toolchain", overview)
+            self.assertIn("Declaration: ready / READY", overview)
             self.assertIn("GitHub CLI Access", rendered)
             self.assertIn("Git Transport", rendered)
             self.assertIn("example-user", rendered)

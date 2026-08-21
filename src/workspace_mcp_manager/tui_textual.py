@@ -56,6 +56,49 @@ from .tui import (
 HOST_CLIPBOARD_MAX_BYTES = 256 * 1024
 
 
+def _development_toolchain_lines(projection: Mapping[str, Any]) -> list[str]:
+    if not projection:
+        return []
+    requirements = projection.get("requirements") if isinstance(projection.get("requirements"), Mapping) else {}
+    node = requirements.get("node") if isinstance(requirements.get("node"), Mapping) else {}
+    package_manager = (
+        requirements.get("package_manager")
+        if isinstance(requirements.get("package_manager"), Mapping)
+        else {}
+    )
+    installed = projection.get("installed") if isinstance(projection.get("installed"), Mapping) else {}
+    roots = installed.get("node_roots") if isinstance(installed.get("node_roots"), list) else []
+    observed_versions = [
+        str(item.get("node", {}).get("version"))
+        for item in roots
+        if isinstance(item, Mapping)
+        and isinstance(item.get("node"), Mapping)
+        and item.get("node", {}).get("version")
+    ]
+    selection = projection.get("selection") if isinstance(projection.get("selection"), Mapping) else {}
+    declaration = projection.get("declaration") if isinstance(projection.get("declaration"), Mapping) else {}
+    lines = [
+        "[b]Development Toolchain[/b]",
+        f"Node required: {node.get('range') or 'not declared'}",
+    ]
+    if package_manager:
+        lines.append(
+            f"Package manager: {package_manager.get('name') or '?'} {package_manager.get('version') or '?'}"
+        )
+    lines.extend(
+        [
+            f"Installed Node: {', '.join(observed_versions) if observed_versions else 'none detected'}",
+            f"Selected Node: {selection.get('node_version') or 'none'}",
+            f"Toolchain status: {selection.get('state', 'unknown')} / {selection.get('reason_code') or '—'}",
+        ]
+    )
+    if declaration:
+        lines.append(
+            f"Declaration: {declaration.get('state', 'unknown')} / {declaration.get('reason_code') or '—'}"
+        )
+    return lines
+
+
 def _token_guidance_lines(guidance: Mapping[str, Any]) -> list[str]:
     if guidance.get("token_type") != "fine_grained_personal_access_token":
         return []
@@ -592,6 +635,7 @@ class InstanceScreen(BaseScreen):
         self.access_payload: Mapping[str, Any] = {}
         self.git_payload: Mapping[str, Any] = {}
         self.github_access_payload: Mapping[str, Any] = {}
+        self.development_payload: Mapping[str, Any] = {}
         self.access_entries: list[dict[str, Any]] = []
         self.pending_access: dict[str, Any] | None = None
 
@@ -661,12 +705,33 @@ class InstanceScreen(BaseScreen):
             git = self.client.git(self.instance_id)
             github_method = getattr(self.client, "github_access_status", None)
             github_access = github_method(self.instance_id) if callable(github_method) else {}
+            development: Mapping[str, Any] = {}
+            discover_method = getattr(self.client, "discover", None)
+            if callable(discover_method):
+                try:
+                    discovery = discover_method(str(summary.get("workspace_path") or ""))
+                    development = (
+                        discovery.get("development_toolchain")
+                        if isinstance(discovery.get("development_toolchain"), Mapping)
+                        else {}
+                    )
+                except TuiError:
+                    development = {}
         except TuiError as exc:
             if not worker.is_cancelled:
                 self.app.call_from_thread(self._apply_error, generation, exc)
             return
         if not worker.is_cancelled:
-            self.app.call_from_thread(self._apply_refresh, generation, summary, show, access, git, github_access)
+            self.app.call_from_thread(
+                self._apply_refresh,
+                generation,
+                summary,
+                show,
+                access,
+                git,
+                github_access,
+                development,
+            )
 
     def _apply_error(self, generation: int, exc: TuiError) -> None:
         if self.gate.accepts("instance", generation):
@@ -680,6 +745,7 @@ class InstanceScreen(BaseScreen):
         access: Mapping[str, Any],
         git: Mapping[str, Any],
         github_access: Mapping[str, Any],
+        development: Mapping[str, Any],
     ) -> None:
         if not self.gate.accepts("instance", generation):
             return
@@ -688,6 +754,7 @@ class InstanceScreen(BaseScreen):
         self.access_payload = access
         self.git_payload = git
         self.github_access_payload = github_access
+        self.development_payload = development
         self.pending_access = None
         self._render_header()
         self._render_overview()
@@ -720,11 +787,17 @@ class InstanceScreen(BaseScreen):
             attention_text = "\n".join(f"! {item}" for item in attention)
         else:
             attention_text = "✓ No operator attention requested by the current projection"
-        self.query_one("#overview-content", Static).update(
-            f"[b]State[/b]\n{attention_text}\n\n"
-            f"Declaration fingerprint: {self.summary_payload.get('declaration_fingerprint', '?')}\n"
-            f"Plan fingerprint: {self.summary_payload.get('plan_fingerprint') or 'unavailable'}"
-        )
+        lines = [
+            "[b]State[/b]",
+            attention_text,
+            "",
+            f"Declaration fingerprint: {self.summary_payload.get('declaration_fingerprint', '?')}",
+            f"Plan fingerprint: {self.summary_payload.get('plan_fingerprint') or 'unavailable'}",
+        ]
+        toolchain_lines = _development_toolchain_lines(self.development_payload)
+        if toolchain_lines:
+            lines.extend(["", *toolchain_lines])
+        self.query_one("#overview-content", Static).update("\n".join(lines))
 
     def _render_access(self) -> None:
         table = self.query_one("#access-table", DataTable)
@@ -1587,6 +1660,7 @@ class NewInstanceScreen(BaseScreen):
                     yield Static("", id="new-mcp-port-state", classes="card")
                     yield Label("Known ports")
                     yield Static("Loading manager port projection…", id="new-runtime-known-ports", classes="card")
+                    yield Static("Loading repository development-toolchain requirements…", id="new-development-toolchain", classes="card")
                 with Vertical(id="wizard-tunnel", classes="wizard-step"):
                     yield Label("Tunnel ID")
                     yield Input(placeholder="tunnel_…", id="new-tunnel-id")
@@ -1810,6 +1884,15 @@ class NewInstanceScreen(BaseScreen):
         )
 
         discovery = payload.get("discovery") if isinstance(payload.get("discovery"), Mapping) else {}
+        development = (
+            discovery.get("development_toolchain")
+            if isinstance(discovery.get("development_toolchain"), Mapping)
+            else {}
+        )
+        development_lines = _development_toolchain_lines(development)
+        self.query_one("#new-development-toolchain", Static).update(
+            "\n".join(development_lines) if development_lines else "No supported repository toolchain requirement detected"
+        )
         local_git = discovery.get("local_git") if isinstance(discovery.get("local_git"), Mapping) else {}
         identity = local_git.get("identity") if isinstance(local_git.get("identity"), Mapping) else {}
         local_identity = identity.get("local") if isinstance(identity.get("local"), Mapping) else {}
