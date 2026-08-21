@@ -621,10 +621,11 @@ class InstanceScreen(BaseScreen):
                     with VerticalScroll():
                         yield Static("", id="git-content")
                     with Horizontal(classes="actions"):
+                        yield Button("Edit Git & GitHub settings", id="github-settings-edit", classes="mutation-action")
                         yield Button("Re-check GitHub access", id="github-access-verify")
                         yield Button("Configure GitHub access", id="github-access-configure", classes="mutation-action")
                         yield Button("Enable managed GitHub access", id="github-access-enable")
-                        yield Button("Create/manage GitHub token", id="github-access-token")
+                        yield Button("Create/manage fine-grained PAT", id="github-access-token")
                 with TabPane("Diagnostics", id="diagnostics"):
                     with VerticalScroll():
                         yield Static("Run diagnostics to collect current manager evidence.", id="diagnostics-content")
@@ -917,6 +918,19 @@ class InstanceScreen(BaseScreen):
             fingerprint = self._expected_fingerprint()
             if desired and fingerprint:
                 self.app.push_screen(SettingsScreen(self.instance_id, desired, fingerprint))
+        elif button_id == "github-settings-edit":
+            desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else None
+            fingerprint = self._expected_fingerprint()
+            if desired and fingerprint:
+                self.app.push_screen(
+                    SettingsScreen(
+                        self.instance_id,
+                        desired,
+                        fingerprint,
+                        group="Git & GitHub",
+                        title="Git & GitHub Settings",
+                    )
+                )
         elif button_id == "raw-declaration":
             desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else {}
             self.app.push_screen(RawJsonScreen(f"{self.instance_id} — Raw declaration", desired))
@@ -928,7 +942,15 @@ class InstanceScreen(BaseScreen):
             desired = self.show_payload.get("desired") if isinstance(self.show_payload.get("desired"), Mapping) else None
             fingerprint = self._expected_fingerprint()
             if desired and fingerprint:
-                self.app.push_screen(SettingsScreen(self.instance_id, desired, fingerprint))
+                self.app.push_screen(
+                    SettingsScreen(
+                        self.instance_id,
+                        desired,
+                        fingerprint,
+                        group="Git & GitHub",
+                        title="Git & GitHub Settings",
+                    )
+                )
                 self.set_status("Select managed GitHub profile mode, then Preview & Save before configuring credentials")
         elif button_id == "github-access-token":
             setup = self.github_access_payload.get("setup") if isinstance(self.github_access_payload.get("setup"), Mapping) else {}
@@ -1092,13 +1114,30 @@ class ReviewChangesScreen(BaseScreen):
 
 
 class SettingsScreen(BaseScreen):
-    def __init__(self, instance_id: str, desired: Mapping[str, Any], fingerprint: str) -> None:
+    def __init__(
+        self,
+        instance_id: str,
+        desired: Mapping[str, Any],
+        fingerprint: str,
+        *,
+        group: str | None = None,
+        title: str | None = None,
+    ) -> None:
         super().__init__()
         self.instance_id = instance_id
         self.original = dict(desired)
         self.draft = project_v1_to_v2(desired) if desired.get("config_version") == 1 else copy.deepcopy(dict(desired))
         self.expected_fingerprint = fingerprint
         self.preview_payload: Mapping[str, Any] | None = None
+        self.group = group
+        self.title_text = title or "Settings"
+
+    def _visible_fields(self) -> tuple[tuple[int, SettingsField], ...]:
+        return tuple(
+            (index, field)
+            for index, field in enumerate(SETTINGS_FIELDS)
+            if self.group is None or field.group == self.group
+        )
 
     @staticmethod
     def _control_id(index: int) -> str:
@@ -1111,10 +1150,10 @@ class SettingsScreen(BaseScreen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(classes="page"):
-            yield Static(f"[b]{self.instance_id} — Settings[/b]", classes="title")
+            yield Static(f"[b]{self.instance_id} — {self.title_text}[/b]", classes="title")
             with VerticalScroll(id="settings-form"):
                 current_group = None
-                for index, field in enumerate(SETTINGS_FIELDS):
+                for index, field in self._visible_fields():
                     if field.group != current_group:
                         current_group = field.group
                         yield Static(f"[b]{current_group}[/b]", classes="section-title")
@@ -1146,7 +1185,7 @@ class SettingsScreen(BaseScreen):
 
     def _values(self) -> dict[tuple[str, ...], Any]:
         values: dict[tuple[str, ...], Any] = {}
-        for index, field in enumerate(SETTINGS_FIELDS):
+        for index, field in self._visible_fields():
             control = self.query_one(f"#{self._control_id(index)}")
             if isinstance(control, Checkbox):
                 value: Any = control.value
@@ -1168,7 +1207,7 @@ class SettingsScreen(BaseScreen):
     def _parsed_values(self) -> dict[tuple[str, ...], Any]:
         raw = self._values()
         result: dict[tuple[str, ...], Any] = {}
-        for field in SETTINGS_FIELDS:
+        for _, field in self._visible_fields():
             result[field.path] = parse_settings_value(field, raw[field.path])
         return result
 
@@ -1185,7 +1224,9 @@ class SettingsScreen(BaseScreen):
             ("git", "remote", "name"),
             ("git", "remote", "protocol"),
         }
-        for field in SETTINGS_FIELDS:
+        visible_fields = tuple(field for _, field in self._visible_fields())
+        visible_paths = {field.path for field in visible_fields}
+        for field in visible_fields:
             if field.path in composite_paths:
                 continue
             value = values[field.path]
@@ -1197,31 +1238,35 @@ class SettingsScreen(BaseScreen):
             else:
                 edits.append({"path": pointer, "operation": "set", "value": value})
 
-        identity_name = values[("git", "identity", "name")]
-        identity_email = values[("git", "identity", "email")]
-        original_identity = get_nested(original, ("git", "identity"))
-        if not identity_name and not identity_email:
-            if original_identity is not None:
-                edits.append({"path": "/git/identity", "operation": "clear"})
-        elif not identity_name or not identity_email:
-            raise ValueError("Git identity requires both name and email")
-        else:
-            identity = {"name": identity_name, "email": identity_email}
-            if identity != original_identity:
-                edits.append({"path": "/git/identity", "operation": "set", "value": identity})
+        identity_paths = {("git", "identity", "name"), ("git", "identity", "email")}
+        if identity_paths <= visible_paths:
+            identity_name = values[("git", "identity", "name")]
+            identity_email = values[("git", "identity", "email")]
+            original_identity = get_nested(original, ("git", "identity"))
+            if not identity_name and not identity_email:
+                if original_identity is not None:
+                    edits.append({"path": "/git/identity", "operation": "clear"})
+            elif not identity_name or not identity_email:
+                raise ValueError("Git identity requires both name and email")
+            else:
+                identity = {"name": identity_name, "email": identity_email}
+                if identity != original_identity:
+                    edits.append({"path": "/git/identity", "operation": "set", "value": identity})
 
-        remote_name = values[("git", "remote", "name")]
-        remote_protocol = values[("git", "remote", "protocol")]
-        original_remote = get_nested(original, ("git", "remote"))
-        if not remote_name and not remote_protocol:
-            if original_remote is not None:
-                edits.append({"path": "/git/remote", "operation": "clear"})
-        elif not remote_name or not remote_protocol:
-            raise ValueError("Git remote requires both name and protocol")
-        else:
-            remote = {"name": remote_name, "protocol": remote_protocol}
-            if remote != original_remote:
-                edits.append({"path": "/git/remote", "operation": "set", "value": remote})
+        remote_paths = {("git", "remote", "name"), ("git", "remote", "protocol")}
+        if remote_paths <= visible_paths:
+            remote_name = values[("git", "remote", "name")]
+            remote_protocol = values[("git", "remote", "protocol")]
+            original_remote = get_nested(original, ("git", "remote"))
+            if not remote_name and not remote_protocol:
+                if original_remote is not None:
+                    edits.append({"path": "/git/remote", "operation": "clear"})
+            elif not remote_name or not remote_protocol:
+                raise ValueError("Git remote requires both name and protocol")
+            else:
+                remote = {"name": remote_name, "protocol": remote_protocol}
+                if remote != original_remote:
+                    edits.append({"path": "/git/remote", "operation": "set", "value": remote})
         return edits
 
     def _candidate_request(self) -> dict[str, Any]:
@@ -1234,13 +1279,14 @@ class SettingsScreen(BaseScreen):
 
     def _sync_applicability(self) -> None:
         modes: dict[tuple[str, ...], str] = {}
-        for index, field in enumerate(SETTINGS_FIELDS):
+        visible_fields = self._visible_fields()
+        for index, field in visible_fields:
             if field.path not in {("github", "mode"), ("agent", "mode")}:
                 continue
             control = self.query_one(f"#{self._control_id(index)}", Select)
             if control.value is not Select.BLANK:
                 modes[field.path] = str(control.value)
-        for index, field in enumerate(SETTINGS_FIELDS):
+        for index, field in visible_fields:
             wrapper = self.query_one(f"#{self._wrap_id(index)}")
             applicable = True
             if field.path in {("github", "config_dir"), ("github", "binary")}:

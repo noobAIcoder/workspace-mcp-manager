@@ -402,8 +402,16 @@ force: if provisioning changes the reviewed reconciliation context, deployment
 MUST stop for re-review rather than bypass PM3 concurrency protection.
 
 Existing-instance Git/GitHub view MUST consume `github_access_status`, provide
-fresh `Re-check`, managed Configure/Reconfigure, disabled Enable-managed via
-ordinary Settings, and no external credential mutation control.
+fresh `Re-check`, managed Configure/Reconfigure, and no external credential
+mutation control.
+
+The Git & GitHub tab MUST provide an explicit **Edit Git & GitHub settings**
+action. That action MUST open a focused reviewed-settings surface containing
+the GitHub profile mode plus repository Git identity/transport and SSH-agent
+policy. For `github.mode=managed`, `github.config_dir` and `github.binary`
+remain manager-derived and MUST NOT become editable frontend fields. Enabling a
+disabled instance MUST use this same focused reviewed-settings surface before
+credential configuration begins.
 
 Textual MUST suspend terminal UI interaction around the foreground helper and
 resume/refresh authoritative status afterward. Credential bytes MUST never

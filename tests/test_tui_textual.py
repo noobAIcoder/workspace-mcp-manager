@@ -883,10 +883,46 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Recommended fine-grained PAT", rendered)
             self.assertIn("Pull requests: Read and write", rendered)
             self.assertNotIn("github_pat_", rendered)
+            self.assertEqual(app.screen.query_one("#github-settings-edit", Button).label, "Edit Git & GitHub settings")
             app.screen.query_one("#github-access-verify", Button).press()
             for _ in range(5):
                 await pilot.pause()
             self.assertEqual(client.github_verify_calls, 1)
+
+    async def test_pm3_1_1_github_tab_opens_focused_git_github_settings(self) -> None:
+        client = FakeClient()
+        client.desired["github"] = {
+            "mode": "managed",
+            "config_dir": "/home/operator/.config/workspace-mcp-manager/github/manager-qual",
+            "binary": "/usr/bin/gh",
+        }
+        app = build_app(client, initial_load=False)
+        async with app.run_test(size=(100, 34)) as pilot:
+            app.push_screen(InstanceScreen("manager-qual"))
+            for _ in range(5):
+                await pilot.pause()
+            app.screen.query_one("#github-settings-edit", Button).press()
+            for _ in range(3):
+                await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsScreen)
+            self.assertEqual(app.screen.group, "Git & GitHub")
+            self.assertEqual(app.screen.title_text, "Git & GitHub Settings")
+            self.assertIsInstance(app.screen.query_one("#setting-6"), Select)
+            self.assertEqual(str(app.screen.query_one("#setting-6", Select).value), "managed")
+            self.assertEqual(len(app.screen.query("#setting-1")), 0)
+            # Managed profile path and gh binary remain manager-derived, not editable.
+            self.assertEqual(app.screen.query_one("#setting-wrap-7").styles.display, "none")
+            self.assertEqual(app.screen.query_one("#setting-wrap-8").styles.display, "none")
+            app.screen.query_one("#setting-6", Select).value = "disabled"
+            app.screen.query_one("#save", Button).press()
+            for _ in range(5):
+                await pilot.pause()
+            self.assertTrue(client.candidate_calls)
+            edits = client.candidate_calls[-1].get("field_edits", [])
+            self.assertIn(
+                {"path": "/github/mode", "operation": "set", "value": "disabled"},
+                edits,
+            )
 
     async def test_pm3_1_1_foreground_configure_uses_suspend_boundary(self) -> None:
         client = FakeClient()

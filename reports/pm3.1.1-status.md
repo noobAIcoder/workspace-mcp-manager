@@ -123,8 +123,8 @@ refresh afterward.
 Final source suite:
 
 ```text
-Ran 322 tests
-OK (skipped=29)
+Ran 323 tests
+OK (skipped=30)
 ```
 
 The skips are environment-dependent tests, primarily Textual/PTY cases that are
@@ -142,8 +142,10 @@ verification-record atomicity/context invalidation: PASS
 MCP exec_command request/identity-match contract: PASS
 secret-sentinel scan: PASS
 ElectroCAD non-mutating dry run: PASS
-all 27 Textual Pilot tests in isolated Textual 8.2.8 runtime: PASS
+all 28 Textual Pilot tests in isolated Textual 8.2.8 runtime: PASS
 fine-grained PAT CLI/TUI guidance projection and rendering: PASS
+explicit Git & GitHub settings action and focused reviewed edit surface: PASS
+focused github.mode edit -> manager candidate request: PASS
 pseudo-TTY fine-grained PAT permission instructions: PASS
 pseudo-TTY visible terminal echo in isolated runtime: PASS
 ```
