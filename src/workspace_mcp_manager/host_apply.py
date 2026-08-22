@@ -1543,11 +1543,15 @@ class HostExecutionBridge:
             unit_fragment=f"github-access-{action}-{instance_id}",
         )
 
-    def run_session_continuity(self, instance_id: str) -> dict[str, Any]:
+    def run_client_compatibility(self, instance_id: str) -> dict[str, Any]:
         return self._run_json(
-            ["_runtime", "session-continuity", instance_id],
-            unit_fragment=f"session-continuity-{instance_id}",
+            ["_runtime", "client-compatibility", instance_id],
+            unit_fragment=f"client-compatibility-{instance_id}",
         )
+
+    def run_session_continuity(self, instance_id: str) -> dict[str, Any]:
+        """Backward-compatible alias for the pre-P7.1-revision command."""
+        return self.run_client_compatibility(instance_id)
 
     def run_tooling(self, runtime_args: Sequence[str], *, unit_fragment: str) -> dict[str, Any]:
         if (

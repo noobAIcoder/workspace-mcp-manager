@@ -134,7 +134,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.since_seconds, 321)
         self.assertTrue(args.pretty)
 
-    def test_p7_1_session_continuity_surface_parses(self) -> None:
+    def test_p7_1_client_compatibility_surface_parses_and_keeps_legacy_alias(self) -> None:
+        primary = build_parser().parse_args(["instance", "client-compatibility", "electrocad", "--pretty"])
+        self.assertEqual(
+            (primary.area, primary.command, primary.instance_id),
+            ("instance", "client-compatibility", "electrocad"),
+        )
+        self.assertTrue(primary.pretty)
+
         args = build_parser().parse_args(["instance", "session-continuity", "electrocad", "--pretty"])
         self.assertEqual((args.area, args.command, args.instance_id), ("instance", "session-continuity", "electrocad"))
         self.assertTrue(args.pretty)

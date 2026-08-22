@@ -95,7 +95,7 @@ git -C "$UNREGISTERED" remote add origin git@github.com:noobAIcoder/pm3-1-qualif
 
 DISCOVERY=$("$MANAGER" instance discover "$NESTED")
 printf '%s\n' "$DISCOVERY" | json_assert \
-  'd["discovery_version"] == 1 and d["repository_detected"] is True and d["repository_root"] == d["workspace_path"] and d["instance_match"]["status"] == "none" and len(d["discovery_fingerprint"]) == 64'
+  'd["discovery_version"] in {1,2} and (d["discovery_version"] == 1 or d.get("development_toolchain",{}).get("development_toolchain_projection_version") == 1) and d["repository_detected"] is True and d["repository_root"] == d["workspace_path"] and d["instance_match"]["status"] == "none" and len(d["discovery_fingerprint"]) == 64'
 DISCOVERED_ROOT=$(printf '%s\n' "$DISCOVERY" | json_field workspace_path)
 [[ "$DISCOVERED_ROOT" == "$(realpath "$UNREGISTERED")" ]] || fail "nested discovery did not resolve repository root"
 printf '%s\n' "$DISCOVERY" | json_assert \

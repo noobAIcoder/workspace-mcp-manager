@@ -10,6 +10,7 @@ from workspace_mcp_manager.domain import DesiredInstance
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.registry import InstanceRegistry
 from workspace_mcp_manager.session_continuity import (
+    CLIENT_COMPATIBILITY_PROJECTION_VERSION,
     SESSION_CONTINUITY_PROJECTION_VERSION,
     SessionContinuityService,
 )
@@ -52,27 +53,32 @@ class SessionContinuityTests(unittest.TestCase):
             registry.create(desired(root))
             service = SessionContinuityService(paths, registry)
             raw_session = "session-secret-shaped-control-id"
+            fresh_session = "fresh-session-secret-shaped-control-id"
+            initialize_count = 0
 
             def request(_url, payload, *, session_id=None, method="POST"):
+                nonlocal initialize_count
                 if method == "DELETE":
-                    self.assertEqual(session_id, raw_session)
+                    self.assertIn(session_id, {raw_session, fresh_session})
                     return {}, None, 204
                 if payload and payload.get("method") == "initialize":
+                    initialize_count += 1
                     return {
                         "result": {
                             "protocolVersion": "2025-11-25",
                             "serverInfo": {"name": "coding-tools-mcp", "version": "0.2.2"},
                         }
-                    }, raw_session, 200
+                    }, raw_session if initialize_count == 1 else fresh_session, 200
                 return {}, None, 202
 
             def tool(_url, session_id, _request_id, name, arguments):
-                self.assertEqual(session_id, raw_session)
                 if name == "set_default_cwd":
+                    self.assertEqual(session_id, raw_session)
                     return {"ok": True, "default_cwd": "docs"}
                 if name == "get_default_cwd":
-                    return {"ok": True, "default_cwd": "docs"}
+                    return {"ok": True, "default_cwd": "docs" if session_id == raw_session else "."}
                 if name == "exec_command":
+                    self.assertEqual(session_id, raw_session)
                     return {
                         "ok": True,
                         "status": "running",
@@ -80,23 +86,46 @@ class SessionContinuityTests(unittest.TestCase):
                         "output_ref": "session:process-session:stdout",
                     }
                 if name == "write_stdin":
+                    self.assertEqual(session_id, raw_session)
                     return {"ok": True, "status": "running"}
                 if name == "read_output":
+                    self.assertEqual(session_id, raw_session)
                     return {"ok": True, "content": "p71-session-continuity\n"}
                 if name == "kill_session":
+                    self.assertEqual(session_id, raw_session)
                     return {"ok": True, "status": "terminated"}
                 raise AssertionError((name, arguments))
 
+            def tool_result(_url, session_id, _request_id, name, _arguments):
+                self.assertEqual(session_id, fresh_session)
+                self.assertIn(name, {"write_stdin", "read_output", "kill_session"})
+                return {
+                    "ok": False,
+                    "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"},
+                }, False
+
             with mock.patch.object(service, "_request", side_effect=request), \
-                 mock.patch.object(service, "_tool", side_effect=tool):
+                 mock.patch.object(service, "_tool", side_effect=tool), \
+                 mock.patch.object(service, "_tool_result", side_effect=tool_result):
                 payload = service.run("sample")
             self.assertTrue(payload["ok"])
+            self.assertTrue(payload["atomic_coding_ready"])
+            self.assertEqual(
+                payload["client_compatibility_projection_version"],
+                CLIENT_COMPATIBILITY_PROJECTION_VERSION,
+            )
             self.assertEqual(payload["session_continuity_projection_version"], SESSION_CONTINUITY_PROJECTION_VERSION)
             self.assertEqual(payload["default_cwd"], "passed")
             self.assertEqual(payload["command_session"], "passed")
             self.assertEqual(payload["cleanup"], "passed")
+            self.assertEqual(payload["result"], "passed_with_limitations")
+            self.assertEqual(payload["protocol_session_persistence"], "not_required_for_atomic_operations")
+            self.assertEqual(payload["cross_session_state"]["default_cwd"], "session_scoped_optional")
+            self.assertEqual(payload["cross_session_state"]["command_handles"], "session_scoped")
+            self.assertFalse(payload["recommended_usage"]["cross_call_command_interaction"])
             self.assertEqual(len(payload["session_fingerprint"]), 12)
             self.assertNotIn(raw_session, json.dumps(payload, sort_keys=True))
+            self.assertNotIn(fresh_session, json.dumps(payload, sort_keys=True))
 
     def test_missing_test_subdirectory_is_unavailable_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

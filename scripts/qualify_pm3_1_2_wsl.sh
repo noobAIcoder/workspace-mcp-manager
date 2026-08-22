@@ -48,12 +48,12 @@ python3 - "$INSTANCE_ID" <<'PY'
 import json, sys
 from workspace_mcp_manager.paths import ManagerPaths
 from workspace_mcp_manager.registry import InstanceRegistry
-from workspace_mcp_manager.session_continuity import SessionContinuityService
+from workspace_mcp_manager.session_continuity import ClientCompatibilityService
 
 paths=ManagerPaths.for_current_user()
 registry=InstanceRegistry(paths.registry_dir)
 desired=registry.get(sys.argv[1])
-service=SessionContinuityService(paths, registry)
+service=ClientCompatibilityService(paths, registry)
 url=service._url(desired)
 init,sid,_=service._request(url,{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"pm3.1.2-toolchain","version":"1"}}})
 assert sid

@@ -1,6 +1,6 @@
 # PM3.1.2 — Repository-Aware Development Toolchain Status
 
-Status: **IMPLEMENTATION QUALIFIED — ELECTROCAD TOOLCHAIN REPAIRED; REPOSITORY LOCKFILE BLOCKS FULL REPOSITORY QUALIFICATION**
+Status: **IMPLEMENTATION QUALIFIED — ELECTROCAD TOOLCHAIN AND FROZEN LOCKFILE READY**
 
 ## Original defect
 
@@ -78,24 +78,21 @@ npm       11.16.0
 
 This closes the original Node/pnpm-unavailable MCP finding.
 
-## New independent repository blocker
+## Repository reproducibility repair
 
-The required ElectroCAD command `pnpm check` now reaches pnpm correctly. The
-first non-TTY invocation identified pnpm's expected noninteractive purge guard;
-with `CI=true`, that guard is satisfied and the next repository-owned gate is
-exposed:
+The initial post-toolchain `pnpm check` exposed repository-owned dependency
+drift rather than another MCP defect. The ElectroCAD maintenance repair
+(`cc155f4`) corrected the invalid `@eslint/js` manifest pin, regenerated the
+pnpm 11.17.0 workspace lockfile, and removed one false-positive `TBD` sentinel
+collision in `SLICES_MAP.md` without weakening the validator.
 
-```text
-ERR_PNPM_OUTDATED_LOCKFILE
-```
+The frozen lockfile boundary now passes. Independent isolated qualification
+also proved `specs:validate`, layout/import/phase/generated checks, and
+`pnpm build`.
 
-ElectroCAD's current `package.json` and `pnpm-lock.yaml` disagree. pnpm reports
-eight dependencies present in the manifest but absent from the lockfile plus an
-`@eslint/js` version mismatch.
-
-PM3.1.2 qualification deliberately does **not** use `--no-frozen-lockfile`,
-because doing so would mask a repository reproducibility failure. Updating the
-ElectroCAD lockfile is a separate repository change outside this manager fix.
+The repository-wide `pnpm check` still reaches a separate pre-existing Prettier
+normalization backlog. That formatting debt is not an MCP-manager readiness
+failure and is intentionally not folded into this infrastructure repair.
 
 Therefore:
 
@@ -104,8 +101,10 @@ manager toolchain discovery              PASS
 compatible Node selection                PASS
 manager declaration reconciliation       PASS
 deployed MCP Node/pnpm/corepack           PASS
-ElectroCAD frozen lockfile                BLOCKED_OUTDATED_LOCKFILE
-ElectroCAD pnpm check/build acceptance    BLOCKED_REPOSITORY_STATE
+ElectroCAD frozen lockfile                PASS
+ElectroCAD structural/spec gates          PASS
+ElectroCAD pnpm build                      PASS
+ElectroCAD full pnpm check                 BLOCKED_PREEXISTING_FORMATTING_DEBT
 ```
 
 ## Qualification
@@ -134,10 +133,11 @@ PM3_OPERATOR_UX_QUALIFICATION=PASS
 PM2_TUI_QUALIFICATION=PASS
 ```
 
-PM3.1's own qualifier remains a frozen `discovery_version=1` milestone
-regression. Current `discovery_version=2` authority is qualified by PM3.1.2;
-this avoids requiring an older installed PM3.1 parent manager to implement a
-newer public contract merely to prove backward regression.
+PM3.1's normative milestone baseline remains `discovery_version=1`. Its
+regression qualifier also accepts the additive PM3.1.2 `discovery_version=2`
+projection when the installed parent manager has advanced, while still
+enforcing every PM3.1 baseline semantic and requiring the versioned
+development-toolchain projection for v2.
 
 Expected manager markers include:
 
@@ -151,8 +151,7 @@ PM3_1_2_ELECTROCAD_DISCOVERY=PASS
 PM3_1_2_ELECTROCAD_DECLARATION_TOOLCHAIN=PASS
 PM3_1_2_ELECTROCAD_MCP_NODE=PASS
 PM3_1_2_ELECTROCAD_MCP_PNPM=PASS
+PM3_1_2_ELECTROCAD_LOCKFILE=PASS
+PM3_1_2_ELECTROCAD_REPOSITORY_QUALIFICATION=READY
 PM3_1_2_IMPLEMENTATION_QUALIFICATION=PASS
 ```
-
-Until ElectroCAD's repository-owned lockfile is repaired, its repository-level
-acceptance remains blocked independently of MCP-manager readiness.

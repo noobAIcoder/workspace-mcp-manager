@@ -28,23 +28,33 @@ def paths_for(root: Path) -> ManagerPaths:
 
 
 class CliHostBoundaryTests(unittest.TestCase):
-    def test_p7_1_session_continuity_uses_host_bridge(self) -> None:
+    def test_p7_1_client_compatibility_and_legacy_alias_use_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = paths_for(Path(directory))
             output = StringIO()
             with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
                  patch("workspace_mcp_manager.cli.HostExecutionBridge") as bridge_type, \
                  redirect_stdout(output):
-                bridge_type.return_value.run_session_continuity.return_value = {
+                bridge_type.return_value.run_client_compatibility.return_value = {
                     "ok": True,
-                    "session_continuity_projection_version": 1,
+                    "client_compatibility_projection_version": 1,
+                    "session_continuity_projection_version": 2,
                     "instance_id": "electrocad",
-                    "result": "passed",
+                    "result": "passed_with_limitations",
                 }
+                rc = main(["instance", "client-compatibility", "electrocad"])
+            self.assertEqual(rc, 0)
+            bridge_type.return_value.run_client_compatibility.assert_called_once_with("electrocad")
+            self.assertEqual(json.loads(output.getvalue())["result"], "passed_with_limitations")
+
+            output = StringIO()
+            bridge_type.reset_mock()
+            with patch("workspace_mcp_manager.cli.ManagerPaths.for_current_user", return_value=paths), \
+                 patch("workspace_mcp_manager.cli.HostExecutionBridge", return_value=bridge_type.return_value), \
+                 redirect_stdout(output):
                 rc = main(["instance", "session-continuity", "electrocad"])
             self.assertEqual(rc, 0)
-            bridge_type.return_value.run_session_continuity.assert_called_once_with("electrocad")
-            self.assertEqual(json.loads(output.getvalue())["result"], "passed")
+            bridge_type.return_value.run_client_compatibility.assert_called_once_with("electrocad")
 
     def test_create_persists_through_host_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -12,14 +12,20 @@ from .paths import ManagerPaths
 from .registry import InstanceRegistry
 
 
-SESSION_CONTINUITY_PROJECTION_VERSION = 1
+CLIENT_COMPATIBILITY_PROJECTION_VERSION = 1
+SESSION_CONTINUITY_PROJECTION_VERSION = 2
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_RESPONSE_LIMIT = 64 * 1024
 MCP_TIMEOUT_SECONDS = 10.0
 
 
-class SessionContinuityService:
-    """Qualify session-scoped coding-tools behavior through the local MCP endpoint."""
+class ClientCompatibilityService:
+    """Qualify coding-tools behavior for clients that may use a fresh MCP session per call.
+
+    Protocol-session persistence is not an ordinary coding-readiness requirement.
+    The important distinction is whether explicit server-minted command/output
+    handles remain usable from a different MCP session.
+    """
 
     def __init__(self, paths: ManagerPaths, registry: InstanceRegistry) -> None:
         self.paths = paths
@@ -89,14 +95,14 @@ class SessionContinuityService:
             return decoded, response.headers.get("Mcp-Session-Id"), int(response.status)
 
     @classmethod
-    def _tool(
+    def _tool_result(
         cls,
         url: str,
         session_id: str,
         request_id: int,
         name: str,
         arguments: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
+    ) -> tuple[Mapping[str, Any], bool]:
         response, _, _ = cls._request(
             url,
             {
@@ -108,14 +114,40 @@ class SessionContinuityService:
             session_id=session_id,
         )
         result = response.get("result")
-        if not isinstance(result, Mapping) or result.get("isError") is True:
-            raise ValueError(f"MCP tool failed: {name}")
+        if not isinstance(result, Mapping):
+            raise ValueError(f"MCP tool returned no result: {name}")
         structured = result.get("structuredContent")
         if not isinstance(structured, Mapping):
             raise ValueError(f"MCP tool returned no structuredContent: {name}")
-        if structured.get("ok") is False:
+        ok = result.get("isError") is not True and structured.get("ok") is not False
+        return structured, ok
+
+    @classmethod
+    def _tool(
+        cls,
+        url: str,
+        session_id: str,
+        request_id: int,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        structured, ok = cls._tool_result(url, session_id, request_id, name, arguments)
+        if not ok:
             raise ValueError(f"MCP tool returned structured failure: {name}")
         return structured
+
+    @staticmethod
+    def _handle_scope(structured: Mapping[str, Any], ok: bool) -> str:
+        if ok:
+            return "cross_session"
+        error = structured.get("error") if isinstance(structured.get("error"), Mapping) else {}
+        code = str(error.get("code") or "")
+        if code in {"SESSION_NOT_FOUND", "SESSION_CLOSED"}:
+            return "session_scoped"
+        serialized = json.dumps(structured, sort_keys=True)
+        if "SESSION_NOT_FOUND" in serialized or "Session not found" in serialized:
+            return "session_scoped"
+        return "unavailable"
 
     def run(
         self,
@@ -127,10 +159,26 @@ class SessionContinuityService:
         desired = self.registry.get(instance_id)
         base: dict[str, Any] = {
             "ok": False,
+            "client_compatibility_projection_version": CLIENT_COMPATIBILITY_PROJECTION_VERSION,
             "session_continuity_projection_version": SESSION_CONTINUITY_PROJECTION_VERSION,
             "instance_id": instance_id,
             "scope": scope,
             "server": {"version": None, "protocol": None},
+            "atomic_coding_ready": False,
+            "protocol_session_persistence": "not_required_for_atomic_operations",
+            "session_local_state": {
+                "mcp_session": "unknown",
+                "default_cwd": "unknown",
+                "command_session": "unknown",
+            },
+            "cross_session_state": {
+                "default_cwd": "not_required",
+                "write_stdin": "unknown",
+                "read_output": "unknown",
+                "kill_session": "unknown",
+                "command_handles": "unknown",
+            },
+            # Backward-compatible summary fields retained for existing callers.
             "mcp_session": "unknown",
             "default_cwd": "unknown",
             "command_session": "unknown",
@@ -138,9 +186,15 @@ class SessionContinuityService:
             "session_fingerprint": None,
             "result": "unavailable",
             "reason_code": None,
+            "limitations": [],
+            "recommended_usage": {
+                "explicit_cwd_or_workdir": True,
+                "bounded_exec_command": True,
+                "cross_call_command_interaction": False,
+            },
             "tunnel_backed": {
-                "state": "external_validation_required",
-                "reason": "ChatGPT connector/tunnel continuity cannot be inferred from local MCP continuity",
+                "state": "not_required_for_atomic_readiness",
+                "reason": "protocol-session persistence is not required for ordinary atomic coding operations",
             },
         }
         if desired.lifecycle.deployment is DeploymentTarget.ABSENT:
@@ -153,6 +207,7 @@ class SessionContinuityService:
 
         url = endpoint_url or self._url(desired)
         session_id: str | None = None
+        fresh_session_id: str | None = None
         process_session: str | None = None
         cleanup = "unknown"
         try:
@@ -175,6 +230,7 @@ class SessionContinuityService:
             session_id = response_session
             base["session_fingerprint"] = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
             base["mcp_session"] = "passed"
+            base["session_local_state"]["mcp_session"] = "passed"
             server_info = result.get("serverInfo") if isinstance(result.get("serverInfo"), Mapping) else {}
             base["server"] = {
                 "version": server_info.get("version"),
@@ -191,6 +247,7 @@ class SessionContinuityService:
             if set_cwd.get("default_cwd") != test_cwd or get_cwd.get("default_cwd") != test_cwd:
                 raise ValueError("default_cwd did not persist within one MCP session")
             base["default_cwd"] = "passed"
+            base["session_local_state"]["default_cwd"] = "passed"
 
             started = self._tool(
                 url,
@@ -233,22 +290,109 @@ class SessionContinuityService:
             serialized = json.dumps(output, sort_keys=True)
             if marker not in serialized:
                 raise ValueError("read_output did not observe write_stdin marker")
-            self._tool(
-                url,
-                session_id,
-                7,
-                "kill_session",
-                {"session_id": process_session, "signal": "TERM", "wait_ms": 2000},
-            )
-            process_session = None
             base["command_session"] = "passed"
+            base["session_local_state"]["command_session"] = "passed"
+
+            # A fresh MCP protocol session models clients that do not retain
+            # protocol-session affinity between tool invocations. Explicit
+            # command/output handles are the relevant cross-call capability.
+            fresh_initialized, fresh_response_session, _ = self._request(
+                url,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "workspace-mcp-manager-stateless-compatibility", "version": "1"},
+                    },
+                },
+            )
+            fresh_result = fresh_initialized.get("result")
+            if isinstance(fresh_result, Mapping) and fresh_response_session:
+                fresh_session_id = fresh_response_session
+                self._request(
+                    url,
+                    {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                    session_id=fresh_session_id,
+                )
+                fresh_cwd = self._tool(url, fresh_session_id, 9, "get_default_cwd", {})
+                base["cross_session_state"]["default_cwd"] = (
+                    "cross_session" if fresh_cwd.get("default_cwd") == test_cwd else "session_scoped_optional"
+                )
+
+                write_result, write_ok = self._tool_result(
+                    url,
+                    fresh_session_id,
+                    10,
+                    "write_stdin",
+                    {"session_id": process_session, "chars": "p71-cross-session\n", "yield_time_ms": 100},
+                )
+                read_result, read_ok = self._tool_result(
+                    url,
+                    fresh_session_id,
+                    11,
+                    "read_output",
+                    {"output_ref": output_ref, "stream": "stdout", "offset": 0, "limit": 4096},
+                )
+                kill_result, kill_ok = self._tool_result(
+                    url,
+                    fresh_session_id,
+                    12,
+                    "kill_session",
+                    {"session_id": process_session, "signal": "TERM", "wait_ms": 2000},
+                )
+                write_scope = self._handle_scope(write_result, write_ok)
+                read_scope = self._handle_scope(read_result, read_ok)
+                kill_scope = self._handle_scope(kill_result, kill_ok)
+                base["cross_session_state"].update(
+                    {
+                        "write_stdin": write_scope,
+                        "read_output": read_scope,
+                        "kill_session": kill_scope,
+                    }
+                )
+                scopes = {write_scope, read_scope, kill_scope}
+                if scopes == {"cross_session"}:
+                    handle_scope = "cross_session"
+                    process_session = None
+                    base["recommended_usage"]["cross_call_command_interaction"] = True
+                elif scopes == {"session_scoped"}:
+                    handle_scope = "session_scoped"
+                else:
+                    handle_scope = "partial_or_unavailable"
+                base["cross_session_state"]["command_handles"] = handle_scope
+                if handle_scope != "cross_session":
+                    base["limitations"].append(
+                        "persistent command/output handles are not fully usable from a fresh MCP protocol session"
+                    )
+            else:
+                base["limitations"].append("fresh MCP session compatibility could not be probed")
+
+            if process_session:
+                self._tool(
+                    url,
+                    session_id,
+                    13,
+                    "kill_session",
+                    {"session_id": process_session, "signal": "TERM", "wait_ms": 2000},
+                )
+                process_session = None
+
+            base["atomic_coding_ready"] = True
             base["ok"] = True
-            base["result"] = "passed"
+            base["result"] = "passed" if not base["limitations"] else "passed_with_limitations"
             base["reason_code"] = None
         except (OSError, TimeoutError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exc:
             base["result"] = "failed"
             base["reason_code"] = type(exc).__name__.upper()
         finally:
+            if fresh_session_id:
+                try:
+                    self._request(url, None, session_id=fresh_session_id, method="DELETE")
+                except Exception:
+                    pass
             if session_id:
                 if process_session:
                     try:
@@ -276,4 +420,12 @@ class SessionContinuityService:
         return base
 
 
-__all__ = ["SESSION_CONTINUITY_PROJECTION_VERSION", "SessionContinuityService"]
+SessionContinuityService = ClientCompatibilityService
+
+
+__all__ = [
+    "CLIENT_COMPATIBILITY_PROJECTION_VERSION",
+    "SESSION_CONTINUITY_PROJECTION_VERSION",
+    "ClientCompatibilityService",
+    "SessionContinuityService",
+]

@@ -33,6 +33,13 @@ authentication_status_version = 1
 Existing PM3 projection and plan-fingerprint versions remain unchanged unless
 their public schemas/fingerprint inputs change.
 
+PM3.1 regression qualification MAY run against a newer manager that returns the
+PM3.1.2 additive `discovery_version=2` projection. In that case the qualifier
+MUST still enforce every PM3.1 baseline field/semantic and MUST additionally
+require the versioned PM3.1.2 development-toolchain projection. This does not
+rewrite the historical PM3.1 contract version; it allows semantic regression
+qualification after the installed manager has advanced.
+
 ## Authority boundary
 
 The manager MUST own workspace canonicalization, instance matching/suggestion,

@@ -214,7 +214,8 @@ workspace-mcp-manager instance diagnose <id> [--since-seconds N]
 workspace-mcp-manager instance github-access status <id>
 workspace-mcp-manager instance github-access verify <id>
 workspace-mcp-manager instance github-access configure <id>
-workspace-mcp-manager instance session-continuity <id>
+workspace-mcp-manager instance client-compatibility <id>
+workspace-mcp-manager instance session-continuity <id>  # legacy alias
 workspace-mcp-manager instance apply <id>
 workspace-mcp-manager instance start <id>
 workspace-mcp-manager instance stop <id>
@@ -263,11 +264,13 @@ and its sanitized manager/MCP/repository verification results are reviewed.
 PM3.1.2 adds repository-aware Node/pnpm discovery and deterministic NVM
 selection so context-aware setup can project the compatible Node version into
 `mcp.exec_path` and the complete version root into `mcp.external_roots` rather
-than hard-coding a Node-less PATH. P7.1 adds an explicit local MCP
-session-continuity qualifier; direct MCP and the installed tunnel-client local
-dev proxy preserve session state, while the observed ChatGPT connector path
-still starts a fresh MCP session per tool invocation and remains an upstream
-continuity dependency.
+than hard-coding a Node-less PATH. Revised P7.1 qualifies stateless-client
+compatibility instead of requiring protocol-session persistence. Ordinary
+atomic coding operations remain ready when ChatGPT uses fresh MCP sessions;
+explicit process/output handles are classified separately as cross-session or
+session-scoped. `coding-tools-mcp 0.2.2` currently exposes session-scoped
+process/output handles, so later-call `write_stdin`, `read_output`, and
+`kill_session` are limited without reducing ordinary coding readiness.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
