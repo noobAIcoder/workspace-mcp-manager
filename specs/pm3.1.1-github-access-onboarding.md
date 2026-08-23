@@ -327,7 +327,7 @@ arbitrary GitHub CLI profile. External profiles MUST never be copied or mutated.
 Qualified MCP contract:
 
 ```text
-coding-tools-mcp version  0.2.2
+coding-tools-mcp versions 0.2.2, 0.3.0
 protocol                  2025-11-25
 transport                 Streamable HTTP
 local endpoint            http://<mcp.host>:<mcp.port>/mcp
@@ -339,15 +339,21 @@ preview_bytes             4096
 verbosity                 full
 ```
 
-The manager MUST initialize a real MCP session, send
-`notifications/initialized`, and call `exec_command` with one manager-constructed
-shell command equal to `shlex.join()` of the exact account-identity argv above.
-No operator-controlled command fragment is allowed.
+The manager MUST issue `initialize` using the qualified compatibility protocol.
+For coding-tools 0.2.2, `Mcp-Session-Id` is required and the manager MUST send
+`notifications/initialized` before `exec_command`. For coding-tools 0.3.0, the
+HTTP runtime is stateless: absence of `Mcp-Session-Id` is valid and
+`exec_command` MUST be called without manufacturing protocol-session affinity.
+
+In both cases the manager calls `exec_command` with one manager-constructed shell
+command equal to `shlex.join()` of the exact account-identity argv above. No
+operator-controlled command fragment is allowed.
 
 Success requires JSON-RPC success, `isError=false`, structured result `ok=true`,
 command exit `0`, non-truncated bounded stdout, and a validated account identity
-matching independent profile/manager verification. The session SHOULD be
-deleted after the call. Merely inspecting a unit/environment is not MCP
+matching independent profile/manager verification. A legacy 0.2.2 session
+SHOULD be deleted after the call; 0.3.0 requires no protocol-session cleanup.
+Merely inspecting a unit/environment is not MCP
 execution verification.
 
 No deployed service yields `not_deployed`; an inactive service yields

@@ -265,12 +265,12 @@ PM3.1.2 adds repository-aware Node/pnpm discovery and deterministic NVM
 selection so context-aware setup can project the compatible Node version into
 `mcp.exec_path` and the complete version root into `mcp.external_roots` rather
 than hard-coding a Node-less PATH. Revised P7.1 qualifies stateless-client
-compatibility instead of requiring protocol-session persistence. Ordinary
-atomic coding operations remain ready when ChatGPT uses fresh MCP sessions;
-explicit process/output handles are classified separately as cross-session or
-session-scoped. `coding-tools-mcp 0.2.2` currently exposes session-scoped
-process/output handles, so later-call `write_stdin`, `read_output`, and
-`kill_session` are limited without reducing ordinary coding readiness.
+compatibility instead of requiring protocol-session persistence. It supports
+both the legacy coding-tools 0.2.x `session_id` / `kill_session` model and the
+coding-tools 0.3.x sessionless `command_id` / `kill_command` model. Ordinary
+atomic coding operations remain ready for either era; explicit process/output
+handles are classified separately. A qualified 0.3.x runtime can expose
+cross-request command handles without requiring `Mcp-Session-Id` affinity.
 
 For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return

@@ -56,14 +56,15 @@ desired=registry.get(sys.argv[1])
 service=ClientCompatibilityService(paths, registry)
 url=service._url(desired)
 init,sid,_=service._request(url,{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"pm3.1.2-toolchain","version":"1"}}})
-assert sid
-service._request(url,{"jsonrpc":"2.0","method":"notifications/initialized","params":{}},session_id=sid)
+if sid:
+    service._request(url,{"jsonrpc":"2.0","method":"notifications/initialized","params":{}},session_id=sid)
 result=service._tool(url,sid,2,"exec_command",{"cmd":"printf 'node='; node --version; printf 'pnpm='; pnpm --version; printf 'corepack='; corepack --version","timeout_ms":10000,"max_output_bytes":4096,"preview_bytes":1024,"verbosity":"full"})
 text=str(result.get("stdout") or "")
 assert "node=v24.18.0" in text, text
 assert "pnpm=11.17.0" in text, text
 assert "corepack=" in text, text
-service._request(url,None,session_id=sid,method="DELETE")
+if sid:
+    service._request(url,None,session_id=sid,method="DELETE")
 PY
 echo "PM3_1_2_ELECTROCAD_MCP_NODE=PASS"
 echo "PM3_1_2_ELECTROCAD_MCP_PNPM=PASS"

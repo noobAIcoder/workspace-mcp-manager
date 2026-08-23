@@ -49,9 +49,10 @@ TUNNEL_BINARY=$(printf '%s\n' "$SHOW" | json_field desired.tunnel.binary)
 echo "=== P7.1 Layer 1: direct local MCP client compatibility ==="
 LOCAL=$("${SOURCE_MANAGER[@]}" _runtime client-compatibility "$INSTANCE_ID")
 printf '%s\n' "$LOCAL" | json_assert \
-  'd["client_compatibility_projection_version"] == 1 and d["session_continuity_projection_version"] == 2 and d["scope"] == "local_mcp" and d["atomic_coding_ready"] is True and d["protocol_session_persistence"] == "not_required_for_atomic_operations" and d["session_local_state"]["mcp_session"] == "passed" and d["session_local_state"]["command_session"] == "passed" and d["cross_session_state"]["command_handles"] in {"session_scoped","cross_session"} and d["cleanup"] == "passed" and d["result"] in {"passed","passed_with_limitations"} and len(d["session_fingerprint"]) == 12'
+  'd["client_compatibility_projection_version"] == 2 and d["session_continuity_projection_version"] == 3 and d["scope"] == "local_mcp" and d["atomic_coding_ready"] is True and d["protocol_session_persistence"] == "not_required_for_atomic_operations" and d["transport_session_model"] in {"stateful_legacy","stateless"} and d["session_local_state"]["command_session"] == "passed" and d["cross_session_state"]["command_handles"] in {"session_scoped","cross_session"} and d["cleanup"] in {"passed","not_applicable"} and d["result"] in {"passed","passed_with_limitations"} and ((d["transport_session_model"] == "stateful_legacy" and d["session_local_state"]["mcp_session"] == "passed" and isinstance(d["session_fingerprint"], str) and len(d["session_fingerprint"]) == 12 and d["process_control"]["handle_field"] == "session_id" and d["process_control"]["terminate_tool"] == "kill_session") or (d["transport_session_model"] == "stateless" and d["session_local_state"]["mcp_session"] == "not_applicable" and d["session_fingerprint"] is None and d["cross_session_state"]["command_handles"] == "cross_session" and d["process_control"]["handle_field"] == "command_id" and d["process_control"]["terminate_tool"] == "kill_command"))'
 echo "P7_1_ATOMIC_CODING_READINESS=PASS"
 echo "P7_1_PROTOCOL_SESSION_PERSISTENCE=NOT_REQUIRED"
+echo "P7_1_LOCAL_MCP_TRANSPORT_SESSION_MODEL=$(printf '%s\n' "$LOCAL" | json_field transport_session_model)"
 echo "P7_1_LOCAL_MCP_COMMAND_HANDLES=$(printf '%s\n' "$LOCAL" | json_field cross_session_state.command_handles)"
 
 echo "=== P7.1 Layer 2: local tunnel-client dev proxy ==="
@@ -78,8 +79,9 @@ service=ClientCompatibilityService(paths, InstanceRegistry(paths.registry_dir))
 print(json.dumps(service.run(os.environ["P7_1_INSTANCE_ID"], endpoint_url=os.environ["P7_1_PROXY_URL"], scope="local_tunnel_proxy"), sort_keys=True, separators=(",", ":")))
 ')
 printf '%s\n' "$PROXY" | json_assert \
-  'd["client_compatibility_projection_version"] == 1 and d["scope"] == "local_tunnel_proxy" and d["atomic_coding_ready"] is True and d["session_local_state"]["command_session"] == "passed" and d["cross_session_state"]["command_handles"] in {"session_scoped","cross_session"} and d["cleanup"] in {"passed","unavailable"} and d["result"] in {"passed","passed_with_limitations"}'
+  'd["client_compatibility_projection_version"] == 2 and d["scope"] == "local_tunnel_proxy" and d["atomic_coding_ready"] is True and d["transport_session_model"] in {"stateful_legacy","stateless"} and d["session_local_state"]["command_session"] == "passed" and d["cross_session_state"]["command_handles"] in {"session_scoped","cross_session"} and d["cleanup"] in {"passed","unavailable","not_applicable"} and d["result"] in {"passed","passed_with_limitations"}'
 echo "P7_1_LOCAL_TUNNEL_PROXY_COMPATIBILITY=PASS"
+echo "P7_1_LOCAL_TUNNEL_PROXY_TRANSPORT_SESSION_MODEL=$(printf '%s\n' "$PROXY" | json_field transport_session_model)"
 echo "P7_1_LOCAL_TUNNEL_PROXY_COMMAND_HANDLES=$(printf '%s\n' "$PROXY" | json_field cross_session_state.command_handles)"
 if printf '%s\n' "$PROXY" | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("cleanup") == "unavailable" else 1)'; then
   echo "P7_1_LOCAL_TUNNEL_PROXY_SESSION_TERMINATION=UNAVAILABLE"

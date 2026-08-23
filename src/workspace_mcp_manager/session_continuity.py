@@ -12,8 +12,8 @@ from .paths import ManagerPaths
 from .registry import InstanceRegistry
 
 
-CLIENT_COMPATIBILITY_PROJECTION_VERSION = 1
-SESSION_CONTINUITY_PROJECTION_VERSION = 2
+CLIENT_COMPATIBILITY_PROJECTION_VERSION = 2
+SESSION_CONTINUITY_PROJECTION_VERSION = 3
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_RESPONSE_LIMIT = 64 * 1024
 MCP_TIMEOUT_SECONDS = 10.0
@@ -98,7 +98,7 @@ class ClientCompatibilityService:
     def _tool_result(
         cls,
         url: str,
-        session_id: str,
+        session_id: str | None,
         request_id: int,
         name: str,
         arguments: Mapping[str, Any],
@@ -126,7 +126,7 @@ class ClientCompatibilityService:
     def _tool(
         cls,
         url: str,
-        session_id: str,
+        session_id: str | None,
         request_id: int,
         name: str,
         arguments: Mapping[str, Any],
@@ -135,6 +135,45 @@ class ClientCompatibilityService:
         if not ok:
             raise ValueError(f"MCP tool returned structured failure: {name}")
         return structured
+
+    @classmethod
+    def _tools(cls, url: str, session_id: str | None, request_id: int) -> dict[str, Mapping[str, Any]]:
+        response, _, _ = cls._request(
+            url,
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": {},
+            },
+            session_id=session_id,
+        )
+        result = response.get("result")
+        tools = result.get("tools") if isinstance(result, Mapping) else None
+        if not isinstance(tools, list):
+            raise ValueError("MCP tools/list returned no tool catalog")
+        catalog: dict[str, Mapping[str, Any]] = {}
+        for item in tools:
+            if not isinstance(item, Mapping):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name:
+                catalog[name] = item
+        return catalog
+
+    @staticmethod
+    def _required_schema_field(tool: Mapping[str, Any], field: str) -> bool:
+        schema = tool.get("inputSchema")
+        if not isinstance(schema, Mapping):
+            return False
+        required = schema.get("required")
+        properties = schema.get("properties")
+        return (
+            isinstance(required, list)
+            and field in required
+            and isinstance(properties, Mapping)
+            and field in properties
+        )
 
     @staticmethod
     def _handle_scope(structured: Mapping[str, Any], ok: bool) -> str:
@@ -164,6 +203,11 @@ class ClientCompatibilityService:
             "instance_id": instance_id,
             "scope": scope,
             "server": {"version": None, "protocol": None},
+            "transport_session_model": "unknown",
+            "process_control": {
+                "handle_field": None,
+                "terminate_tool": None,
+            },
             "atomic_coding_ready": False,
             "protocol_session_persistence": "not_required_for_atomic_operations",
             "session_local_state": {
@@ -176,6 +220,7 @@ class ClientCompatibilityService:
                 "write_stdin": "unknown",
                 "read_output": "unknown",
                 "kill_session": "unknown",
+                "kill_command": "unknown",
                 "command_handles": "unknown",
             },
             # Backward-compatible summary fields retained for existing callers.
@@ -225,17 +270,115 @@ class ClientCompatibilityService:
                 },
             )
             result = initialized.get("result")
-            if not isinstance(result, Mapping) or not response_session:
-                raise ValueError("initialize did not establish an MCP session")
-            session_id = response_session
-            base["session_fingerprint"] = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
-            base["mcp_session"] = "passed"
-            base["session_local_state"]["mcp_session"] = "passed"
+            if not isinstance(result, Mapping):
+                raise ValueError("initialize returned no result")
             server_info = result.get("serverInfo") if isinstance(result.get("serverInfo"), Mapping) else {}
             base["server"] = {
                 "version": server_info.get("version"),
                 "protocol": result.get("protocolVersion"),
             }
+
+            if not response_session:
+                catalog = self._tools(url, None, 2)
+                required_tools = {"exec_command", "write_stdin", "read_output", "kill_command"}
+                missing_tools = sorted(required_tools - set(catalog))
+                if missing_tools:
+                    raise ValueError(f"stateless coding-tools catalog is missing: {', '.join(missing_tools)}")
+                if not self._required_schema_field(catalog["write_stdin"], "command_id"):
+                    raise ValueError("write_stdin does not require command_id")
+                if not self._required_schema_field(catalog["kill_command"], "command_id"):
+                    raise ValueError("kill_command does not require command_id")
+
+                base["transport_session_model"] = "stateless"
+                base["mcp_session"] = "not_applicable"
+                base["session_local_state"]["mcp_session"] = "not_applicable"
+                base["default_cwd"] = "not_applicable"
+                base["session_local_state"]["default_cwd"] = "not_applicable"
+                base["cross_session_state"]["default_cwd"] = "not_applicable_explicit_workdir"
+                base["process_control"] = {
+                    "handle_field": "command_id",
+                    "terminate_tool": "kill_command",
+                }
+
+                started = self._tool(
+                    url,
+                    None,
+                    3,
+                    "exec_command",
+                    {
+                        "cmd": "cat",
+                        "tty": True,
+                        "workdir": test_cwd,
+                        "yield_time_ms": 0,
+                        "timeout_ms": 30000,
+                        "max_output_bytes": 4096,
+                        "preview_bytes": 1024,
+                        "verbosity": "full",
+                    },
+                )
+                command_id = str(started.get("command_id") or "")
+                output_ref = started.get("output_ref")
+                if not isinstance(output_ref, str):
+                    output_refs = started.get("output_refs") if isinstance(started.get("output_refs"), Mapping) else {}
+                    output_ref = output_refs.get("stdout")
+                if started.get("status") != "running" or not command_id or not isinstance(output_ref, str):
+                    raise ValueError("exec_command did not establish a persistent command handle")
+
+                marker = "p71-stateless-command-handle"
+                self._tool(
+                    url,
+                    None,
+                    4,
+                    "write_stdin",
+                    {"command_id": command_id, "chars": marker + "\n", "yield_time_ms": 100},
+                )
+                output = self._tool(
+                    url,
+                    None,
+                    5,
+                    "read_output",
+                    {"output_ref": output_ref, "stream": "stdout", "offset": 0, "limit": 4096},
+                )
+                if marker not in json.dumps(output, sort_keys=True):
+                    raise ValueError("read_output did not observe stateless write_stdin marker")
+                killed = self._tool(
+                    url,
+                    None,
+                    6,
+                    "kill_command",
+                    {"command_id": command_id, "signal": "TERM", "wait_ms": 2000},
+                )
+                if killed.get("ok") is False:
+                    raise ValueError("kill_command returned a structured failure")
+
+                base["command_session"] = "passed"
+                base["session_local_state"]["command_session"] = "passed"
+                base["cross_session_state"].update(
+                    {
+                        "write_stdin": "cross_session",
+                        "read_output": "cross_session",
+                        "kill_session": "not_applicable",
+                        "kill_command": "cross_session",
+                        "command_handles": "cross_session",
+                    }
+                )
+                base["recommended_usage"]["cross_call_command_interaction"] = True
+                base["atomic_coding_ready"] = True
+                base["cleanup"] = "not_applicable"
+                base["ok"] = True
+                base["result"] = "passed"
+                base["reason_code"] = None
+                return base
+
+            session_id = response_session
+            base["transport_session_model"] = "stateful_legacy"
+            base["process_control"] = {
+                "handle_field": "session_id",
+                "terminate_tool": "kill_session",
+            }
+            base["session_fingerprint"] = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
+            base["mcp_session"] = "passed"
+            base["session_local_state"]["mcp_session"] = "passed"
             self._request(
                 url,
                 {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
@@ -351,6 +494,7 @@ class ClientCompatibilityService:
                         "write_stdin": write_scope,
                         "read_output": read_scope,
                         "kill_session": kill_scope,
+                        "kill_command": "not_applicable",
                     }
                 )
                 scopes = {write_scope, read_scope, kill_scope}

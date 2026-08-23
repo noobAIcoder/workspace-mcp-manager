@@ -45,6 +45,87 @@ def desired(root: Path) -> DesiredInstance:
 
 
 class SessionContinuityTests(unittest.TestCase):
+    def test_stateless_command_id_runtime_passes_without_protocol_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired(root))
+            service = SessionContinuityService(paths, registry)
+
+            def request(_url, payload, *, session_id=None, method="POST"):
+                self.assertIsNone(session_id)
+                self.assertEqual(method, "POST")
+                if payload and payload.get("method") == "initialize":
+                    return {
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "serverInfo": {"name": "coding-tools-mcp", "version": "0.3.0"},
+                        }
+                    }, None, 200
+                raise AssertionError(payload)
+
+            catalog = {
+                "exec_command": {"name": "exec_command", "inputSchema": {"type": "object"}},
+                "write_stdin": {
+                    "name": "write_stdin",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"command_id": {"type": "string"}},
+                        "required": ["command_id"],
+                    },
+                },
+                "read_output": {"name": "read_output", "inputSchema": {"type": "object"}},
+                "kill_command": {
+                    "name": "kill_command",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"command_id": {"type": "string"}},
+                        "required": ["command_id"],
+                    },
+                },
+            }
+
+            def tool(_url, session_id, _request_id, name, arguments):
+                self.assertIsNone(session_id)
+                if name == "exec_command":
+                    self.assertEqual(arguments.get("workdir"), "docs")
+                    return {
+                        "ok": True,
+                        "status": "running",
+                        "command_id": "command-handle",
+                        "output_ref": "command:command-handle:stdout",
+                    }
+                if name == "write_stdin":
+                    self.assertEqual(arguments.get("command_id"), "command-handle")
+                    return {"ok": True, "status": "running"}
+                if name == "read_output":
+                    return {"ok": True, "content": "p71-stateless-command-handle\n"}
+                if name == "kill_command":
+                    self.assertEqual(arguments.get("command_id"), "command-handle")
+                    return {"ok": True, "status": "terminated", "killed": True}
+                raise AssertionError((name, arguments))
+
+            with mock.patch.object(service, "_request", side_effect=request), \
+                 mock.patch.object(service, "_tools", return_value=catalog), \
+                 mock.patch.object(service, "_tool", side_effect=tool):
+                payload = service.run("sample")
+
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["atomic_coding_ready"])
+            self.assertEqual(payload["result"], "passed")
+            self.assertEqual(payload["server"]["version"], "0.3.0")
+            self.assertEqual(payload["transport_session_model"], "stateless")
+            self.assertEqual(payload["mcp_session"], "not_applicable")
+            self.assertEqual(payload["cleanup"], "not_applicable")
+            self.assertIsNone(payload["session_fingerprint"])
+            self.assertEqual(payload["process_control"]["handle_field"], "command_id")
+            self.assertEqual(payload["process_control"]["terminate_tool"], "kill_command")
+            self.assertEqual(payload["cross_session_state"]["command_handles"], "cross_session")
+            self.assertEqual(payload["cross_session_state"]["kill_command"], "cross_session")
+            self.assertEqual(payload["cross_session_state"]["kill_session"], "not_applicable")
+            self.assertTrue(payload["recommended_usage"]["cross_call_command_interaction"])
+
     def test_projection_persists_only_session_fingerprint_and_pass_states(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -122,6 +203,9 @@ class SessionContinuityTests(unittest.TestCase):
             self.assertEqual(payload["protocol_session_persistence"], "not_required_for_atomic_operations")
             self.assertEqual(payload["cross_session_state"]["default_cwd"], "session_scoped_optional")
             self.assertEqual(payload["cross_session_state"]["command_handles"], "session_scoped")
+            self.assertEqual(payload["transport_session_model"], "stateful_legacy")
+            self.assertEqual(payload["process_control"]["handle_field"], "session_id")
+            self.assertEqual(payload["process_control"]["terminate_tool"], "kill_session")
             self.assertFalse(payload["recommended_usage"]["cross_call_command_interaction"])
             self.assertEqual(len(payload["session_fingerprint"]), 12)
             self.assertNotIn(raw_session, json.dumps(payload, sort_keys=True))

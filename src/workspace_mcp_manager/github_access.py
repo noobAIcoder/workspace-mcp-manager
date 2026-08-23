@@ -61,7 +61,7 @@ MCP_TOOL_TIMEOUT_MS = 8_000
 MCP_OUTPUT_LIMIT = 8_192
 MCP_PREVIEW_LIMIT = 4_096
 MCP_PROTOCOL_VERSION = "2025-11-25"
-QUALIFIED_MCP_VERSION = "0.2.2"
+QUALIFIED_MCP_VERSIONS = frozenset({"0.2.2", "0.3.0"})
 
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 GH_VERSION_RE = re.compile(r"^gh version ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
@@ -925,13 +925,17 @@ class GithubAccessService:
             )
             result = initialized.get("result") if isinstance(initialized.get("result"), Mapping) else {}
             server = result.get("serverInfo") if isinstance(result.get("serverInfo"), Mapping) else {}
-            if result.get("protocolVersion") != MCP_PROTOCOL_VERSION or server.get("version") != QUALIFIED_MCP_VERSION or not session_id:
+            server_version = server.get("version")
+            if result.get("protocolVersion") != MCP_PROTOCOL_VERSION or server_version not in QUALIFIED_MCP_VERSIONS:
                 return "unavailable", "MCP_EXECUTION_UNAVAILABLE"
-            self._http_json(
-                url,
-                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
-                session_id=session_id,
-            )
+            if server_version == "0.2.2" and not session_id:
+                return "unavailable", "MCP_EXECUTION_UNAVAILABLE"
+            if session_id:
+                self._http_json(
+                    url,
+                    {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                    session_id=session_id,
+                )
             command = shlex.join([gh_binary, *ACCOUNT_ARGS])
             called, _ = self._http_json(
                 url,

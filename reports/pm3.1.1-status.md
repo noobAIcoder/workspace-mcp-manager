@@ -27,7 +27,8 @@ GitHub CLI binary: /usr/bin/gh
 GitHub CLI raw version: gh version 2.45.0 (2025-07-18 Ubuntu 2.45.0-1ubuntu0.3)
 GitHub CLI normalized version: 2.45.0
 GitHub CLI supported: true
-coding-tools-mcp: 0.2.2
+coding-tools-mcp qualified versions: 0.2.2, 0.3.0
+ElectroCAD canary runtime: 0.3.0
 MCP protocol: 2025-11-25
 qualified MCP execution tool: exec_command
 Textual: 8.2.8
@@ -75,7 +76,10 @@ Textual: 8.2.8
   and SSH-agent readiness.
 - MCP verification uses the actual deployed coding-tools MCP `exec_command`
   surface with the configured absolute `github.binary` and requires the MCP
-  account identity to match independent profile verification.
+  account identity to match independent profile verification. The verifier
+  supports both qualified runtime eras: 0.2.2 requires its returned
+  `Mcp-Session-Id`; 0.3.0 is valid without a protocol session and executes the
+  same bounded identity command over stateless HTTP.
 - External profiles are never configured, copied, re-owned, logged out, or
   migrated. Fresh verification fails closed as unavailable where write
   prevention cannot be guaranteed.
@@ -120,10 +124,10 @@ refresh afterward.
 
 ## Deterministic and integration verification
 
-Final source suite:
+Current source suite after the P7.1 dual-era coding-tools compatibility update:
 
 ```text
-Ran 323 tests
+Ran 333 tests
 OK (skipped=30)
 ```
 
@@ -140,6 +144,7 @@ unsafe hosts.yml pre-auth fail-closed behavior: PASS
 operation serialization: PASS
 verification-record atomicity/context invalidation: PASS
 MCP exec_command request/identity-match contract: PASS
+MCP stateless 0.3.0 execution contract: PASS
 secret-sentinel scan: PASS
 ElectroCAD non-mutating dry run: PASS
 all 28 Textual Pilot tests in isolated Textual 8.2.8 runtime: PASS

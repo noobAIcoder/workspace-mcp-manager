@@ -62,6 +62,41 @@ the `nvm` shell function. P6 host qualification MUST verify availability and
 rendering for `node`, `npm`, `npx`, `corepack`, and `pnpm`; execution through the
 MCP protocol remains part of P7 qualification.
 
+## `coding-tools-mcp` 0.3.0 addendum
+
+Date: 2026-08-23
+
+Tag `v0.3.0` (`5d6e131`) was qualified in an isolated WSL worktree before the
+ElectroCAD canary deployment. Upstream `make compliance` completed 127 tests
+with PASS and `make ci` completed all configured gates. Focused MCP contract,
+runtime-semantics, E2E, tool-golden, and security suites also passed.
+
+The manager-relevant runtime change is intentional sessionless HTTP process
+control:
+
+```text
+HTTP protocol session       none required
+Mcp-Session-Id              not returned / not required
+exec_command handle         command_id
+follow-up stdin/poll         write_stdin(command_id)
+termination                 kill_command(command_id)
+retained output             read_output(output_ref)
+```
+
+Independent later MCP/HTTP calls to the same workspace server can use the
+opaque `command_id`. Closing an HTTP request does not terminate the command.
+The runtime owns command/output retention at the server/workspace-instance
+boundary rather than the transport-session boundary.
+
+The 0.3.0 server still accepts the manager's qualified `2025-11-25`
+compatibility request shape while also advertising `2026-07-28`. The manager
+MUST treat absence of `Mcp-Session-Id` as the stateless 0.3.x path when
+`tools/list` exposes `command_id`-based `write_stdin` and `kill_command`.
+
+The NVM/external-root contract above remains unchanged. In particular, the
+complete NVM version root is still required for Landlock when `npm` resolves
+implementation files below `lib/node_modules/`.
+
 ### RO/RW external folders
 
 Legacy `workspace-mcp 0.4.0` exposes external folders by mounting them *inside*
