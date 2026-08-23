@@ -6,10 +6,12 @@ LEGACY_ID="${LEGACY_ID:-p14-legacy-qual}"
 MANAGER="${MANAGER:-$HOME/.local/bin/workspace-mcp-manager}"
 
 CONFIG="$HOME/.config/workspace-mcp/$LEGACY_ID.conf"
+CONFIG_BACKUP="$HOME/.config/workspace-mcp/$LEGACY_ID.conf.bak"
 PROFILE="$HOME/.config/tunnel-client/workspace-mcp-$LEGACY_ID.yaml"
 MCP_UNIT="coding-tools-mcp-$LEGACY_ID.service"
 TUNNEL_UNIT="tunnel-client-$LEGACY_ID.service"
 MCP_UNIT_PATH="$HOME/.config/systemd/user/$MCP_UNIT"
+MCP_DROPIN_DIR="$HOME/.config/systemd/user/$MCP_UNIT.d"
 TUNNEL_UNIT_PATH="$HOME/.config/systemd/user/$TUNNEL_UNIT"
 LAUNCHER="$HOME/.local/bin/$LEGACY_ID-mcp"
 STATE_DIR="$HOME/.local/state/workspace-mcp/$LEGACY_ID"
@@ -35,7 +37,12 @@ cleanup() {
   systemctl --user stop "$MCP_UNIT" >/dev/null 2>&1 || true
   systemctl --user disable "$TUNNEL_UNIT" >/dev/null 2>&1 || true
   systemctl --user disable "$MCP_UNIT" >/dev/null 2>&1 || true
-  rm -f -- "$TUNNEL_UNIT_PATH" "$MCP_UNIT_PATH" "$PROFILE" "$LAUNCHER" "$CONFIG"
+  rm -f -- "$TUNNEL_UNIT_PATH" "$MCP_UNIT_PATH" "$PROFILE" "$LAUNCHER" "$CONFIG_BACKUP" "$CONFIG"
+  if [ -d "$MCP_DROPIN_DIR" ] && [ ! -L "$MCP_DROPIN_DIR" ]; then
+    rm -f -- "$MCP_DROPIN_DIR/github-access.conf" "$MCP_DROPIN_DIR/zz-exec-roots.conf" \
+      "$MCP_DROPIN_DIR/workspace-mcp-manager-access.conf"
+    rmdir "$MCP_DROPIN_DIR" >/dev/null 2>&1 || true
+  fi
   if [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ]; then
     rm -f -- "$STATE_DIR/mcp.log" "$STATE_DIR/tunnel.log" "$STATE_DIR/tunnel-supervisor.log"
     rmdir "$STATE_DIR" >/dev/null 2>&1 || true
@@ -46,7 +53,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for path in "$CONFIG" "$PROFILE" "$MCP_UNIT_PATH" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
+for path in "$CONFIG" "$CONFIG_BACKUP" "$PROFILE" "$MCP_UNIT_PATH" "$MCP_DROPIN_DIR" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
   if [ -e "$path" ] || [ -L "$path" ]; then
     fail "synthetic qualification path already exists: $path"
   fi
@@ -81,6 +88,7 @@ TUNNEL_PROFILE=workspace-mcp-$LEGACY_ID
 TUNNEL_HEALTH_HOST=127.0.0.1
 TUNNEL_HEALTH_PORT=19992
 EOF
+cp -- "$CONFIG" "$CONFIG_BACKUP"
 
 cat >"$PROFILE" <<EOF
 # workspace-mcp-instance=$LEGACY_ID
@@ -103,6 +111,13 @@ ExecStart=/usr/bin/sleep infinity
 
 [Install]
 WantedBy=default.target
+EOF
+
+mkdir -p "$MCP_DROPIN_DIR"
+cat >"$MCP_DROPIN_DIR/github-access.conf" <<EOF
+[Service]
+Environment="GH_CONFIG_DIR=$HOME/.config/workspace-mcp/$LEGACY_ID-gh"
+Environment="CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS=$HOME/.config/workspace-mcp/$LEGACY_ID-gh"
 EOF
 
 cat >"$TUNNEL_UNIT_PATH" <<EOF
@@ -154,7 +169,7 @@ PY
   || fail "read-only audit changed synthetic MCP PID"
 [ "$(systemctl --user show "$TUNNEL_UNIT" -p MainPID --value)" = "$SYN_TUNNEL_PID" ] \
   || fail "read-only audit changed synthetic tunnel PID"
-for path in "$CONFIG" "$PROFILE" "$MCP_UNIT_PATH" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
+for path in "$CONFIG" "$CONFIG_BACKUP" "$PROFILE" "$MCP_UNIT_PATH" "$MCP_DROPIN_DIR" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
   [ -e "$path" ] || fail "read-only audit removed synthetic legacy resource: $path"
 done
 printf 'P14_READ_ONLY_AUDIT=PASS\n'
@@ -174,7 +189,7 @@ assert "DAEMON_RELOAD" in ops
 assert "REMOVE" in ops
 PY
 
-for path in "$CONFIG" "$PROFILE" "$MCP_UNIT_PATH" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
+for path in "$CONFIG" "$CONFIG_BACKUP" "$PROFILE" "$MCP_UNIT_PATH" "$MCP_DROPIN_DIR" "$TUNNEL_UNIT_PATH" "$LAUNCHER" "$STATE_DIR"; do
   if [ -e "$path" ] || [ -L "$path" ]; then
     fail "cleanup left synthetic legacy resource: $path"
   fi

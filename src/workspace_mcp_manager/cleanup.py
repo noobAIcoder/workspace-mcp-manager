@@ -17,7 +17,15 @@ from .registry import InstanceRegistry
 LEGACY_MARKER_PREFIX = "# workspace-mcp-instance="
 MANAGER_MARKER_PREFIX = "# workspace-mcp-manager-instance="
 KNOWN_STATE_FILES = frozenset({"mcp.log", "tunnel.log", "tunnel-supervisor.log"})
+KNOWN_MCP_DROPIN_FILES = frozenset(
+    {
+        "github-access.conf",
+        "zz-exec-roots.conf",
+        "workspace-mcp-manager-access.conf",
+    }
+)
 CONFIG_ASSIGNMENT_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
+SYSTEMD_ENV_RE = re.compile(r'^Environment="([A-Z][A-Z0-9_]*)=(.*)"$')
 
 
 def _run(argv: list[str], *, timeout: float = 15.0) -> subprocess.CompletedProcess[str]:
@@ -72,11 +80,17 @@ class LegacyCleanupService:
     def _config_path(self, iid: str) -> Path:
         return self.legacy_config_dir / f"{iid}.conf"
 
+    def _config_backup_path(self, iid: str) -> Path:
+        return self.legacy_config_dir / f"{iid}.conf.bak"
+
     def _profile_path(self, iid: str) -> Path:
         return self.legacy_profile_dir / f"workspace-mcp-{iid}.yaml"
 
     def _mcp_unit_path(self, iid: str) -> Path:
         return self.paths.user_unit_dir / f"coding-tools-mcp-{iid}.service"
+
+    def _mcp_dropin_dir(self, iid: str) -> Path:
+        return self.paths.user_unit_dir / f"coding-tools-mcp-{iid}.service.d"
 
     def _tunnel_unit_path(self, iid: str) -> Path:
         return self.paths.user_unit_dir / f"tunnel-client-{iid}.service"
@@ -105,6 +119,11 @@ class LegacyCleanupService:
         try:
             for path in self.legacy_config_dir.glob("*.conf"):
                 add(path.stem)
+        except OSError:
+            pass
+        try:
+            for path in self.legacy_config_dir.glob("*.conf.bak"):
+                add(path.name[: -len(".conf.bak")])
         except OSError:
             pass
         try:
@@ -137,6 +156,12 @@ class LegacyCleanupService:
                             candidates.add(value)
             except OSError:
                 pass
+        try:
+            for path in self.paths.user_unit_dir.glob("coding-tools-mcp-*.service.d"):
+                name = path.name
+                add(name[len("coding-tools-mcp-") : -len(".service.d")])
+        except OSError:
+            pass
         return sorted(candidates)
 
     def _manager_ids(self) -> set[str]:
@@ -152,13 +177,12 @@ class LegacyCleanupService:
             "detail": detail,
         }
 
-    def _audit_config(self, iid: str) -> dict[str, Any]:
-        path = self._config_path(iid)
+    def _audit_config_path(self, iid: str, path: Path, kind: str) -> dict[str, Any]:
         text, presence, detail = _read_regular_text(path)
         if presence == "absent":
-            return self._resource(path, "legacy-config", "absent", detail)
+            return self._resource(path, kind, "absent", detail)
         if presence != "present" or text is None:
-            return self._resource(path, "legacy-config", "unsafe", detail)
+            return self._resource(path, kind, "unsafe", detail)
         values: list[str] = []
         malformed = False
         for line in text.splitlines():
@@ -173,10 +197,144 @@ class LegacyCleanupService:
             if key == "INSTANCE_ID":
                 values.append(value)
         if malformed:
-            return self._resource(path, "legacy-config", "foreign", "legacy config contains malformed data lines")
+            return self._resource(path, kind, "foreign", "legacy config contains malformed data lines")
         if values != [iid]:
-            return self._resource(path, "legacy-config", "foreign", "INSTANCE_ID ownership evidence does not match")
-        return self._resource(path, "legacy-config", "legacy-owned", "INSTANCE_ID matches legacy candidate")
+            return self._resource(path, kind, "foreign", "INSTANCE_ID ownership evidence does not match")
+        return self._resource(path, kind, "legacy-owned", "INSTANCE_ID matches legacy candidate")
+
+    def _audit_config(self, iid: str) -> dict[str, Any]:
+        return self._audit_config_path(iid, self._config_path(iid), "legacy-config")
+
+    def _audit_config_backup(self, iid: str) -> dict[str, Any]:
+        return self._audit_config_path(iid, self._config_backup_path(iid), "legacy-config-backup")
+
+    def _legacy_workspace_path(self, iid: str) -> Path | None:
+        text, presence, _detail = _read_regular_text(self._config_path(iid))
+        if presence != "present" or text is None:
+            return None
+        values: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            match = CONFIG_ASSIGNMENT_RE.fullmatch(stripped)
+            if match and match.group(1) == "WORKSPACE_PATH":
+                values.append(match.group(2))
+        if len(values) != 1:
+            return None
+        path = Path(values[0])
+        return path if path.is_absolute() else None
+
+    def _audit_mcp_dropin_file(self, iid: str, path: Path) -> tuple[str, str]:
+        text, presence, detail = _read_regular_text(path)
+        if presence != "present" or text is None:
+            return ("unsafe", detail)
+        lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+        if not lines or lines[0] != "[Service]" or any(line.startswith("[") for line in lines[1:]):
+            return ("foreign", "drop-in is not a single [Service] fragment")
+
+        legacy_gh_dir = self.legacy_config_dir / f"{iid}-gh"
+        nvm_root = self.paths.account_home / ".nvm" / "versions" / "node"
+        directives = lines[1:]
+
+        if path.name == "github-access.conf":
+            seen_gh = False
+            for line in directives:
+                match = SYSTEMD_ENV_RE.fullmatch(line)
+                if not match:
+                    return ("foreign", "GitHub drop-in contains an unrecognized directive")
+                key, value = match.groups()
+                if key == "GH_CONFIG_DIR":
+                    if value != str(legacy_gh_dir):
+                        return ("foreign", "GH_CONFIG_DIR does not match the exact legacy instance profile")
+                    seen_gh = True
+                elif key == "CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS":
+                    roots = [Path(item) for item in value.split(os.pathsep) if item]
+                    if roots != [legacy_gh_dir]:
+                        return ("foreign", "GitHub drop-in exec roots do not match the exact legacy profile")
+                else:
+                    return ("foreign", "GitHub drop-in contains an unrecognized environment key")
+            if not seen_gh:
+                return ("foreign", "GitHub drop-in lacks exact legacy GH_CONFIG_DIR ownership evidence")
+            return ("legacy-owned", "legacy GitHub profile drop-in contract matches")
+
+        if path.name == "zz-exec-roots.conf":
+            if len(directives) != 1:
+                return ("foreign", "exec-roots drop-in must contain exactly one environment directive")
+            match = SYSTEMD_ENV_RE.fullmatch(directives[0])
+            if not match or match.group(1) != "CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS":
+                return ("foreign", "exec-roots drop-in contract does not match")
+            roots = [Path(item) for item in match.group(2).split(os.pathsep) if item]
+            if legacy_gh_dir not in roots:
+                return ("foreign", "exec-roots drop-in lacks the exact legacy GitHub profile root")
+            for root in roots:
+                if root == legacy_gh_dir:
+                    continue
+                try:
+                    root.relative_to(nvm_root)
+                except ValueError:
+                    return ("foreign", "exec-roots drop-in contains a root outside legacy GitHub/NVM paths")
+            return ("legacy-owned", "legacy GitHub/NVM exec-roots drop-in contract matches")
+
+        if path.name == "workspace-mcp-manager-access.conf":
+            workspace = self._legacy_workspace_path(iid)
+            if workspace is None:
+                return ("foreign", "access drop-in cannot be tied to one legacy WORKSPACE_PATH")
+            access_root = workspace / ".workspace-mcp-access"
+            if not directives:
+                return ("foreign", "access drop-in contains no bind directives")
+            private_users = False
+            bind_count = 0
+            for line in directives:
+                if line == "PrivateUsers=true":
+                    if private_users:
+                        return ("foreign", "access drop-in repeats PrivateUsers=true")
+                    private_users = True
+                    continue
+                if line.startswith("BindPaths="):
+                    value = line[len("BindPaths=") :]
+                elif line.startswith("BindReadOnlyPaths="):
+                    value = line[len("BindReadOnlyPaths=") :]
+                else:
+                    return ("foreign", "access drop-in contains an unrecognized directive")
+                bind_count += 1
+                parts = value.split(":")
+                if len(parts) not in {2, 3} or (len(parts) == 3 and parts[2] != "rbind"):
+                    return ("foreign", "access drop-in bind syntax is not recognized")
+                source, target = Path(parts[0]), Path(parts[1])
+                if not source.is_absolute() or not target.is_absolute():
+                    return ("foreign", "access drop-in contains a non-absolute bind path")
+                if target.parent != access_root:
+                    return ("foreign", "access drop-in target is outside the exact legacy workspace access root")
+            if not private_users or bind_count == 0:
+                return ("foreign", "access drop-in lacks the legacy PrivateUsers/bind contract")
+            return ("legacy-owned", "legacy workspace access drop-in contract matches")
+
+        return ("foreign", "drop-in filename is not in the recognized legacy set")
+
+    def _audit_mcp_dropins(self, iid: str) -> dict[str, Any]:
+        path = self._mcp_dropin_dir(iid)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            return self._resource(path, "legacy-mcp-dropins", "absent", "path does not exist")
+        except OSError as exc:
+            return self._resource(path, "legacy-mcp-dropins", "unsafe", f"cannot inspect drop-in directory: {redact_text(str(exc))}")
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            return self._resource(path, "legacy-mcp-dropins", "unsafe", "drop-in path is not a real directory")
+        try:
+            children = sorted(path.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            return self._resource(path, "legacy-mcp-dropins", "unsafe", f"cannot enumerate drop-in directory: {redact_text(str(exc))}")
+        if not children:
+            return self._resource(path, "legacy-mcp-dropins", "foreign", "drop-in directory is empty and has no ownership evidence")
+        for child in children:
+            if child.name not in KNOWN_MCP_DROPIN_FILES:
+                return self._resource(path, "legacy-mcp-dropins", "foreign", f"unrecognized drop-in file: {child.name}")
+            ownership, detail = self._audit_mcp_dropin_file(iid, child)
+            if ownership != "legacy-owned":
+                return self._resource(path, "legacy-mcp-dropins", ownership, f"{child.name}: {detail}")
+        return self._resource(path, "legacy-mcp-dropins", "legacy-owned", "all legacy MCP drop-ins match recognized instance-owned contracts")
 
     def _audit_marked_file(self, iid: str, path: Path, kind: str) -> dict[str, Any]:
         text, presence, detail = _read_regular_text(path)
@@ -243,8 +401,10 @@ class LegacyCleanupService:
         InstanceId(iid)
         resources = [
             self._audit_config(iid),
+            self._audit_config_backup(iid),
             self._audit_marked_file(iid, self._profile_path(iid), "legacy-tunnel-profile"),
             self._audit_marked_file(iid, self._mcp_unit_path(iid), "legacy-mcp-unit"),
+            self._audit_mcp_dropins(iid),
             self._audit_marked_file(iid, self._tunnel_unit_path(iid), "legacy-tunnel-unit"),
             self._audit_launcher(iid),
             self._audit_state(iid),
@@ -376,6 +536,25 @@ class LegacyCleanupService:
                 self._record(operations, "DISABLE", unit)
 
         removed_unit = False
+        dropins = self._audit_mcp_dropins(iid)
+        dropin_dir = self._mcp_dropin_dir(iid)
+        if dropins["ownership"] == "legacy-owned":
+            for child in sorted(dropin_dir.iterdir(), key=lambda item: item.name):
+                ownership, detail = self._audit_mcp_dropin_file(iid, child)
+                if ownership != "legacy-owned":
+                    raise ManagerError(
+                        ErrorCode.RECONCILIATION_CONFLICT,
+                        "legacy MCP drop-in ownership changed before removal",
+                        {"path": str(child), "detail": detail},
+                    )
+                child.unlink()
+                self._record(operations, "REMOVE", str(child))
+            dropin_dir.rmdir()
+            self._record(operations, "REMOVE", str(dropin_dir))
+            removed_unit = True
+        elif dropins["ownership"] != "absent":
+            raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, "legacy MCP drop-in ownership changed before removal")
+
         for path, kind in ((tunnel_path, "legacy-tunnel-unit"), (mcp_path, "legacy-mcp-unit")):
             audit = self._audit_marked_file(iid, path, kind)
             if audit["ownership"] == "legacy-owned":
@@ -393,6 +572,7 @@ class LegacyCleanupService:
         simple_resources = (
             (self._profile_path(iid), "legacy-tunnel-profile", self._audit_marked_file),
             (self._launcher_path(iid), "legacy-launcher", None),
+            (self._config_backup_path(iid), "legacy-config-backup", None),
             (self._config_path(iid), "legacy-config", None),
         )
         for path, kind, marked_auditor in simple_resources:
@@ -400,6 +580,8 @@ class LegacyCleanupService:
                 audit = marked_auditor(iid, path, kind)
             elif kind == "legacy-launcher":
                 audit = self._audit_launcher(iid)
+            elif kind == "legacy-config-backup":
+                audit = self._audit_config_backup(iid)
             else:
                 audit = self._audit_config(iid)
             if audit["ownership"] == "legacy-owned":

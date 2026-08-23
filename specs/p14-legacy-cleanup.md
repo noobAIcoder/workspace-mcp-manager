@@ -50,8 +50,10 @@ The accepted WSL/native-Linux legacy `workspace-mcp` layout is:
 
 ```text
 ~/.config/workspace-mcp/<id>.conf
+~/.config/workspace-mcp/<id>.conf.bak
 ~/.config/tunnel-client/workspace-mcp-<id>.yaml
 ~/.config/systemd/user/coding-tools-mcp-<id>.service
+~/.config/systemd/user/coding-tools-mcp-<id>.service.d/
 ~/.config/systemd/user/tunnel-client-<id>.service
 ~/.local/bin/<id>-mcp
 ~/.local/state/workspace-mcp/<id>/
@@ -105,6 +107,10 @@ Unknown fields do not by themselves invalidate ownership because legacy
 versions gained fields over time, but malformed/duplicate `INSTANCE_ID`
 evidence does.
 
+The exact optional backup path `<id>.conf.bak` is a separate removable resource
+only when it independently satisfies the same config ownership contract. Other
+backup names or arbitrary files are not part of P14 cleanup.
+
 ### Legacy tunnel profile
 
 The profile MUST be a regular non-symlink UTF-8 file and contain the exact
@@ -133,6 +139,44 @@ are never legacy resources.
 Before unit-file removal, cleanup MUST verify the installed unit path is the
 expected user-unit path and re-read the marker immediately before mutation.
 
+### Legacy MCP unit drop-ins
+
+The exact drop-in directory:
+
+```text
+~/.config/systemd/user/coding-tools-mcp-<id>.service.d/
+```
+
+may be removed only when every child is a regular non-symlink UTF-8 file and
+every child belongs to one of the narrowly recognized historical contracts:
+
+```text
+github-access.conf
+zz-exec-roots.conf
+workspace-mcp-manager-access.conf
+```
+
+Ownership proof is content-based rather than filename-only:
+
+- `github-access.conf` MUST pin `GH_CONFIG_DIR` to exactly
+  `~/.config/workspace-mcp/<id>-gh`; any exec allow-root in the fragment MUST be
+  exactly that profile path.
+- `zz-exec-roots.conf` MUST contain exactly one
+  `CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS` assignment, MUST include the exact legacy
+  per-instance GitHub profile root, and any additional roots MUST be beneath
+  `~/.nvm/versions/node/`.
+- `workspace-mcp-manager-access.conf` MUST contain exactly one
+  `PrivateUsers=true` directive plus one or more `BindPaths=` and/or
+  `BindReadOnlyPaths=` directives whose targets are direct children of the
+  exact legacy `WORKSPACE_PATH/.workspace-mcp-access/` root.
+
+An unknown drop-in filename, unknown directive, symlink, subdirectory, malformed
+bind, mismatched GitHub profile, or root outside those contracts is a conflict.
+An empty same-named drop-in directory has no ownership evidence and is also a
+conflict. Cleanup MUST never leave recognized legacy drop-ins behind when the
+same instance ID may subsequently be recreated by the manager, because systemd
+would apply them to the new manager-owned unit.
+
 ### Legacy launcher
 
 `~/.local/bin/<id>-mcp` MUST be a regular non-symlink file and be a legacy
@@ -160,8 +204,10 @@ Unknown residue is a conflict.
 Audit derives candidate IDs from recognized names under:
 
 - legacy config files;
+- exact legacy config backup files;
 - legacy tunnel profiles;
 - legacy MCP/tunnel user-unit filenames;
+- legacy MCP unit drop-in directory names;
 - legacy launcher filenames;
 - legacy state-directory names.
 
@@ -212,14 +258,19 @@ Mutation order is:
 3. stop legacy MCP unit if loaded/active;
 4. disable legacy tunnel unit if enabled;
 5. disable legacy MCP unit if enabled;
-6. revalidate unit-file ownership markers again;
-7. remove legacy tunnel/MCP unit files;
-8. `systemctl --user daemon-reload` when unit files were removed;
-9. remove legacy tunnel profile;
-10. remove legacy launcher;
-11. remove legacy config;
-12. remove only recognized legacy state files, then the empty state directory;
-13. run a final audit and require `state=clean`.
+6. revalidate recognized legacy MCP drop-in ownership and remove the drop-in
+   files plus now-empty drop-in directory;
+7. revalidate unit-file ownership markers again;
+8. remove legacy tunnel/MCP unit files;
+9. `systemctl --user daemon-reload` when unit files or recognized drop-ins were
+   removed;
+10. remove legacy tunnel profile;
+11. remove legacy launcher;
+12. remove exact `<id>.conf.bak` only when it independently proves legacy
+    ownership;
+13. remove legacy config;
+14. remove only recognized legacy state files, then the empty state directory;
+15. run a final audit and require `state=clean`.
 
 If a unit does not exist in systemd, stop/disable is a no-op. P14 MUST NOT kill
 arbitrary PIDs directly merely because their command line resembles MCP/tunnel;
@@ -242,13 +293,16 @@ Pure verification MUST cover:
 1. candidate discovery across every recognized legacy resource type;
 2. read-only audit;
 3. exact config/profile/unit/launcher ownership proof;
-4. refusal of manager-owned and foreign same-named resources;
-5. unknown state residue fail-closed behavior;
-6. manager-registry collision refusal;
-7. shared binary/runtime.env preservation;
-8. stop/disable/remove ordering;
-9. daemon reload only when unit files are removed;
-10. final clean audit and idempotent second cleanup audit.
+4. exact legacy config-backup ownership proof;
+5. recognized MCP drop-in ownership proof and refusal of unknown/foreign
+   drop-ins;
+6. refusal of manager-owned and foreign same-named resources;
+7. unknown state residue fail-closed behavior;
+8. manager-registry collision refusal;
+9. shared binary/runtime.env preservation;
+10. stop/disable/drop-in/remove ordering;
+11. daemon reload only when unit files or recognized drop-ins are removed;
+12. final clean audit and idempotent second cleanup audit.
 
 Live WSL qualification MUST use only a synthetic unique legacy ID such as
 `p14-legacy-qual`. It MUST NOT modify existing `leadbot`, `manager`,

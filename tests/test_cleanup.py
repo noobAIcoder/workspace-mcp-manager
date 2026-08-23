@@ -81,6 +81,30 @@ def write_legacy(root: Path, iid: str = "legacy-qual") -> LegacyCleanupService:
     return service
 
 
+def write_known_legacy_residue(service: LegacyCleanupService, root: Path, iid: str = "legacy-qual") -> None:
+    service._config_backup_path(iid).write_bytes(service._config_path(iid).read_bytes())
+    dropins = service._mcp_dropin_dir(iid)
+    dropins.mkdir()
+    legacy_gh = service.legacy_config_dir / f"{iid}-gh"
+    (dropins / "github-access.conf").write_text(
+        "[Service]\n"
+        f'Environment="GH_CONFIG_DIR={legacy_gh}"\n'
+        f'Environment="CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS={legacy_gh}"\n',
+        encoding="utf-8",
+    )
+    (dropins / "zz-exec-roots.conf").write_text(
+        "[Service]\n"
+        f'Environment="CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS={legacy_gh}:{root / ".nvm/versions/node"}"\n',
+        encoding="utf-8",
+    )
+    (dropins / "workspace-mcp-manager-access.conf").write_text(
+        "[Service]\n"
+        "PrivateUsers=true\n"
+        f"BindPaths={root / 'source'}:{root / 'workspace/.workspace-mcp-access/source'}:rbind\n",
+        encoding="utf-8",
+    )
+
+
 class LegacyCleanupAuditTests(unittest.TestCase):
     def test_discovers_and_audits_complete_legacy_instance_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -102,9 +126,50 @@ class LegacyCleanupAuditTests(unittest.TestCase):
             self.assertEqual([item["instance_id"] for item in payload["candidates"]], ["legacy-qual"])
             candidate = payload["candidates"][0]
             self.assertEqual(candidate["state"], "removable")
-            self.assertEqual({item["ownership"] for item in candidate["resources"]}, {"legacy-owned"})
+            self.assertEqual(
+                {item["ownership"] for item in candidate["resources"]},
+                {"legacy-owned", "absent"},
+            )
             for path, content in before.items():
                 self.assertEqual(path.read_bytes(), content)
+
+    def test_known_backup_and_mcp_dropins_are_legacy_owned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = write_legacy(root)
+            write_known_legacy_residue(service, root)
+            candidate = service.audit("legacy-qual")["candidates"][0]
+            self.assertEqual(candidate["state"], "removable")
+            ownership = {item["kind"]: item["ownership"] for item in candidate["resources"]}
+            self.assertEqual(ownership["legacy-config-backup"], "legacy-owned")
+            self.assertEqual(ownership["legacy-mcp-dropins"], "legacy-owned")
+
+    def test_unknown_mcp_dropin_is_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = write_legacy(root)
+            dropins = service._mcp_dropin_dir("legacy-qual")
+            dropins.mkdir()
+            (dropins / "foreign.conf").write_text("[Service]\nEnvironment=FOREIGN=1\n", encoding="utf-8")
+            candidate = service.audit("legacy-qual")["candidates"][0]
+            self.assertEqual(candidate["state"], "conflict")
+            dropin = next(item for item in candidate["resources"] if item["kind"] == "legacy-mcp-dropins")
+            self.assertEqual(dropin["ownership"], "foreign")
+
+    def test_config_backup_and_dropin_directory_participate_in_candidate_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            paths.registry_dir.mkdir(parents=True, exist_ok=True)
+            legacy = root / ".config/workspace-mcp"
+            legacy.mkdir(parents=True)
+            (legacy / "backup-only.conf.bak").write_text("INSTANCE_ID=backup-only\n", encoding="utf-8")
+            dropin = paths.user_unit_dir / "coding-tools-mcp-dropin-only.service.d"
+            dropin.mkdir(parents=True)
+            (dropin / "foreign.conf").write_text("[Service]\nEnvironment=FOREIGN=1\n", encoding="utf-8")
+            service = LegacyCleanupService(paths, InstanceRegistry(paths.registry_dir))
+            candidates = {item["instance_id"] for item in service.audit()["candidates"]}
+            self.assertEqual(candidates, {"backup-only", "dropin-only"})
 
     def test_manager_owned_unit_alone_is_not_discovered_as_legacy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -194,6 +259,7 @@ class LegacyCleanupExecuteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             service = write_legacy(root)
+            write_known_legacy_residue(service, root)
             shared_binary = root / ".local/lib/workspace-mcp/workspace-mcp"
             shared_binary.parent.mkdir(parents=True, exist_ok=True)
             shared_binary.write_text("shared\n", encoding="utf-8")
@@ -241,8 +307,10 @@ class LegacyCleanupExecuteTests(unittest.TestCase):
             self.assertTrue(runtime_env.exists())
             for path in (
                 service._config_path("legacy-qual"),
+                service._config_backup_path("legacy-qual"),
                 service._profile_path("legacy-qual"),
                 service._mcp_unit_path("legacy-qual"),
+                service._mcp_dropin_dir("legacy-qual"),
                 service._tunnel_unit_path("legacy-qual"),
                 service._launcher_path("legacy-qual"),
                 service._state_path("legacy-qual"),
