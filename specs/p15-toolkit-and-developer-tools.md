@@ -1,10 +1,12 @@
-# P15 — Shared toolkit and developer-tool provisioning
+# P15 — Developer-tool provisioning
 
 Status: **NORMATIVE P15 SPECIFICATION**
 
-P15 owns host-level provisioning that is intentionally separate from per-instance
-deployment. It implements CAP-006 through CAP-010, CAP-121, CAP-122, and the P15
-portion of CAP-123.
+P15 owns host-level developer-tool provisioning that is intentionally separate
+from per-instance deployment. `specs/standalone-distribution.md` supersedes P15
+authority for CAP-006 through CAP-010 and all manager shared-toolkit
+installation/upgrade behavior. P15 remains authoritative for CAP-121, CAP-122,
+and the P15 portion of CAP-123.
 
 P15 MUST NOT authenticate GitHub or Codex, create/import private keys, mutate
 known-host databases, configure repository Git identity/credential helpers, or
@@ -13,15 +15,15 @@ install P16 per-instance launchers.
 ## Capability authority
 
 ```text
-CAP-006  Shared toolkit installer
-CAP-007  Explicit toolkit --upgrade
-CAP-008  Validate all existing configs before shared-manager upgrade
-CAP-009  Atomic toolkit installation/copy
-CAP-010  Refuse silent manager replacement while instances exist
 CAP-121  Install/configure Codex CLI
 CAP-122  Install/configure gh
 CAP-123  SSH/GPG-agent setup (P15 portion)
 ```
+
+The standalone distribution specification is authoritative wherever the
+historical shared-toolkit text below conflicts with it. The historical text is
+retained only to document the predecessor recognized by distribution migration;
+it is **non-normative** for manager installation/upgrade.
 
 ## Architectural split
 

@@ -22,6 +22,9 @@
 | `src/workspace_mcp_manager/tui_textual.py` | PM3/PM3.1 Textual projection/editor frontend | manager CLI delegation only |
 | `src/workspace_mcp_manager/runtime.py` | Secret-safe tunnel/admission runtime helpers used by systemd | runtime-scoped |
 | `src/workspace_mcp_manager/cli.py` | Thin public/private command routing | delegates only |
+| `scripts/install.sh` | Sole standalone distribution transaction authority | distribution root/releases/current/receipt/journal/stable entrypoints only |
+| `scripts/install_toolkit.sh` | P15 compatibility frontend | none; execs `install.sh` only |
+| `specs/standalone-distribution.md` | DIST-01..DIST-17 installation/upgrade/promotion authority | none |
 | `scripts/qualify_*.sh` | Reproducible live qualification harnesses | disposable qualification targets only |
 | `specs/capabilities.tsv` | Capability disposition authority | none |
 | `specs/external-contracts.md` | Verified external runtime contracts | none |

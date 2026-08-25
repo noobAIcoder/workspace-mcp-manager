@@ -4,11 +4,11 @@ CAP-002	A	PRESERVE	P1	Config version validation
 CAP-003	A	DEFER	P16	Per-instance launcher `<instance>-mcp`
 CAP-004	A	REPLACE	P1-P6	Repo-agnostic shared actuator
 CAP-005	A	REPLACE	P1-P6	`workspace-mcp-setup` provisioning
-CAP-006	A	DEFER	P15	Shared toolkit installer
-CAP-007	A	DEFER	P15	Explicit toolkit `--upgrade`
-CAP-008	A	DEFER	P15	Validate all existing configs before shared-manager upgrade
-CAP-009	A	DEFER	P15	Atomic toolkit installation/copy
-CAP-010	A	DEFER	P15	Refuse silent manager replacement while instances exist
+CAP-006	A	DEFER	DIST	Standalone distribution installer
+CAP-007	A	DEFER	DIST	Explicit distribution `--upgrade`
+CAP-008	A	DEFER	DIST	Validate all existing configs before distribution commit
+CAP-009	A	DEFER	DIST	Atomic immutable distribution activation
+CAP-010	A	DEFER	DIST	Fail-closed distribution ownership/replacement
 CAP-011	A	PRESERVE	P6-P7	`install` lifecycle
 CAP-012	A	PRESERVE	P6-P7	`remove` lifecycle
 CAP-013	A	REPLACE	P6/P14	`cleanup` lifecycle

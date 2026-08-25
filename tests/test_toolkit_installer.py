@@ -11,7 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "scripts" / "install_toolkit.sh"
+INSTALLER = ROOT / "scripts" / "install.sh"
+COMPAT_INSTALLER = ROOT / "scripts" / "install_toolkit.sh"
 LEGACY_PYTHON_INSTALLER = ROOT / "scripts" / "install_toolkit.py"
 
 
@@ -20,7 +21,8 @@ def copy_candidate(destination: Path) -> Path:
     shutil.copy2(ROOT / "pyproject.toml", destination / "pyproject.toml")
     shutil.copy2(ROOT / "requirements-tui.lock", destination / "requirements-tui.lock")
     (destination / "scripts").mkdir()
-    shutil.copy2(INSTALLER, destination / "scripts" / "install_toolkit.sh")
+    shutil.copy2(INSTALLER, destination / "scripts" / "install.sh")
+    shutil.copy2(COMPAT_INSTALLER, destination / "scripts" / "install_toolkit.sh")
     shutil.copytree(ROOT / "src", destination / "src")
     return destination
 
@@ -72,7 +74,7 @@ def run_installer(
     return subprocess.run(
         [
             "bash",
-            str(repo / "scripts" / "install_toolkit.sh"),
+            str(repo / "scripts" / "install.sh"),
             "--repo",
             str(repo),
             "--account-home",
@@ -94,11 +96,15 @@ def run_installer(
 class ToolkitInstallerTests(unittest.TestCase):
     def test_shell_is_the_only_canonical_installer(self) -> None:
         self.assertTrue(INSTALLER.is_file())
+        self.assertTrue(COMPAT_INSTALLER.is_file())
         self.assertFalse(LEGACY_PYTHON_INSTALLER.exists())
         text = INSTALLER.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("#!/usr/bin/env bash\n"))
         self.assertIn("stage_release", text)
         self.assertIn("atomic_symlink", text)
+        compat = COMPAT_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn('exec "$SCRIPT_DIR/install.sh" "$@"', compat)
+        self.assertNotIn("stage_release", compat)
 
     def test_source_fingerprint_is_content_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -166,7 +172,7 @@ class ToolkitInstallerTests(unittest.TestCase):
             self.assertEqual(manifest["schema_version"], 2)
             self.assertEqual(manifest["installer"], "bash")
             self.assertEqual(manifest["tui_runtime"]["textual_version"], "8.2.8")
-            self.assertTrue((release / "install_toolkit.sh").is_file())
+            self.assertTrue((release / "install.sh").is_file())
 
     def test_tui_runtime_install_is_hash_locked_and_wheel_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
