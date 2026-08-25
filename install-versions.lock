@@ -27,7 +27,7 @@
       "dependency_lock_identity": null,
       "dependencies": [],
       "validator_id": "uv-cli",
-      "expected_observable_identity": "uv 0.12.3"
+      "expected_observable_identity": "uv 0.12.3 (x86_64-unknown-linux-gnu)"
     },
     "coding_tools_mcp": {
       "version": "0.3.0",
