@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "platform": "linux",
+  "architecture": "x86_64",
+  "components": {
+    "python": {
+      "version": "3.12.13+20260807",
+      "source_kind": "github_release_asset",
+      "source_identity": "astral-sh/python-build-standalone@20260807:cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "acquisition_location": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13%2B20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "506191be3ee7bd190a8834dcdc1b3bc70aab50608deccc711935aa007239cabd",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "dependency_lock_identity": null,
+      "dependencies": [],
+      "validator_id": "cpython-3.12",
+      "expected_observable_identity": "Python 3.12.13"
+    },
+    "uv": {
+      "version": "0.12.3",
+      "source_kind": "github_release_asset",
+      "source_identity": "astral-sh/uv@0.12.3:uv-x86_64-unknown-linux-gnu.tar.gz",
+      "acquisition_location": "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "600cf9a742aca00d292673b16b5acffaa7b8c269a364ad0c2e79498dcb1fe101",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "dependency_lock_identity": null,
+      "dependencies": [],
+      "validator_id": "uv-cli",
+      "expected_observable_identity": "uv 0.12.3"
+    },
+    "coding_tools_mcp": {
+      "version": "0.3.0",
+      "source_kind": "pypi_wheel",
+      "source_identity": "coding_tools_mcp-0.3.0-py3-none-any.whl@5d6e131",
+      "acquisition_location": "https://files.pythonhosted.org/packages/69/2e/a263ebf32b2ffe506154c5acd9e2a9fe8d4600af131849b1ca23585bd536/coding_tools_mcp-0.3.0-py3-none-any.whl",
+      "sha256": "4d98f4a2cba6f677444986ae395446069e9ecb508861fc903f30a2aa8cefdba3",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "dependency_lock_identity": "requirements-coding-tools.lock@sha256:bc2a9c6762c3530e142eb80708b663c9342708bee32768fd54e5839b3c8efc6f",
+      "dependencies": [
+        {
+          "name": "PyJWT",
+          "version": "2.10.1",
+          "source_identity": "PyJWT-2.10.1-py3-none-any.whl",
+          "acquisition_location": "https://files.pythonhosted.org/packages/61/ad/689f02752eeec26aed679477e80e632ef1b682313be70793d798c1d5fc8f/PyJWT-2.10.1-py3-none-any.whl",
+          "sha256": "dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb"
+        }
+      ],
+      "validator_id": "coding-tools-mcp-0.3",
+      "expected_observable_identity": "0.3.0"
+    },
+    "tunnel_client": {
+      "version": "0.0.11",
+      "source_kind": "github_release_asset",
+      "source_identity": "openai/tunnel-client@8d55683eeef80bc5e360d95abf4692454fafc615:tunnel-client-v0.0.11-linux-amd64.zip",
+      "acquisition_location": "https://github.com/openai/tunnel-client/releases/download/v0.0.11/tunnel-client-v0.0.11-linux-amd64.zip",
+      "sha256": "29adfe5c1399dfb9fda9383f230c324355912f50dc36e2e416b1f1322317b3c4",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "dependency_lock_identity": null,
+      "dependencies": [],
+      "validator_id": "tunnel-client-0.0.11",
+      "expected_observable_identity": "0.0.11+8d55683eeef80bc5e360d95abf4692454fafc615 (git sha: 8d55683eeef80bc5e360d95abf4692454fafc615)"
+    }
+  }
+}

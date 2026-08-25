@@ -205,6 +205,27 @@ wrong platform/architecture, and digest mismatch. Lock content is never executed
 Every external component records exact version/source identity/acquisition
 location/SHA-256/platform/architecture and expected observable identity.
 
+## Complete-content manifest anchor
+
+`install.json` MUST contain a deterministic content manifest for every other
+distribution-owned immutable regular file and symlink, including SHA-256 and
+required mode for regular files and exact target/mode for symlinks. It MUST NOT
+attempt to embed the SHA-256 of its own final bytes because that would create an
+unsatisfiable cryptographic self-reference.
+
+The pre-commit prepared receipt MUST instead contain the exact SHA-256 of the
+final `install.json`. Complete immutable release integrity is therefore anchored
+as:
+
+```text
+distribution.json
+  -> SHA-256 of install.json
+  -> deterministic manifest of every other immutable release file/symlink
+```
+
+This split does not make the receipt commit authority; `current` remains the sole
+authoritative selector under DIST-03/DIST-04.
+
 ## Acquisition frontends
 
 `bootstrap.sh` downloads no credentials and performs an isolated Git fetch,

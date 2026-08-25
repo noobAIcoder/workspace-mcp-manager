@@ -628,7 +628,7 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_top_bar_shows_tui_and_cli_versions(self) -> None:
         client = FakeClient()
         app = build_app(client, initial_load=False)
-        self.assertIn("TUI 0.1.1", str(app.sub_title))
+        self.assertIn("TUI 0.2.0", str(app.sub_title))
         self.assertIn("CLI 9.8.7-test", str(app.sub_title))
 
     async def test_input_ctrl_c_and_ctrl_v_round_trip_without_quitting(self) -> None:

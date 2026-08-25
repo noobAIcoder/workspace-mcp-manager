@@ -304,7 +304,7 @@ class CandidateTests(unittest.TestCase):
     def test_template_v2_removes_tunnel_profile_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             payload = operator_template(paths_for(Path(directory)))
-        self.assertEqual(payload["template_version"], 2)
+        self.assertEqual(payload["template_version"], 3)
         self.assertEqual(payload["config_version"], 2)
         self.assertNotIn("tunnel.profile", payload["required_operator_fields"])
 

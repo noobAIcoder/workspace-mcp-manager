@@ -94,12 +94,12 @@ qualification used only the synthetic `p14-legacy-qual` instance and proved the
 existing `leadbot`, `manager`, and `wsl-reconcile` legacy deployments remained
 unchanged.
 
-P15 adds deterministic shared-toolkit and developer-tool provisioning. The
-standalone installer uses versioned user-local releases and validates existing
-manager declarations before replacing a shared release. Developer tooling uses
-explicit paths for Codex, GitHub CLI, and SSH/GPG-agent prerequisites without
-managing authentication, private keys, or session credentials. Persistent
-manager-owned agent activation remains the post-MVP portion of CAP-123.
+P15's developer-tool provisioning remains authoritative for explicit Codex,
+GitHub CLI, and SSH/GPG-agent host-tool capabilities without managing
+authentication, private keys, or session credentials. Manager installation and
+upgrade have moved to the standalone distribution authority described below;
+that distribution workstream supersedes only P15's historical shared-toolkit
+installer model.
 
 P16 adds deterministic manager-owned per-instance launchers at
 `~/.local/bin/<instance>-mcp`. Each launcher is a narrow frontend over the
@@ -149,6 +149,122 @@ echo; credential bytes do not enter manager/TUI contracts, argv, token-bearing
 environment variables, logs, diagnostics, or verification records. Automated
 implementation qualification remains separate from operator real-credential
 validation.
+
+## Standalone installation and upgrade
+
+The production distribution channel is fixed to the canonical repository and
+`release` branch. The qualified public installation form downloads the bootstrap
+script completely before executing it:
+
+```sh
+tmp="$(mktemp)"
+curl -fsSL -o "$tmp" \
+  https://raw.githubusercontent.com/noobAIcoder/workspace-mcp-manager/release/bootstrap.sh
+bash "$tmp"
+status=$?
+rm -f "$tmp"
+exit "$status"
+```
+
+The initial qualified host is **WSL2, Ubuntu 24.04, x86_64**. Bootstrap
+prerequisites are Bash, Git, curl, Python >= 3.11, `sha256sum`, `realpath`,
+`mktemp`, `flock`, GNU coreutils, `tar`, `unzip`, and an available user-systemd
+manager. The installer does not invoke `sudo`, require system `pip`, or require
+system `uv`.
+
+Installation creates one complete immutable distribution per exact release Git
+commit:
+
+```text
+~/.local/lib/workspace-mcp-manager/
+├── releases/dist-<release-commit>/
+│   ├── bin/
+│   ├── manager/
+│   ├── runtimes/python/
+│   ├── runtimes/coding-tools-mcp/
+│   ├── runtimes/tunnel-client/
+│   ├── tools/uv/
+│   ├── distribution/
+│   └── install.json
+└── current -> releases/dist-<release-commit>
+```
+
+The stable user commands are:
+
+```text
+workspace-mcp-manager
+workspace-mcp-manager-tui
+workspace-mcp-reboot
+workspace-mcp-manager-upgrade
+```
+
+Each stable command resolves through `current`. Bundled Python, uv,
+`coding-tools-mcp`, and `tunnel-client` remain private to the immutable release;
+the distribution does not replace equivalent host-level commands. Installed
+manager/TUI execution uses the pinned distribution Python rather than mutable
+host Python.
+
+`scripts/install.sh` is the sole distribution mutation authority. It stages and
+verifies the complete candidate, validates all existing declarations with the
+candidate manager, finalizes the immutable release, prepares the receipt, and
+then atomically replaces `current`. That `current` replacement is the transaction
+commit point. `~/.local/state/workspace-mcp-manager/distribution.json` is evidence
+of the committed release, not the selector.
+
+The immutable integrity chain is:
+
+```text
+distribution.json
+→ SHA-256 of install.json
+→ deterministic manifest of every other immutable release file/symlink
+```
+
+An unfinished mutation is described by
+`~/.local/state/workspace-mcp-manager/distribution-transaction.json`. Before the
+commit point, failure/recovery converges to the previous distribution. After the
+commit point, recovery converges forward to the committed candidate and repairs
+receipt evidence if necessary. Recovery and rollback of already-started local
+transactions require no network acquisition.
+
+Local inspection/recovery commands are available through the immutable release:
+
+```sh
+~/.local/lib/workspace-mcp-manager/current/distribution/install.sh --check
+~/.local/lib/workspace-mcp-manager/current/distribution/install.sh --recover-only
+workspace-mcp-manager-upgrade --check
+workspace-mcp-manager-upgrade
+```
+
+`install.sh --check` is local and read-only. `workspace-mcp-manager-upgrade
+--check` performs the separate remote release-availability query. Normal upgrade
+first runs the old immutable installer's local recovery, then acquires the fixed
+production channel and delegates the new transaction to the newly acquired
+installer. `--configure` launches the committed installed TUI after the
+distribution transaction; TUI cancellation/failure does not roll back the
+committed release.
+
+A recognized historical P15 installation can be migrated transactionally.
+Foreign, malformed, partial, or mixed ownership fails closed. Distribution
+installation/upgrade does not rewrite declarations, generated systemd units,
+tunnel profiles, GitHub metadata, credentials, or service state. Existing
+instances keep their release-specific runtime paths. New or explicitly
+reconfigured candidates use bundled runtime paths from the immutable manager
+release that is actually executing, even if `current` moves concurrently.
+
+No automatic release pruning is performed. At minimum this preserves the
+immediately previous release and every release still referenced by a declaration.
+
+Version/release inspection:
+
+```sh
+workspace-mcp-manager --version
+readlink -f ~/.local/lib/workspace-mcp-manager/current
+cat ~/.local/state/workspace-mcp-manager/distribution.json
+```
+
+Development occurs on `main`. A production promotion fast-forwards `release` to
+the exact qualified `main` SHA; no release-only commit is permitted and published
+version tags are immutable.
 
 ## Run from source
 

@@ -1,0 +1,5 @@
+# Standalone distribution coding-tools-mcp runtime. Python 3.12; wheels only.
+coding-tools-mcp==0.3.0 \
+    --hash=sha256:4d98f4a2cba6f677444986ae395446069e9ecb508861fc903f30a2aa8cefdba3
+PyJWT==2.10.1 \
+    --hash=sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb

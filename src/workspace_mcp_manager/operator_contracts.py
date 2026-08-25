@@ -5,6 +5,7 @@ import json
 from typing import Any, Mapping
 
 from .domain import DeploymentTarget, DesiredInstance, RuntimeTarget
+from .distribution_runtime import runtime_defaults
 from .generation import GeneratedBundle
 from .paths import ManagerPaths
 from .planning import HostResourceObserver, PlanOperation, ReconciliationPlan
@@ -13,7 +14,7 @@ from .planning import HostResourceObserver, PlanOperation, ReconciliationPlan
 PROJECTION_VERSION = 1
 PLAN_FINGERPRINT_VERSION = 1
 PLAN_EXECUTION_PRECONDITION_VERSION = 1
-TEMPLATE_VERSION = 2
+TEMPLATE_VERSION = 3
 
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
@@ -138,13 +139,14 @@ def semantic_plan_operations(plan: ReconciliationPlan) -> list[dict[str, Any]]:
 
 def operator_template(paths: ManagerPaths) -> dict[str, Any]:
     home = paths.account_home
+    runtimes = runtime_defaults(paths)
     defaults = {
         "config_version": 2,
         "instance_id": "",
         "workspace_path": "",
         "lifecycle": {"deployment": "present", "runtime": "stopped"},
         "mcp": {
-            "binary": str(home / ".local/bin/coding-tools-mcp"),
+            "binary": str(runtimes.coding_tools_mcp),
             "host": "127.0.0.1",
             "port": None,
             "permission_mode": "trusted",
@@ -153,7 +155,7 @@ def operator_template(paths: ManagerPaths) -> dict[str, Any]:
             "external_roots": [],
         },
         "tunnel": {
-            "binary": str(home / ".local/bin/tunnel-client"),
+            "binary": str(runtimes.tunnel_client),
             "id": "",
             "profile": "",
             "health_host": "127.0.0.1",

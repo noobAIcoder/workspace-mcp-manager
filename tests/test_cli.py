@@ -18,7 +18,7 @@ class CliTests(unittest.TestCase):
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
             build_parser().parse_args(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "workspace-mcp-manager 0.1.1")
+        self.assertEqual(output.getvalue().strip(), "workspace-mcp-manager 0.2.0")
 
     def test_structured_false_result_returns_semantic_failure_exit(self) -> None:
         self.assertEqual(_payload_exit_code({"ok": False}), 1)
