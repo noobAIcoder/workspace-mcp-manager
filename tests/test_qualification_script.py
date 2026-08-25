@@ -157,18 +157,30 @@ class P14QualificationScriptTests(unittest.TestCase):
 
 
 class P15QualificationScriptTests(unittest.TestCase):
-    def test_p15_harness_has_isolated_toolkit_and_final_gates(self) -> None:
+    def test_p15_harness_is_developer_tool_only_after_distribution_supersession(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "scripts/qualify_p15_wsl.sh").read_text(encoding="utf-8")
-        self.assertIn("P15_REAL_TOOLKIT_CHECK=PASS", text)
-        self.assertIn("P15_TOOLKIT_INITIAL_INSTALL=PASS", text)
-        self.assertIn("P15_TOOLKIT_NOOP=PASS", text)
-        self.assertIn("P15_TOOLKIT_ATOMIC_SWITCH=PASS", text)
-        self.assertIn('--prefix "$ISO_PREFIX"', text)
+        self.assertIn("P15_DISTRIBUTION_AUTHORITY=SUPERSEDED_BY_DIST", text)
+        self.assertNotIn("P15_TOOLKIT_INITIAL_INSTALL=PASS", text)
+        self.assertNotIn("install_toolkit.sh", text)
         self.assertIn('host tools audit', text)
         self.assertIn("P15_TOOLING_STATE=PASS", text)
         self.assertIn("P15_FINAL_CONVERGENCE=PASS", text)
         self.assertIn("P15_WSL_QUALIFICATION=PASS", text)
+
+
+class DistributionQualificationScriptTests(unittest.TestCase):
+    def test_distribution_harness_uses_exact_remote_sha_and_isolated_home(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts/qualify_distribution_wsl.sh").read_text(encoding="utf-8")
+        self.assertIn('RELEASE_REF="${RELEASE_REF:-refs/heads/main}"', text)
+        self.assertIn('REMOTE_SHA="$(git_isolated ls-remote', text)
+        self.assertIn('--account-home "$ISO_HOME"', text)
+        self.assertIn("DISTRIBUTION_CLEAN_INSTALL=PASS", text)
+        self.assertIn("DISTRIBUTION_REINSTALL_NOOP=PASS", text)
+        self.assertIn("DISTRIBUTION_CHECK_READ_ONLY=PASS", text)
+        self.assertIn("DISTRIBUTION_ACQUISITION_PROVENANCE=PASS", text)
+        self.assertIn("DISTRIBUTION_WSL_QUALIFICATION=PASS", text)
 
 
 class P16QualificationScriptTests(unittest.TestCase):

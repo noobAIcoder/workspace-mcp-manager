@@ -26,6 +26,7 @@
 | `scripts/install_toolkit.sh` | P15 compatibility frontend | none; execs `install.sh` only |
 | `specs/standalone-distribution.md` | DIST-01..DIST-17 installation/upgrade/promotion authority | none |
 | `scripts/qualify_*.sh` | Reproducible live qualification harnesses | disposable qualification targets only |
+| `scripts/qualify_distribution_wsl.sh` | Isolated real-artifact standalone distribution qualification | disposable user-local qualification root only |
 | `specs/capabilities.tsv` | Capability disposition authority | none |
 | `specs/external-contracts.md` | Verified external runtime contracts | none |
 | `specs/pm1-development-environment.md` | CAP-117/119/120/123 post-MVP authority | none |

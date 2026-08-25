@@ -1,11 +1,13 @@
-# P15 — Toolkit and developer-tool provisioning status
+# P15 — Developer-tool provisioning status
 
-Status: **PASS — LIVE WSL QUALIFIED**
+Status: **PASS — LIVE WSL QUALIFIED; HISTORICAL TOOLKIT AUTHORITY SUPERSEDED**
 
 Normative authority: `specs/p15-toolkit-and-developer-tools.md`.
 
-P15 covers CAP-006 through CAP-010, CAP-121, CAP-122, and the P15 audit portion
-of CAP-123. Persistent manager-owned agent activation remains post-MVP.
+The standalone distribution specification now owns CAP-006 through CAP-010 and
+supersedes the historical P15 shared-toolkit installer evidence recorded below.
+Current P15 authority covers CAP-121, CAP-122, and the P15 audit portion of
+CAP-123. Persistent manager-owned agent activation remains post-MVP.
 
 ## Verification
 
@@ -17,7 +19,11 @@ bash syntax:                         PASS
 git diff check:                      PASS
 ```
 
-## WSL toolkit evidence
+## Historical WSL toolkit evidence
+
+The following section records the predecessor installer qualification only. It
+is retained as migration provenance and is no longer normative distribution
+qualification.
 
 The real development manager was not switched to the new standalone layout.
 The real-home read-only candidate check validated the existing manager
