@@ -43,6 +43,49 @@ def _remote_metadata(url: str) -> dict[str, str | None]:
     return {"transport": "path", "host": None}
 
 
+def _remote_failure_projection(probe: ProbeResult, transport: str | None) -> tuple[str, str]:
+    """Classify private probe evidence into bounded non-secret operator output."""
+
+    evidence = "\n".join(part for part in (probe.error, probe.stderr) if part).lower()
+
+    if "permission denied (publickey)" in evidence or (
+        transport == "ssh" and "authentication failed" in evidence
+    ):
+        return (
+            "SSH_AUTHENTICATION_FAILED",
+            "SSH authentication failed; the configured SSH key was rejected or unavailable",
+        )
+    if "host key verification failed" in evidence:
+        return (
+            "SSH_HOST_KEY_VERIFICATION_FAILED",
+            "SSH host-key verification failed",
+        )
+    if (
+        "could not resolve hostname" in evidence
+        or "could not resolve host" in evidence
+        or "temporary failure in name resolution" in evidence
+    ):
+        return ("DNS_FAILED", "Remote host name resolution failed")
+    if "connection timed out" in evidence or "operation timed out" in evidence or "timed out after" in evidence:
+        return ("NETWORK_TIMEOUT", "Remote connection timed out")
+    if "connection refused" in evidence:
+        return ("CONNECTION_REFUSED", "Remote host refused the connection")
+    if "repository not found" in evidence or "does not appear to be a git repository" in evidence:
+        return ("REMOTE_REPOSITORY_NOT_FOUND", "Remote repository was not found or is not accessible")
+    if transport in {"http", "https"} and (
+        "authentication failed" in evidence
+        or "could not read username" in evidence
+        or "terminal prompts disabled" in evidence
+    ):
+        return (
+            "HTTPS_AUTHENTICATION_FAILED",
+            "HTTPS Git authentication failed or credentials are unavailable",
+        )
+    if transport == "ssh":
+        return ("SSH_REMOTE_ACCESS_FAILED", "SSH Git remote access failed")
+    return ("REMOTE_ACCESS_FAILED", "Git remote access failed")
+
+
 class GitDiagnosticService:
     """Non-mutating Git/GitHub diagnostics for one desired workspace."""
 
@@ -104,7 +147,15 @@ class GitDiagnosticService:
                 },
                 "repository": {"present": False},
                 "working_tree": {"clean": None, "entry_count": None},
-                "remote": {"configured": False, "name": None, "reachable": None},
+                "remote": {
+                    "configured": False,
+                    "name": None,
+                    "transport": None,
+                    "host": None,
+                    "reachable": None,
+                    "exit_code": None,
+                    "reason_code": None,
+                },
                 "github_cli": {"present": bool(gh), "authenticated": None},
                 "identity": {
                     "name_present": None,
@@ -137,6 +188,7 @@ class GitDiagnosticService:
             "host": None,
             "reachable": None,
             "exit_code": None,
+            "reason_code": None,
         }
 
         if repository_present:
@@ -169,11 +221,19 @@ class GitDiagnosticService:
                 )
                 remote_payload["reachable"] = remote_probe.ok
                 remote_payload["exit_code"] = remote_probe.exit_code
+                detail: str | None = None
+                if not remote_probe.ok:
+                    transport = remote_payload.get("transport")
+                    reason_code, detail = _remote_failure_projection(
+                        remote_probe,
+                        str(transport) if transport else None,
+                    )
+                    remote_payload["reason_code"] = reason_code
                 checks.append(
                     self._check(
                         "git-remote-access",
                         "PASS" if remote_probe.ok else "FAIL",
-                        None if remote_probe.ok else "git ls-remote failed",
+                        detail,
                     )
                 )
             else:
