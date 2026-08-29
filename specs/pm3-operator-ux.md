@@ -169,6 +169,44 @@ PM3 freezes:
 - successful mutation triggers authoritative refresh;
 - older generations MUST NOT overwrite newer projections.
 
+### Structured command outcomes
+
+The frontend MUST classify a public manager command from its structured JSON
+result before reducing a nonzero process status to a generic invocation error.
+
+A public read MAY deliberately return:
+
+```json
+{"ok": false, "checks": [...]}
+```
+
+with process status `1` to report a semantic negative result such as blocked
+planning, failed Git diagnostics, or an unhealthy doctor check. For a caller
+that accepts semantic negative results, status `1` plus a parsed JSON object
+with `ok=false` and no top-level structured `error` MUST remain a renderable
+manager result rather than becoming a frontend refresh failure.
+
+A caller that requires `ok=true`, a result containing a top-level structured
+`error`, invalid/non-object JSON, an unexplained nonzero status, launch failure,
+or timeout MUST fail closed.
+
+When a structured failure is rejected, the TUI MUST preserve its payload and
+surface the most useful bounded explanation available, in this precedence:
+
+```text
+error code + message
+first failed check name + detail
+first explicit error/conflict/attention reason
+command + process status fallback
+```
+
+If structured evidence exists, the user-visible message MUST NOT be reduced to
+only `manager exited with status <n>`.
+
+Instance refresh MUST NOT fail solely because optional Git diagnostics return a
+structured semantic negative result. The instance projection SHALL remain
+usable and the Git diagnostics evidence SHALL remain renderable.
+
 Discardable reads MAY be cancelled. A started mutation SHOULD NOT be killed by
 frontend navigation/cancellation. If its response is unavailable or times out,
 the frontend MUST report `Outcome unknown`, refresh authoritative manager state,
@@ -226,7 +264,8 @@ dependency.
 Pure verification MUST cover state derivation, projections, template/preview,
 plan fingerprints, stale declaration/apply/access rejection, atomic access edit,
 semantic plan descriptions, async generation suppression, mutation
-serialization/outcome-unknown behavior, no-secret/read-only raw surfaces,
+serialization/outcome-unknown behavior, structured semantic-negative reads,
+actionable structured failure messages, no-secret/read-only raw surfaces,
 Textual Pilot workflows, 80x24 and smaller rendering, same-release resolution,
 and deterministic isolated runtime installation.
 
