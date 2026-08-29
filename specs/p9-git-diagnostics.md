@@ -64,6 +64,29 @@ Remote selection is deterministic:
 An absent remote is a diagnostic warning. A configured remote that fails
 `ls-remote` is a diagnostic failure.
 
+## Remote failure classification
+
+When `git ls-remote` fails, the manager MUST inspect only bounded, already-redacted
+probe evidence internally and project a non-secret `reason_code` plus bounded
+operator detail. Raw probe stdout/stderr MUST remain excluded from the result.
+
+The classifier SHOULD distinguish at least:
+
+```text
+SSH_AUTHENTICATION_FAILED
+SSH_HOST_KEY_VERIFICATION_FAILED
+DNS_FAILED
+NETWORK_TIMEOUT
+CONNECTION_REFUSED
+REMOTE_REPOSITORY_NOT_FOUND
+HTTPS_AUTHENTICATION_FAILED
+SSH_REMOTE_ACCESS_FAILED
+REMOTE_ACCESS_FAILED
+```
+
+Classification MUST be deterministic and fail closed to the protocol-appropriate
+generic remote-access reason when no specific signature is recognized.
+
 ## GitHub CLI check
 
 When `gh` resolves from the configured PATH, run:
@@ -103,13 +126,21 @@ transport
 host
 reachable
 exit_code
+reason_code
 ```
+
+`reason_code` MUST contain only a manager-defined classification and MUST NOT
+contain subprocess output or remote path/user information.
 
 ## Result semantics
 
 The result exposes a `checks[]` array with `PASS`, `WARN`, or `FAIL` states.
 
 `ok=false` when any check is `FAIL`.
+
+A failed `git-remote-access` check MUST use the classified, bounded operator
+detail rather than the generic `git ls-remote failed` text when classification
+is available.
 
 Expected warnings that do not fail the diagnostic:
 
@@ -137,9 +168,10 @@ Qualification MUST prove:
 6. GitHub CLI auth diagnostic reports the current external auth state without
    emitting token material;
 7. Git identity diagnostic reports current state without configuration changes;
-8. real MCP `exec_command` resolves Git from the configured PATH;
-9. P7/P8 no-access baseline and tunnel health remain intact after cleanup;
-10. the full pure test suite remains green.
+8. failed remote probes project reason codes without returning raw probe output;
+9. real MCP `exec_command` resolves Git from the configured PATH;
+10. P7/P8 no-access baseline and tunnel health remain intact after cleanup;
+11. the full pure test suite remains green.
 
 Final gate:
 
