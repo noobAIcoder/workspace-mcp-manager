@@ -22,6 +22,7 @@ READ_TIMEOUT_SECONDS = 30.0
 LONG_READ_TIMEOUT_SECONDS = 180.0
 MUTATION_TIMEOUT_SECONDS = 180.0
 SNAPSHOT_MAX_BYTES = 64 * 1024
+FAILURE_CHECK_STATUSES = frozenset({"FAIL", "FAILED", "ERROR", "BLOCKED"})
 
 
 class TuiError(RuntimeError):
@@ -95,6 +96,55 @@ class MutationCoordinator:
             return bool(self._active)
 
 
+def _failure_item_text(item: Any) -> str | None:
+    if isinstance(item, Mapping):
+        label = item.get("name") or item.get("code") or item.get("reason_code") or "failure"
+        detail = item.get("detail") or item.get("message") or item.get("reason")
+        return f"{label}: {detail}" if detail else str(label)
+    if item is None:
+        return None
+    text = str(item).strip()
+    return text or None
+
+
+def _semantic_failure_message(payload: Mapping[str, Any]) -> str | None:
+    checks = payload.get("checks")
+    if isinstance(checks, list):
+        failures = [
+            text
+            for item in checks
+            if isinstance(item, Mapping)
+            and str(item.get("status", "")).upper() in FAILURE_CHECK_STATUSES
+            and (text := _failure_item_text(item)) is not None
+        ]
+        if failures:
+            suffix = f" (+{len(failures) - 1} more)" if len(failures) > 1 else ""
+            return failures[0] + suffix
+
+    for key in ("errors", "conflicts", "attention_reasons"):
+        values = payload.get(key)
+        if isinstance(values, list) and values:
+            text = _failure_item_text(values[0])
+            if text:
+                suffix = f" (+{len(values) - 1} more)" if len(values) > 1 else ""
+                return text + suffix
+
+    collision = payload.get("collision_result")
+    if isinstance(collision, Mapping):
+        conflicts = collision.get("conflicts")
+        if isinstance(conflicts, list) and conflicts:
+            text = _failure_item_text(conflicts[0])
+            if text:
+                suffix = f" (+{len(conflicts) - 1} more)" if len(conflicts) > 1 else ""
+                return text + suffix
+
+    for key in ("reason_code", "reason", "message"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
+
+
 def _error_message(payload: Mapping[str, Any], fallback: str) -> str:
     error = payload.get("error")
     if isinstance(error, Mapping):
@@ -104,7 +154,7 @@ def _error_message(payload: Mapping[str, Any], fallback: str) -> str:
             return f"{code}: {message}"
         if message:
             return str(message)
-    return fallback
+    return _semantic_failure_message(payload) or fallback
 
 
 def _release_root() -> Path:
@@ -290,6 +340,7 @@ class ManagerClient:
                     mutation=False,
                 )
 
+        command = " ".join(args)
         payload_text = stdout.strip()
         if not payload_text and stderr.strip().startswith("{"):
             payload_text = stderr.strip()
@@ -297,13 +348,22 @@ class ManagerClient:
             decoded = json.loads(payload_text) if payload_text else {}
         except json.JSONDecodeError as exc:
             evidence = (stderr or stdout).strip()[-2000:]
-            raise TuiError(f"manager returned invalid JSON: {evidence}") from exc
+            raise TuiError(f"{command}: manager returned invalid JSON: {evidence}") from exc
         if not isinstance(decoded, Mapping):
-            raise TuiError("manager returned a non-object JSON result")
+            raise TuiError(f"{command}: manager returned a non-object JSON result")
         payload = dict(decoded)
+        structured_error = isinstance(payload.get("error"), Mapping)
+        semantic_negative = returncode == 1 and payload.get("ok") is False and not structured_error
+        if semantic_negative and not require_ok:
+            return ManagerInvocation(argv, returncode, payload)
         if returncode != 0 or (require_ok and payload.get("ok") is False):
+            fallback = (
+                f"manager exited with status {returncode}"
+                if returncode != 0
+                else "manager reported ok=false"
+            )
             raise TuiError(
-                _error_message(payload, f"manager exited with status {returncode}"),
+                f"{command}: {_error_message(payload, fallback)}",
                 payload=payload,
             )
         return ManagerInvocation(argv, returncode, payload)
