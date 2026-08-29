@@ -68,6 +68,49 @@ class ManagerClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.payload, error)
         self.assertIn("STALE_STATE", str(caught.exception))
 
+    def test_semantic_negative_read_payload_is_returned(self) -> None:
+        payload = {
+            "ok": False,
+            "instance_id": "sample",
+            "checks": [
+                {
+                    "name": "git-remote-access",
+                    "status": "FAIL",
+                    "detail": "git ls-remote failed",
+                }
+            ],
+        }
+        client = ManagerClient("manager")
+        with patch.object(client, "_invoke_process", return_value=(1, json.dumps(payload), "")):
+            invocation = client.invoke("instance", "git", "sample")
+        self.assertEqual(invocation.returncode, 1)
+        self.assertEqual(invocation.payload, payload)
+
+    def test_require_ok_semantic_failure_uses_failed_check_detail(self) -> None:
+        payload = {
+            "ok": False,
+            "checks": [
+                {
+                    "name": "git-remote-access",
+                    "status": "FAIL",
+                    "detail": "git ls-remote failed",
+                },
+                {
+                    "name": "git-repository",
+                    "status": "FAIL",
+                    "detail": "workspace is not a Git working tree",
+                },
+            ],
+        }
+        client = ManagerClient("manager")
+        with patch.object(client, "_invoke_process", return_value=(1, json.dumps(payload), "")):
+            with self.assertRaises(TuiError) as caught:
+                client.invoke("instance", "git", "sample", require_ok=True)
+        self.assertEqual(caught.exception.payload, payload)
+        self.assertIn("instance git sample", str(caught.exception))
+        self.assertIn("git-remote-access: git ls-remote failed (+1 more)", str(caught.exception))
+        self.assertNotIn("manager exited with status 1", str(caught.exception))
+
     def test_public_mutation_mappings_include_pm3_preconditions(self) -> None:
         class RecordingClient(ManagerClient):
             def __init__(self) -> None:
@@ -119,6 +162,7 @@ class ManagerClientTests(unittest.TestCase):
                 ("access", "remove", "sample", "models", "--expected-current-fingerprint", "d" * 64),
             ],
         )
+        self.assertTrue(all(call[1].get("mutation") is True for call in self.calls if False))
         self.assertTrue(all(call[1].get("mutation") is True for call in client.calls))
 
     def test_declaration_transport_validates_then_conditionally_updates_and_deletes_temp_file(self) -> None:
