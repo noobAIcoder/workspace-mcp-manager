@@ -162,7 +162,6 @@ class ManagerClientTests(unittest.TestCase):
                 ("access", "remove", "sample", "models", "--expected-current-fingerprint", "d" * 64),
             ],
         )
-        self.assertTrue(all(call[1].get("mutation") is True for call in self.calls if False))
         self.assertTrue(all(call[1].get("mutation") is True for call in client.calls))
 
     def test_declaration_transport_validates_then_conditionally_updates_and_deletes_temp_file(self) -> None:
