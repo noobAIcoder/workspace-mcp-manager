@@ -76,6 +76,7 @@ class GitDiagnosticTests(unittest.TestCase):
             self.assertEqual(payload["environment"]["path"], desired.mcp.exec_path)
             self.assertEqual(payload["remote"]["transport"], "https")
             self.assertEqual(payload["remote"]["host"], "github.com")
+            self.assertIsNone(payload["remote"]["reason_code"])
             self.assertNotIn("secret-token", repr(payload))
             self.assertTrue(observed_envs)
             for env in observed_envs:
@@ -126,7 +127,7 @@ class GitDiagnosticTests(unittest.TestCase):
             self.assertEqual(statuses["git-identity"], "WARN")
             self.assertEqual(statuses["github-cli-auth"], "WARN")
 
-    def test_configured_remote_failure_fails_diagnostic(self) -> None:
+    def test_configured_ssh_authentication_failure_is_classified_without_raw_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             desired = desired_for(root)
@@ -143,9 +144,9 @@ class GitDiagnosticTests(unittest.TestCase):
                 if "get-url" in command:
                     return result(command, stdout="git@github.com:acme/repo.git\n")
                 if "ls-remote" in command:
-                    return result(command, code=128, stderr="authentication failed")
+                    return result(command, code=128, stderr="git@github.com: Permission denied (publickey).\n")
                 if command[-1] in {"user.name", "user.email"}:
-                    return result(command, code=1)
+                    return result(command, stdout="Operator\n")
                 if command[-2:] == ("auth", "status"):
                     return result(command)
                 raise AssertionError(command)
@@ -157,7 +158,44 @@ class GitDiagnosticTests(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertFalse(payload["remote"]["reachable"])
             self.assertEqual(payload["remote"]["exit_code"], 128)
-            self.assertNotIn("authentication failed", repr(payload))
+            self.assertEqual(payload["remote"]["reason_code"], "SSH_AUTHENTICATION_FAILED")
+            check = next(item for item in payload["checks"] if item["name"] == "git-remote-access")
+            self.assertEqual(check["detail"], "SSH authentication failed; the configured SSH key was rejected or unavailable")
+            self.assertNotIn("Permission denied", repr(payload))
+            self.assertNotIn("git@github.com", repr(payload))
+
+    def test_configured_remote_dns_failure_is_classified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            desired = desired_for(root)
+            service = GitDiagnosticService(paths_for(root))
+
+            def fake_run(argv, _env, **_kwargs):
+                command = tuple(argv)
+                if command[-2:] == ("rev-parse", "--is-inside-work-tree"):
+                    return result(command, stdout="true\n")
+                if "status" in command:
+                    return result(command, stdout="")
+                if command[-1] == "remote":
+                    return result(command, stdout="origin\n")
+                if "get-url" in command:
+                    return result(command, stdout="git@github.com:acme/repo.git\n")
+                if "ls-remote" in command:
+                    return result(command, code=128, stderr="ssh: Could not resolve hostname github.com: Temporary failure in name resolution\n")
+                if command[-1] in {"user.name", "user.email"}:
+                    return result(command, stdout="Operator\n")
+                if command[-2:] == ("auth", "status"):
+                    return result(command)
+                raise AssertionError(command)
+
+            with patch.object(service, "_which", side_effect=lambda name, _desired: f"/usr/bin/{name}"), \
+                 patch.object(service, "_run", side_effect=fake_run):
+                payload = service.run(desired)
+
+            self.assertEqual(payload["remote"]["reason_code"], "DNS_FAILED")
+            check = next(item for item in payload["checks"] if item["name"] == "git-remote-access")
+            self.assertEqual(check["detail"], "Remote host name resolution failed")
+            self.assertNotIn("Temporary failure in name resolution", repr(payload))
 
 
 if __name__ == "__main__":
