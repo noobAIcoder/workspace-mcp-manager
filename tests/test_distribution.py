@@ -22,8 +22,8 @@ BOOTSTRAP = ROOT / "bootstrap.sh"
 A_COMMIT = "a" * 40
 B_COMMIT = "b" * 40
 TUNNEL_IDENTITY = (
-    "0.0.11+8d55683eeef80bc5e360d95abf4692454fafc615 "
-    "(git sha: 8d55683eeef80bc5e360d95abf4692454fafc615)"
+    "0.0.15+a390c168ff1b2d14e73a95991c186c6aba3ff5a0 "
+    "(git sha: a390c168ff1b2d14e73a95991c186c6aba3ff5a0)"
 )
 
 
@@ -62,7 +62,7 @@ def shlex_quote(value: str) -> str:
     return shlex.quote(value)
 
 
-def make_uv_archive(path: Path) -> None:
+def make_uv_archive(path: Path, arch="x86_64") -> None:
     uv_script = r'''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "--version" ]]; then
@@ -88,7 +88,7 @@ if [[ "$target" == *"tui-runtime/site-packages" ]]; then
   exit 0
 fi
 if [[ "$target" == *"runtimes/coding-tools-mcp/site-packages" ]]; then
-  mkdir -p "$target/coding_tools_mcp" "$target/coding_tools_mcp-0.3.0.dist-info"
+  mkdir -p "$target/coding_tools_mcp" "$target/coding_tools_mcp-0.5.0.dist-info"
   printf '' > "$target/coding_tools_mcp/__init__.py"
   cat > "$target/coding_tools_mcp/server.py" <<'PY'
 import argparse
@@ -98,10 +98,10 @@ def main():
     parser.parse_args()
     return 0
 PY
-  cat > "$target/coding_tools_mcp-0.3.0.dist-info/METADATA" <<'EOF'
+  cat > "$target/coding_tools_mcp-0.5.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: coding-tools-mcp
-Version: 0.3.0
+Version: 0.5.0
 EOF
   exit 0
 fi
@@ -110,11 +110,14 @@ exit 92
 '''
     uvx_script = "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'uvx 0.12.3\\n'\n"
     with tarfile.open(path, "w:gz") as archive:
-        add_tar_file(archive, "uv-x86_64-unknown-linux-gnu/uv", uv_script.encode(), 0o755)
-        add_tar_file(archive, "uv-x86_64-unknown-linux-gnu/uvx", uvx_script.encode(), 0o755)
+        directory = tarfile.TarInfo(f"uv-{arch}-unknown-linux-gnu")
+        directory.type = tarfile.DIRTYPE; directory.mode = 0o755
+        archive.addfile(directory)
+        add_tar_file(archive, f"uv-{arch}-unknown-linux-gnu/uv", uv_script.encode(), 0o755)
+        add_tar_file(archive, f"uv-{arch}-unknown-linux-gnu/uvx", uvx_script.encode(), 0o755)
 
 
-def make_tunnel_archive(path: Path) -> None:
+def make_tunnel_archive(path: Path, arch="amd64") -> None:
     tunnel = f"#!/usr/bin/env bash\nset -euo pipefail\nif [[ \"${{1:-}}\" == \"--version\" ]]; then printf '%s\\n' {shlex_quote(TUNNEL_IDENTITY)}; exit 0; fi\nexit 0\n"
     cloudflared = "#!/usr/bin/env bash\nexit 0\n"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -123,6 +126,9 @@ def make_tunnel_archive(path: Path) -> None:
             ("cloudflared", cloudflared.encode(), 0o755),
             ("cloudflared-manifest.json", b"{}\n", 0o644),
             ("LICENSE", b"qualification fixture\n", 0o644),
+            ("NOTICE", b"fixture\n", 0o644),
+            (f"tunnel-client-v0.0.15-linux-{arch}-licenses.txt", b"fixture\n", 0o644),
+            (f"tunnel-client-v0.0.15-linux-{arch}.spdx.json", b"{}\n", 0o644),
         ):
             info = zipfile.ZipInfo(name)
             info.external_attr = mode << 16
@@ -130,7 +136,8 @@ def make_tunnel_archive(path: Path) -> None:
 
 
 class DistributionFixture:
-    def __init__(self, root: Path, *, commit: str = A_COMMIT) -> None:
+    def __init__(self, root: Path, *, commit: str = A_COMMIT, arch="x86_64") -> None:
+        self.arch = arch
         self.root = root
         self.repo = root / "repo"
         self.artifacts = root / "artifacts"
@@ -140,18 +147,23 @@ class DistributionFixture:
         self.artifacts.mkdir(parents=True)
         self._build_artifacts()
         self._build_repo()
+        self.host_bin = self.root / 'host-bin'
+        self.host_bin.mkdir()
+        write_executable(self.host_bin / 'uname', '#!/bin/sh\ncase "$1" in -m) echo ' + self.arch + ';; -r) echo ' + ('6.6-native' if self.arch == 'aarch64' else '6.6-microsoft-standard-WSL2') + ';; *) exec /usr/bin/uname "$@";; esac\n')
+        write_executable(self.host_bin / 'grep', '#!/bin/sh\ncase "$*" in *"^ID="*"/etc/os-release") echo ID=ubuntu;; *"^VERSION_ID="*"/etc/os-release") echo VERSION_ID=' + ('22.04' if self.arch == 'aarch64' else '24.04') + ';; *) exec /usr/bin/grep "$@";; esac\n')
+        write_executable(self.host_bin / 'systemctl', '#!/bin/sh\nif [ "$*" = "--user show-environment" ]; then printf "HOME=%s\\n" "$HOME"; else echo "fixture rejects service operations" >&2; exit 91; fi\n')
 
     def _build_artifacts(self) -> None:
         self.python_archive = self.artifacts / "python-test.tar.gz"
         self.python_identity = make_python_archive(self.python_archive)
         self.uv_archive = self.artifacts / "uv-test.tar.gz"
-        make_uv_archive(self.uv_archive)
-        self.coding_wheel = self.artifacts / "coding_tools_mcp-0.3.0-py3-none-any.whl"
+        make_uv_archive(self.uv_archive, self.arch)
+        self.coding_wheel = self.artifacts / "coding_tools_mcp-0.5.0-py3-none-any.whl"
         self.coding_wheel.write_bytes(b"qualification coding-tools wheel\n")
         self.pyjwt_wheel = self.artifacts / "PyJWT-2.10.1-py3-none-any.whl"
         self.pyjwt_wheel.write_bytes(b"qualification pyjwt wheel\n")
         self.tunnel_archive = self.artifacts / "tunnel-test.zip"
-        make_tunnel_archive(self.tunnel_archive)
+        make_tunnel_archive(self.tunnel_archive, "arm64" if self.arch == "aarch64" else "amd64")
 
     def _build_repo(self) -> None:
         self.repo.mkdir(parents=True)
@@ -164,7 +176,7 @@ class DistributionFixture:
             shutil.copy2(ROOT / "scripts" / name, self.repo / "scripts" / name)
 
         coding_lock = (
-            "coding-tools-mcp==0.3.0 \\\n"
+            "coding-tools-mcp==0.5.0 \\\n"
             f"    --hash=sha256:{sha256(self.coding_wheel)}\n"
             "PyJWT==2.10.1 \\\n"
             f"    --hash=sha256:{sha256(self.pyjwt_wheel)}\n"
@@ -174,7 +186,7 @@ class DistributionFixture:
         lock = {
             "schema_version": 1,
             "platform": "linux",
-            "architecture": "x86_64",
+            "architecture": self.arch,
             "components": {
                 "python": {
                     "version": self.python_identity.removeprefix("Python "),
@@ -183,7 +195,7 @@ class DistributionFixture:
                     "acquisition_location": "https://qualification.invalid/python-test.tar.gz",
                     "sha256": sha256(self.python_archive),
                     "platform": "linux",
-                    "architecture": "x86_64",
+                    "architecture": self.arch,
                     "dependency_lock_identity": None,
                     "dependencies": [],
                     "validator_id": "cpython-3.12",
@@ -196,20 +208,20 @@ class DistributionFixture:
                     "acquisition_location": "https://qualification.invalid/uv-test.tar.gz",
                     "sha256": sha256(self.uv_archive),
                     "platform": "linux",
-                    "architecture": "x86_64",
+                    "architecture": self.arch,
                     "dependency_lock_identity": None,
                     "dependencies": [],
                     "validator_id": "uv-cli",
                     "expected_observable_identity": "uv 0.12.3",
                 },
                 "coding_tools_mcp": {
-                    "version": "0.3.0",
+                    "version": "0.5.0",
                     "source_kind": "pypi_wheel",
-                    "source_identity": "qualification/coding_tools_mcp-0.3.0-py3-none-any.whl",
-                    "acquisition_location": "https://qualification.invalid/coding_tools_mcp-0.3.0-py3-none-any.whl",
+                    "source_identity": "qualification/coding_tools_mcp-0.5.0-py3-none-any.whl",
+                    "acquisition_location": "https://qualification.invalid/coding_tools_mcp-0.5.0-py3-none-any.whl",
                     "sha256": sha256(self.coding_wheel),
                     "platform": "linux",
-                    "architecture": "x86_64",
+                    "architecture": self.arch,
                     "dependency_lock_identity": f"requirements-coding-tools.lock@sha256:{coding_lock_sha}",
                     "dependencies": [
                         {
@@ -220,20 +232,20 @@ class DistributionFixture:
                             "sha256": sha256(self.pyjwt_wheel),
                         }
                     ],
-                    "validator_id": "coding-tools-mcp-0.3",
-                    "expected_observable_identity": "0.3.0",
+                    "validator_id": "coding-tools-mcp-0.5",
+                    "expected_observable_identity": "0.5.0",
                 },
                 "tunnel_client": {
-                    "version": "0.0.11",
+                    "version": "0.0.15",
                     "source_kind": "github_release_asset",
                     "source_identity": "qualification/tunnel-test.zip",
                     "acquisition_location": "https://qualification.invalid/tunnel-test.zip",
                     "sha256": sha256(self.tunnel_archive),
                     "platform": "linux",
-                    "architecture": "x86_64",
+                    "architecture": self.arch,
                     "dependency_lock_identity": None,
                     "dependencies": [],
-                    "validator_id": "tunnel-client-0.0.11",
+                    "validator_id": "tunnel-client-0.0.15",
                     "expected_observable_identity": TUNNEL_IDENTITY,
                 },
             },
@@ -267,6 +279,7 @@ class DistributionFixture:
     def run(self, *extra: str, commit: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["HOME"] = str(self.home)
+        env["PATH"] = str(self.host_bin) + os.pathsep + env["PATH"]
         return subprocess.run(
             self.args(*extra, commit=commit),
             stdin=subprocess.DEVNULL,
@@ -281,6 +294,7 @@ class DistributionFixture:
     def recover(self) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["HOME"] = str(self.home)
+        env["PATH"] = str(self.host_bin) + os.pathsep + env["PATH"]
         return subprocess.run(
             [
                 "bash",
@@ -361,6 +375,60 @@ def snapshot_tree(path: Path) -> dict[str, tuple[str, str, int, int]]:
 
 
 class DistributionInputTests(unittest.TestCase):
+    def test_native_arm_distribution_stages_selected_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(Path(directory), arch="aarch64")
+            result = fixture.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = json.loads((fixture.prefix / "lib/workspace-mcp-manager/current/distribution/install-versions.lock").read_text())
+            self.assertEqual(staged['architecture'], 'aarch64')
+
+    def test_repository_runtime_lock_is_consistent(self) -> None:
+        script = INSTALLER.read_text()
+        function = script[script.index("strict_lock_validate() {"):script.index("lock_get() {")]
+        harness = "set -euo pipefail\ndie() { echo \"$*\" >&2; exit 1; }\n" + function + '\nstrict_lock_validate "$REPO/install-versions.lock"\n'
+        result = subprocess.run(
+            ["bash", "-c", harness],
+            env={**os.environ, "BOOTSTRAP_PYTHON": sys.executable, "REPO": str(ROOT)},
+            text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_tunnel_archive_layout_is_exact(self) -> None:
+        script = INSTALLER.read_text()
+        function = script[script.index("provision_tunnel_client() {"):script.index("stage_distribution_frontends() {")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / "original.zip"
+            make_tunnel_archive(original)
+            with zipfile.ZipFile(original) as archive:
+                entries = [(info, archive.read(info)) for info in archive.infolist()]
+            for case in ("valid", "missing", "unexpected", "duplicate", "unsafe"):
+                with self.subTest(case=case):
+                    candidate = root / f"{case}.zip"
+                    selected = entries[:-1] if case == "missing" else list(entries)
+                    if case == "unexpected":
+                        selected.append((zipfile.ZipInfo("extra"), b"extra"))
+                    if case == "duplicate":
+                        selected.append(entries[0])
+                    if case == "unsafe":
+                        selected.append((zipfile.ZipInfo("../escape"), b"unsafe"))
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        with zipfile.ZipFile(candidate, "w") as archive:
+                            for info, body in selected:
+                                archive.writestr(info, body)
+                    harness = """set -euo pipefail
+lock_get() { if [[ "$2" == expected_observable_identity ]]; then printf '%s' "$IDENTITY"; else printf fixture; fi; }
+acquire_artifact() { printf '%s' "$ARTIFACT"; }
+die() { echo "$*" >&2; exit 1; }
+""" + function + '\nprovision_tunnel_client "$STAGE" unused\n'
+                    result = subprocess.run(["bash", "-c", harness], env={**os.environ, "ARTIFACT": str(candidate), "STAGE": str(root / case), "IDENTITY": TUNNEL_IDENTITY}, text=True, capture_output=True)
+                    self.assertEqual(result.returncode == 0, case == "valid", result.stderr)
+                    if case != "valid":
+                        self.assertIn("archive layout is unexpected", result.stderr)
+
     def test_valid_strict_lock_is_accepted_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fixture = DistributionFixture(Path(directory))
@@ -722,10 +790,12 @@ class DistributionAcquisitionTests(unittest.TestCase):
             )
             env = os.environ.copy()
             env["HOME"] = str(home)
+            env["PATH"] = str(fixture.host_bin) + os.pathsep + env["PATH"]
             completed = subprocess.run(
                 [
                     "bash",
                     str(BOOTSTRAP),
+                    "--non-interactive",
                     "--qualification",
                     "--repository",
                     remote.as_uri(),
@@ -757,9 +827,11 @@ class DistributionAcquisitionTests(unittest.TestCase):
             home = root / "home"
             env = os.environ.copy()
             env["HOME"] = str(home)
+            env["PATH"] = str(fixture.host_bin) + os.pathsep + env["PATH"]
             base = [
                 "bash",
                 str(BOOTSTRAP),
+                "--non-interactive",
                 "--qualification",
                 "--repository",
                 remote.as_uri(),

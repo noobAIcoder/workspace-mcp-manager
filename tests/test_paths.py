@@ -26,6 +26,13 @@ class PathsTests(unittest.TestCase):
         self.assertTrue(paths.registry_dir.is_absolute())
         self.assertEqual(paths.registry_dir.name, "relative-registry")
 
+class InstalledPrefixTests(unittest.TestCase):
+    def test_installed_manager_host_bridge_uses_its_distribution_prefix(self):
+        release = Path('/tmp/custom-prefix/lib/workspace-mcp-manager/releases/dist-' + 'a' * 40)
+        with patch('workspace_mcp_manager.distribution_runtime.executing_distribution_root', return_value=release):
+            paths = ManagerPaths.for_current_user()
+        self.assertEqual(paths.manager_executable, Path('/tmp/custom-prefix/bin/workspace-mcp-manager'))
+
 
 if __name__ == "__main__":
     unittest.main()

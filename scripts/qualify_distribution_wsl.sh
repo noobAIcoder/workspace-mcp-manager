@@ -39,6 +39,7 @@ curl -fsSL -o "$BOOTSTRAP" \
 bash -n "$BOOTSTRAP" || fail "bootstrap syntax validation failed"
 
 bash "$BOOTSTRAP" \
+  --non-interactive \
   --qualification \
   --repository "$REPOSITORY" \
   --ref "$RELEASE_REF" \
@@ -85,15 +86,21 @@ for name in workspace-mcp-manager workspace-mcp-manager-tui workspace-mcp-reboot
     || fail "stable entrypoint target mismatch: $name"
 done
 
+[ "$(readlink "$PREFIX/bin/workspace-mcp-manager-setup")" = "../lib/workspace-mcp-manager/releases/${RELEASE##*/}/bin/workspace-mcp-manager-setup" ] \
+  || fail "setup maintenance anchor mismatch"
+printf '0\n' | "$PREFIX/bin/workspace-mcp-manager-setup" --interactive \
+  >"$TMP_ROOT/setup-menu.txt" || fail "offline setup menu exit failed"
+grep -q 'Uninstall' "$TMP_ROOT/setup-menu.txt" || fail "setup menu actions missing"
+
 [ "$($RELEASE/runtimes/python/bin/python3 --version)" = "Python 3.12.13" ] || fail "distribution Python mismatch"
 [ "$($RELEASE/tools/uv/uv --version)" = "uv 0.12.3 (x86_64-unknown-linux-gnu)" ] || fail "distribution uv mismatch"
 [ "$($RELEASE/runtimes/tunnel-client/tunnel-client --version)" = \
-  "0.0.11+8d55683eeef80bc5e360d95abf4692454fafc615 (git sha: 8d55683eeef80bc5e360d95abf4692454fafc615)" ] \
+  "0.0.15+a390c168ff1b2d14e73a95991c186c6aba3ff5a0 (git sha: a390c168ff1b2d14e73a95991c186c6aba3ff5a0)" ] \
   || fail "distribution tunnel-client mismatch"
 CODING_VERSION="$(CODING_SITE="$RELEASE/runtimes/coding-tools-mcp/site-packages" \
   "$RELEASE/runtimes/python/bin/python3" -B -I -S -c \
   'import importlib.metadata,os,sys; sys.path.insert(0,os.environ["CODING_SITE"]); print(importlib.metadata.version("coding-tools-mcp"))')"
-[ "$CODING_VERSION" = "0.3.0" ] || fail "distribution coding-tools-mcp mismatch"
+[ "$CODING_VERSION" = "0.5.0" ] || fail "distribution coding-tools-mcp mismatch"
 
 tree_digest() {
   tar -C "$ISO_HOME" --sort=name --format=gnu -cf - \
@@ -113,6 +120,7 @@ assert p["recovery_required"] is False and p["receipt_consistent"] is True, p
 PY
 
 bash "$BOOTSTRAP" \
+  --non-interactive \
   --qualification --repository "$REPOSITORY" --ref "$RELEASE_REF" --account-home "$ISO_HOME" \
   >"$TMP_ROOT/reinstall.out" 2>"$TMP_ROOT/reinstall.err" \
   || fail "same-release bootstrap rerun failed"

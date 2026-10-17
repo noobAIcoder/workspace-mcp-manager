@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from . import __version__
 from .access import AccessManager
 from .cleanup import LegacyCleanupService
+from .legacy_import import LegacyImportService
 from .codex_jobs import CodexJobManager
 from .diagnostics import DEFAULT_SINCE_SECONDS, ResilienceDiagnosticService
 from .domain import DesiredInstance
@@ -63,6 +64,14 @@ def _load_declaration(path: Path) -> DesiredInstance:
     return DesiredInstance.from_json(text)
 
 
+def _load_import_json(path: Path) -> dict[str, Any]:
+    try:
+        from .maintenance import read_json
+        return read_json(path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ManagerError(ErrorCode.CONFIG_INVALID, 'cannot read import JSON document') from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="workspace-mcp-manager")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -105,6 +114,19 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "update":
             item.add_argument("--expected-current-fingerprint")
         item.add_argument("--pretty", action="store_true")
+    imports = instance_sub.add_parser("import")
+    import_sub = imports.add_subparsers(dest="import_action", required=True)
+    imp_list = import_sub.add_parser("list")
+    imp_list.add_argument("--pretty", action="store_true")
+    imp_preview = import_sub.add_parser("preview")
+    imp_preview.add_argument("instance_ids", nargs="*")
+    imp_preview.add_argument("--all", action="store_true", help="select all legacy instances; retire the toolkit if none remain")
+    imp_preview.add_argument("--candidate", type=Path, help="reviewed v2 declaration map for unresolved service intent")
+    imp_preview.add_argument("--pretty", action="store_true")
+    imp_apply = import_sub.add_parser("apply")
+    imp_apply.add_argument("--preview", type=Path, required=True)
+    imp_apply.add_argument("--expected-preview-fingerprint", required=True)
+    imp_apply.add_argument("--pretty", action="store_true")
     list_cmd = instance_sub.add_parser("list")
     list_cmd.add_argument("--pretty", action="store_true")
     show_cmd = instance_sub.add_parser("show")
@@ -238,6 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("tunnel", "admission-guard"):
         item = runtime_sub.add_parser(command)
         item.add_argument("instance_id")
+    runtime_import = runtime_sub.add_parser("import")
+    runtime_import.add_argument("action", choices=("list", "preview", "apply", "recover"))
     runtime_registry = runtime_sub.add_parser("registry-write")
     runtime_registry.add_argument("action", choices=("create", "update"))
     runtime_registry.add_argument("--expected-current-fingerprint")
@@ -371,6 +395,14 @@ def _run_instance(
     paths: ManagerPaths,
 ) -> dict[str, Any]:
     bridge = HostExecutionBridge(paths)
+    if args.command == "import":
+        if args.import_action == "list":
+            request = {}
+        elif args.import_action == "preview":
+            request = {"selected": args.instance_ids, "all": args.all, "resolutions": _load_import_json(args.candidate) if args.candidate else {}}
+        else:
+            request = {"preview": _load_import_json(args.preview), "expected_fingerprint": args.expected_preview_fingerprint}
+        return bridge.run_import(args.import_action, request)
     if args.command in {"validate", "create", "update"}:
         desired = _load_declaration(args.file)
         if args.command == "validate":
@@ -478,6 +510,21 @@ def _run_runtime(
     registry: InstanceRegistry,
     paths: ManagerPaths,
 ) -> dict[str, Any] | None:
+    if args.command == "import":
+        service = LegacyImportService(paths, registry)
+        try:
+            request = json.load(sys.stdin) if args.action != "list" else {}
+            if not isinstance(request, dict):
+                raise ValueError('object required')
+        except (ValueError, OSError) as exc:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, 'invalid import request JSON') from exc
+        if args.action == "list":
+            return service.list()
+        if args.action == "preview":
+            return service.preview(service.legacy_ids() if request.get("all") else request["selected"], resolutions=request.get("resolutions", {}))
+        if args.action == "apply":
+            return service.apply(request["preview"], request["expected_fingerprint"])
+        return service.recover()
     if args.command == "registry-write":
         text = sys.stdin.read()
         desired = DesiredInstance.from_json(text)

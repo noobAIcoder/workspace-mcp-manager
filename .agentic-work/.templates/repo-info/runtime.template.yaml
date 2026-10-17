@@ -1,0 +1,86 @@
+# repo_runtime.v2 owns this schema. Every displayed mapping key is required;
+# list rows are repeatable shapes. null/<...> are unknown; [] records no entries.
+# Incompatible with v1: explicit evidence status and references replace policy.
+# Paths/cwd are repository-root-relative; authority_refs.kind identifies external
+# locators. Commands are observations, not instructions or execution permission.
+schema: repo_runtime.v2
+role: observed_runtime_facts
+audience: coding_agents
+provenance:
+  status: unverified
+  repository_commit: null
+  verified_at: null
+  environment: null
+  evidence_source: null
+stack:
+  languages:
+    - id: "<language-id>"
+      name: null
+      version: null
+  runtimes:
+    - id: "<runtime-id>"
+      name: null
+      version: null
+  package_managers:
+    - id: "<manager-id>"
+      name: null
+      version: null
+  frameworks:
+    - id: "<framework-id>"
+      name: null
+      version: null
+  state:
+    - id: "<state-id>"
+      kind: null
+      location: null
+  external_services: []
+environment:
+  target_os: null
+  target_hardware: null
+  shell: null
+  path_assumptions: []
+  network_assumptions: []
+surfaces:
+  - id: "<surface-id>"
+    kind: null
+    entrypoint: null
+    bind: null
+    port: null  # integer when known
+    protocol: null
+commands:
+  - id: "<command-id>"
+    kind: null
+    cwd: null
+    run: null
+    prerequisites: []
+    evidence: null
+service_managers:
+  - id: "<service-id>"
+    manager: null
+env:
+  files:
+    - id: "<env-file-id>"
+      path: null
+      purpose: null
+      policy_refs: []  # IDs in authority_refs, never an inline commit policy
+  variables:
+    - id: "<env-var-id>"
+      name: null
+      observed_required: null  # boolean runtime observation when known
+      secret: null  # boolean when known; never include the variable's value
+      purpose: null
+deployment:
+  platform: null
+  persistent_storage: null
+  public_entrypoint: null
+  operator_entrypoint: null
+observations:
+  - id: "<observation-id>"
+    statement: null
+    evidence: null
+authority_refs:
+  - id: "<authority-id>"
+    kind: "<repository|external>"
+    source: null
+    revision: null
+    sections: []

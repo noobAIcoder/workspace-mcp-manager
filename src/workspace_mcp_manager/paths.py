@@ -91,6 +91,11 @@ class ManagerPaths:
             else config_root / "instances"
         )
         state_root = account_home / ".local" / "state" / "workspace-mcp-manager"
+        # Installed frontends must dispatch host work through their own prefix,
+        # including a nondefault prefix selected by the setup wizard.
+        from .distribution_runtime import executing_distribution_root
+        release = executing_distribution_root()
+        prefix = release.parents[3] if release is not None else account_home / '.local'
         return cls(
             account_home=account_home,
             config_root=config_root,
@@ -98,6 +103,6 @@ class ManagerPaths:
             state_root=state_root,
             user_unit_dir=account_home / ".config" / "systemd" / "user",
             tunnel_profile_dir=config_root / "tunnel-profiles",
-            manager_executable=account_home / ".local" / "bin" / "workspace-mcp-manager",
+            manager_executable=prefix / "bin" / "workspace-mcp-manager",
         )
 

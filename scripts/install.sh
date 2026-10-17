@@ -30,6 +30,11 @@ Modes:
   --check                Read-only local/candidate inspection
 
 Options:
+  --maintenance-status   Read-only offline maintenance status
+  --maintenance-preview ACTION  Preview rollback or uninstall (JSON)
+  --maintenance-apply    Apply a preview read from stdin
+  --maintenance-target ID  Retained release for rollback
+  --confirmation TEXT   Explicit maintenance confirmation
   --configure            Launch the installed TUI after a successful commit/NOOP
   --repo PATH            Source checkout (default: parent of scripts/)
   --account-home PATH    Target account home (default: $HOME)
@@ -144,17 +149,23 @@ atomic_file_from_stdin() {
 }
 
 bootstrap_python_check() {
-  BOOTSTRAP_PYTHON=$(command -v python3) || die "Python 3.11 or newer is required for bounded bootstrap validation"
-  BOOTSTRAP_PYTHON=$(absolute_path "$BOOTSTRAP_PYTHON")
-  PYTHONDONTWRITEBYTECODE=1 "$BOOTSTRAP_PYTHON" -c \
-    'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || die "Python ${MIN_BOOTSTRAP_PYTHON_MAJOR}.${MIN_BOOTSTRAP_PYTHON_MINOR} or newer is required"
+  local candidate minimum=11
+  # Status uses only the standalone stdlib inspector; package operations need 3.11.
+  [[ "${MAINTENANCE:-}" != status ]] || minimum=10
+  for candidate in python3 python3.12 python3.11; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c \
+      'import sys; raise SystemExit(0 if sys.version_info >= (3, int(sys.argv[1])) else 1)' "$minimum" >/dev/null 2>&1; then
+      BOOTSTRAP_PYTHON=$(absolute_path "$(command -v "$candidate")")
+      return
+    fi
+  done
+  die "Python 3.$minimum or newer is required; checked python3, python3.12, python3.11"
 }
 
 strict_lock_validate() {
   local lock=$1
   [[ -f "$lock" && ! -L "$lock" ]] || die "install-versions.lock is missing/not regular"
-  "$BOOTSTRAP_PYTHON" - "$lock" "$REPO/requirements-coding-tools.lock" <<'PY' || die "install-versions.lock validation failed"
+  "$BOOTSTRAP_PYTHON" - "$lock" "$REPO/requirements-coding-tools.lock" "${HOST_ARCH:-}" <<'PY' || die "install-versions.lock validation failed"
 import hashlib
 import json
 import pathlib
@@ -189,8 +200,10 @@ def exact_keys(value, expected, where):
 exact_keys(data, {"schema_version", "platform", "architecture", "components"}, "root")
 if data["schema_version"] != 1:
     raise SystemExit("unsupported schema_version")
-if data["platform"] != "linux" or data["architecture"] != "x86_64":
+if data["platform"] != "linux" or data["architecture"] not in {"x86_64", "aarch64"}:
     raise SystemExit("unsupported lock platform/architecture")
+if sys.argv[3] and data["architecture"] != sys.argv[3]:
+    raise SystemExit("artifact lock architecture does not match the host")
 
 components = data["components"]
 exact_keys(components, {"python", "uv", "coding_tools_mcp", "tunnel_client"}, "components")
@@ -203,8 +216,8 @@ dependency_fields = {"name", "version", "source_identity", "acquisition_location
 validators = {
     "python": "cpython-3.12",
     "uv": "uv-cli",
-    "coding_tools_mcp": "coding-tools-mcp-0.3",
-    "tunnel_client": "tunnel-client-0.0.11",
+    "coding_tools_mcp": "coding-tools-mcp-0.5",
+    "tunnel_client": "tunnel-client-0.0.15",
 }
 source_kinds = {"github_release_asset", "pypi_wheel"}
 hex64 = re.compile(r"^[0-9a-f]{64}$")
@@ -266,7 +279,7 @@ PY
 
 lock_get() {
   local component=$1 field=$2
-  "$BOOTSTRAP_PYTHON" - "$REPO/install-versions.lock" "$component" "$field" <<'PY'
+  "$BOOTSTRAP_PYTHON" - "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$component" "$field" <<'PY'
 import json, sys
 data=json.load(open(sys.argv[1], encoding="utf-8"))
 value=data["components"][sys.argv[2]][sys.argv[3]]
@@ -280,7 +293,7 @@ PY
 
 lock_dependencies() {
   local component=$1
-  "$BOOTSTRAP_PYTHON" - "$REPO/install-versions.lock" "$component" <<'PY'
+  "$BOOTSTRAP_PYTHON" - "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$component" <<'PY'
 import json, sys
 data=json.load(open(sys.argv[1], encoding="utf-8"))
 for dependency in data["components"][sys.argv[2]]["dependencies"]:
@@ -311,7 +324,9 @@ validate_candidate_source() {
     requirements-coding-tools.lock \
     install-versions.lock \
     scripts/install.sh \
-    scripts/upgrade.sh; do
+    scripts/upgrade.sh \
+    bootstrap.sh \
+    src/workspace_mcp_manager/maintenance.py; do
     [[ -f "$REPO/$required" && ! -L "$REPO/$required" ]] || die "candidate file is missing/not regular: $required"
   done
   [[ -d "$REPO/src/workspace_mcp_manager" && ! -L "$REPO/src/workspace_mcp_manager" ]] || die "candidate source package is missing/not regular"
@@ -382,13 +397,16 @@ preflight_read_only() {
     os_id=$(grep -E '^ID=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')
     os_version=$(grep -E '^VERSION_ID=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')
   fi
-  [[ "$os_id" == "$SUPPORTED_OS_ID" && "$os_version" == "$SUPPORTED_OS_VERSION" ]] \
-    || die "supported host is Ubuntu $SUPPORTED_OS_VERSION; observed ${os_id:-unknown} ${os_version:-unknown}"
   kernel=$(uname -r)
-  [[ "$kernel" == *microsoft* || "$kernel" == *Microsoft* || "$kernel" == *WSL* ]] \
-    || die "supported host requires WSL2"
   arch=$(uname -m)
-  [[ "$arch" == "$SUPPORTED_ARCH" ]] || die "supported architecture is $SUPPORTED_ARCH; observed $arch"
+  HOST_ARCH=$arch
+  case "$os_id:$os_version:$arch" in
+    ubuntu:22.04:aarch64)
+      [[ "${kernel,,}" != *microsoft* && "${kernel,,}" != *wsl* ]] || die "Ubuntu 22.04 aarch64 support requires a native host" ;;
+    ubuntu:24.04:x86_64)
+      [[ "${kernel,,}" == *microsoft* || "${kernel,,}" == *wsl* ]] || die "Ubuntu 24.04 x86_64 requires WSL2" ;;
+    *) die "supported hosts: native Ubuntu 22.04 aarch64 or WSL2 Ubuntu 24.04 x86_64; observed $os_id $os_version $arch" ;;
+  esac
   systemctl --user show-environment >/dev/null 2>&1 || die "systemd --user is unavailable"
 }
 
@@ -410,7 +428,36 @@ entrypoint_exact() {
   return 0
 }
 
+setup_entrypoint_valid() {
+  local path="$PREFIX/bin/workspace-mcp-manager-setup" target release
+  [[ -L "$path" ]] || return 1
+  target=$(readlink -- "$path")
+  [[ "$target" =~ ^\.\./lib/workspace-mcp-manager/releases/(dist-[0-9a-f]{40})/bin/workspace-mcp-manager-setup$ ]] || return 1
+  release="$TOOLKIT_ROOT/releases/${BASH_REMATCH[1]}"
+  release_validate "$release" || return 1
+  [[ -x "$release/bin/workspace-mcp-manager-setup" ]]
+}
+
+ensure_setup_entrypoint() {
+  local path="$PREFIX/bin/workspace-mcp-manager-setup" target
+  # Older rollback targets predate setup. Retain a validated maintenance anchor.
+  if [[ -e "$path" || -L "$path" ]]; then
+    setup_entrypoint_valid || die "foreign setup entry point: $path"
+  fi
+  [[ -x "$TOOLKIT_ROOT/$(current_target)/bin/workspace-mcp-manager-setup" ]] || return 0
+  target="../lib/workspace-mcp-manager/$(current_target)/bin/workspace-mcp-manager-setup"
+  if [[ ! -L "$path" || "$(readlink -- "$path")" != "$target" ]]; then
+    atomic_symlink "$path" "$target"
+  fi
+}
+
 stable_entrypoints_standalone_valid() {
+  if [[ -x "$TOOLKIT_ROOT/current/bin/workspace-mcp-manager-setup" ]]; then
+    setup_entrypoint_valid || return 1
+  fi
+  if [[ -e "$PREFIX/bin/workspace-mcp-manager-setup" || -L "$PREFIX/bin/workspace-mcp-manager-setup" ]]; then
+    setup_entrypoint_valid || return 1
+  fi
   local name
   for name in workspace-mcp-manager workspace-mcp-manager-tui workspace-mcp-reboot workspace-mcp-manager-upgrade; do
     entrypoint_exact "$name" || return 1
@@ -527,13 +574,21 @@ root_release_names_valid() {
   return 0
 }
 
+legacy_reboot_entrypoint() {
+  local path="$PREFIX/bin/workspace-mcp-reboot" toolkit="$PREFIX/lib/workspace-mcp"
+  [[ -L "$path" && -d "$toolkit" && ! -L "$toolkit" && -f "$toolkit/VERSION" && ! -L "$toolkit/VERSION" ]] || return 1
+  [[ "$(realpath -- "$path")" == "$toolkit/workspace-mcp-reboot" && "$(cat "$toolkit/VERSION")" == 0.3.2 ]] || return 1
+  [[ -f "$toolkit/workspace-mcp-reboot" && ! -L "$toolkit/workspace-mcp-reboot" ]]
+}
+
 classify_ownership() {
   local root="$TOOLKIT_ROOT" target release entry name
-  local stable=(workspace-mcp-manager workspace-mcp-manager-tui workspace-mcp-reboot workspace-mcp-manager-upgrade)
+  local stable=(workspace-mcp-manager workspace-mcp-manager-tui workspace-mcp-reboot workspace-mcp-manager-upgrade workspace-mcp-manager-setup)
   if [[ ! -e "$root" && ! -L "$root" ]]; then
     for name in "${stable[@]}"; do
       entry="$PREFIX/bin/$name"
       if [[ -e "$entry" || -L "$entry" ]]; then
+        if [[ "$name" == workspace-mcp-reboot ]] && legacy_reboot_entrypoint; then continue; fi
         printf 'foreign_or_ambiguous'
         return 0
       fi
@@ -728,12 +783,27 @@ provision_uv() {
   sha=$(lock_get uv sha256)
   expected=$(lock_get uv expected_observable_identity)
   artifact=$(acquire_artifact "$url" "$sha" "$artifact_dir")
-  validate_tar_paths "$artifact" 'uv-x86_64-unknown-linux-gnu/'
+  local triple
+  triple=$(lock_get uv architecture)
+  validate_tar_paths "$artifact" "uv-$triple-unknown-linux-gnu/"
+  "$BOOTSTRAP_PYTHON" - "$artifact" "uv-$triple-unknown-linux-gnu" <<'PYUV' || die "uv archive layout is unexpected"
+import sys,tarfile
+root=sys.argv[2]
+with tarfile.open(sys.argv[1]) as archive:
+ entries=archive.getmembers()
+ expected={root,root+'/uv',root+'/uvx'}
+ if len(entries)!=3 or {p.name.rstrip('/') for p in entries}!=expected:
+  raise SystemExit(1)
+ for entry in entries:
+  if entry.name.rstrip('/')==root:
+   if not entry.isdir(): raise SystemExit(1)
+  elif not entry.isfile(): raise SystemExit(1)
+PYUV
   extract_root="$artifact_dir/uv-extract"
   mkdir -p -- "$extract_root" "$stage/tools/uv"
   tar -xzf "$artifact" -C "$extract_root"
-  uv_path="$extract_root/uv-x86_64-unknown-linux-gnu/uv"
-  uvx_path="$extract_root/uv-x86_64-unknown-linux-gnu/uvx"
+  uv_path="$extract_root/uv-$triple-unknown-linux-gnu/uv"
+  uvx_path="$extract_root/uv-$triple-unknown-linux-gnu/uvx"
   [[ -x "$uv_path" && -x "$uvx_path" ]] || die "uv archive is incomplete"
   cp -- "$uv_path" "$stage/tools/uv/uv"
   cp -- "$uvx_path" "$stage/tools/uv/uvx"
@@ -777,6 +847,15 @@ exec $(printf '%q' "$final/distribution/upgrade.sh") "\$@"
 EOF
 }
 
+write_setup_wrapper() {
+  local stage=$1 final=$2
+  cat <<EOF | atomic_file_from_stdin "$stage/bin/workspace-mcp-manager-setup" 0755
+#!/usr/bin/env bash
+set -euo pipefail
+exec bash $(printf '%q' "$final/distribution/setup.sh") --account-home $(printf '%q' "$ACCOUNT_HOME") --prefix $(printf '%q' "$PREFIX") "\$@"
+EOF
+}
+
 provision_manager() {
   local stage=$1 final=$2
   local python="$stage/runtimes/python/bin/python3" uv="$stage/tools/uv/uv" site output
@@ -795,6 +874,7 @@ provision_manager() {
     || die "TUI runtime validation failed"
   [[ "$output" == "8.2.8" ]] || die "TUI runtime identity mismatch: $output"
   write_manager_wrappers "$stage" "$final"
+  write_setup_wrapper "$stage" "$final"
 }
 
 provision_coding_tools() {
@@ -837,10 +917,21 @@ provision_tunnel_client() {
   sha=$(lock_get tunnel_client sha256)
   expected=$(lock_get tunnel_client expected_observable_identity)
   artifact=$(acquire_artifact "$url" "$sha" "$artifact_dir")
-  local entries
+  local entries tunnel_arch=amd64
+  [[ "$(lock_get tunnel_client architecture)" != aarch64 ]] || tunnel_arch=arm64
   entries=$(unzip -Z1 "$artifact" | LC_ALL=C sort)
-  [[ "$entries" == $'LICENSE\ncloudflared\ncloudflared-manifest.json\ntunnel-client' ]] \
-    || die "tunnel-client archive layout is unexpected"
+  local expected_entries
+  expected_entries=$(printf '%s\n' LICENSE NOTICE cloudflared cloudflared-manifest.json tunnel-client \
+    "tunnel-client-v0.0.15-linux-$tunnel_arch-licenses.txt" "tunnel-client-v0.0.15-linux-$tunnel_arch.spdx.json")
+  [[ "$entries" == "$expected_entries" ]] || die "tunnel-client archive layout is unexpected"
+  "${BOOTSTRAP_PYTHON:-python3}" - "$artifact" <<'PYZIP' || die "unsafe tunnel-client archive entry"
+import stat,sys,zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+ for info in z.infolist():
+  mode=info.external_attr >> 16
+  if stat.S_IFMT(mode) not in {0,stat.S_IFREG} or info.is_dir():
+   raise SystemExit(1)
+PYZIP
   mkdir -p -- "$stage/runtimes/tunnel-client"
   unzip -q "$artifact" -d "$stage/runtimes/tunnel-client"
   chmod 0755 "$stage/runtimes/tunnel-client/tunnel-client" "$stage/runtimes/tunnel-client/cloudflared"
@@ -853,19 +944,22 @@ stage_distribution_frontends() {
   mkdir -p -- "$stage/distribution"
   cp -- "$REPO/scripts/install.sh" "$stage/distribution/install.sh"
   cp -- "$REPO/scripts/upgrade.sh" "$stage/distribution/upgrade.sh"
-  cp -- "$REPO/install-versions.lock" "$stage/distribution/install-versions.lock"
+  cp -- "$REPO/bootstrap.sh" "$stage/distribution/setup.sh"
+  cp -- "$REPO/src/workspace_mcp_manager/maintenance.py" "$stage/distribution/maintenance.py"
+  chmod 0755 "$stage/distribution/setup.sh"
+  cp -- "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$stage/distribution/install-versions.lock"
   chmod 0755 "$stage/distribution/install.sh" "$stage/distribution/upgrade.sh"
 }
 
 write_install_json() {
   local stage=$1 source_digest=$2 product=$3
   local lock_sha tui_sha coding_sha
-  lock_sha=$(sha256sum -- "$REPO/install-versions.lock" | awk '{print $1}')
+  lock_sha=$(sha256sum -- "${INSTALL_LOCK:-$REPO/install-versions.lock}" | awk '{print $1}')
   tui_sha=$(sha256sum -- "$REPO/requirements-tui.lock" | awk '{print $1}')
   coding_sha=$(sha256sum -- "$REPO/requirements-coding-tools.lock" | awk '{print $1}')
   "$stage/runtimes/python/bin/python3" - \
     "$stage" "$source_digest" "$product" "$REPOSITORY" "$RELEASE_REF" "$RELEASE_COMMIT" "$DIST_ID" \
-    "$REPO/install-versions.lock" "$lock_sha" "$tui_sha" "$coding_sha" <<'PY'
+    "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$lock_sha" "$tui_sha" "$coding_sha" <<'PY'
 import hashlib
 import json
 import os
@@ -987,14 +1081,14 @@ journal_write() {
   "$BOOTSTRAP_PYTHON" - "$temporary" "$TRANSACTION_ID" "$OPERATION" "$phase" \
     "$PREVIOUS_CLASSIFICATION" "$PREVIOUS_CURRENT" "$PREVIOUS_RECEIPT_ID" "$CREATED_ENTRYPOINTS" \
     "$REPOSITORY" "$RELEASE_REF" "$RELEASE_COMMIT" "$DIST_ID" "$FINAL_RELEASE" "$STAGE_PATH" \
-    "$CANDIDATE_PREEXISTING" "$RECEIPT_TEMP" <<'PY'
+    "$CANDIDATE_PREEXISTING" "$RECEIPT_TEMP" "${LEGACY_REBOOT_TARGET:-}" <<'PY'
 import json,os,sys
 (
  path, transaction_id, operation, phase,
  previous_classification, previous_current, previous_receipt, created,
  repository, release_ref, release_commit, distribution_id, release_path, staging_path,
- preexisting, receipt_temp,
-)=sys.argv[1:17]
+ preexisting, receipt_temp, legacy_reboot,
+)=sys.argv[1:18]
 payload={
  "schema_version":1,
  "transaction_id":transaction_id,
@@ -1017,6 +1111,8 @@ payload={
    "receipt_temp":receipt_temp or None,
  },
 }
+if legacy_reboot:
+ payload["previous"]["legacy_reboot_target"] = legacy_reboot
 with open(path,"w",encoding="utf-8") as handle:
  json.dump(payload,handle,sort_keys=True,indent=2); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
 os.chmod(path,0o600)
@@ -1032,7 +1128,8 @@ import json,re,sys
 try: data=json.load(open(sys.argv[1],encoding="utf-8"))
 except Exception: raise SystemExit(1)
 if set(data)!={"schema_version","transaction_id","operation","phase","previous","candidate"} or data["schema_version"]!=1: raise SystemExit(1)
-if set(data["previous"])!={"classification","current_target","receipt_identity","transaction_created_entrypoints"}: raise SystemExit(1)
+if set(data["previous"]) - {"legacy_reboot_target"}!={"classification","current_target","receipt_identity","transaction_created_entrypoints"}: raise SystemExit(1)
+if "legacy_reboot_target" in data["previous"] and not isinstance(data["previous"]["legacy_reboot_target"],str): raise SystemExit(1)
 if set(data["candidate"])!={"repository","release_ref","release_commit","distribution_id","release_path","staging_path","preexisting","receipt_temp"}: raise SystemExit(1)
 if not re.fullmatch(r"[0-9a-f]{40}",data["candidate"]["release_commit"]): raise SystemExit(1)
 if data["candidate"]["distribution_id"]!=f"dist-{data['candidate']['release_commit']}": raise SystemExit(1)
@@ -1048,6 +1145,7 @@ import json,sys
 data=json.load(open(sys.argv[1],encoding="utf-8"))
 value=data
 for part in sys.argv[2].split("."):
+ if not isinstance(value,dict) or part not in value: raise SystemExit(0)
  value=value[part]
 if value is None: raise SystemExit(0)
 if isinstance(value,bool): print("true" if value else "false")
@@ -1112,14 +1210,27 @@ remove_transaction_entrypoints() {
     if [[ -L "$path" && "$(readlink -- "$path")" == "$expected" ]]; then
       rm -f -- "$path"
     elif [[ -e "$path" || -L "$path" ]]; then
+      if [[ "$name" == workspace-mcp-reboot && -L "$path" && "$(readlink -- "$path")" == "$(journal_get previous.legacy_reboot_target || true)" ]]; then continue; fi
       die "cannot remove changed transaction-created entrypoint: $path"
     fi
   done <<<"$names"
+  local legacy_target
+  legacy_target=$(journal_get previous.legacy_reboot_target || true)
+  if [[ -n "$legacy_target" ]]; then
+    path="$PREFIX/bin/workspace-mcp-reboot"
+    [[ "$(realpath -m -- "$PREFIX/bin/$legacy_target")" == "$PREFIX/lib/workspace-mcp/workspace-mcp-reboot" ]] || die "unsafe legacy reboot recovery target"
+    if [[ -e "$path" || -L "$path" ]]; then
+      [[ -L "$path" && "$(readlink -- "$path")" == "$legacy_target" ]] || die "legacy reboot recovery conflict"
+    else
+      atomic_symlink "$path" "$legacy_target"
+    fi
+  fi
   [[ ! -d "$PREFIX/bin" ]] || fsync_path "$PREFIX/bin"
 }
 
 recover_transaction() {
   local journal="$STATE_ROOT/distribution-transaction.json"
+  [[ ! -L "$journal" ]] || die "distribution journal is a symlink"
   [[ -f "$journal" ]] || return 0
   RECOVERING=true
   journal_validate || die "distribution transaction journal is malformed"
@@ -1197,6 +1308,7 @@ recover_transaction() {
 }
 
 ensure_stable_entrypoints_postcommit() {
+  ensure_setup_entrypoint
   local name path expected
   for name in workspace-mcp-manager workspace-mcp-manager-tui workspace-mcp-reboot workspace-mcp-manager-upgrade; do
     path="$PREFIX/bin/$name"; expected=$(expected_entrypoint_target "$name")
@@ -1218,12 +1330,14 @@ prepare_stable_entrypoints_precommit() {
       continue
     fi
     if [[ -e "$path" || -L "$path" ]]; then
-      die "foreign stable entrypoint collision: $path"
+      [[ "$name" == workspace-mcp-reboot && -n "${LEGACY_REBOOT_TARGET:-}" ]] && legacy_reboot_entrypoint \
+        || die "foreign stable entrypoint collision: $path"
+      printf '%s\n' "$LEGACY_REBOOT_TARGET" | atomic_file_from_stdin "$STATE_ROOT/legacy-reboot-target.saved" 0600
     fi
-    atomic_symlink "$path" "$expected"
     if [[ -n "$CREATED_ENTRYPOINTS" ]]; then CREATED_ENTRYPOINTS+=","; fi
     CREATED_ENTRYPOINTS+="$name"
     journal_write "stable_entrypoints_prepared"
+    atomic_symlink "$path" "$expected"
   done
 }
 
@@ -1312,7 +1426,7 @@ PY
 
 run_check() {
   local classification recovery_required=false candidate_known=false candidate_id="" installed_id="" install_required=false upgrade_required=unknown receipt_ok=unknown target release
-  [[ -f "$STATE_ROOT/distribution-transaction.json" ]] && recovery_required=true
+  if [[ -f "$STATE_ROOT/distribution-transaction.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
   classification=$(classify_ownership_for_check)
   if [[ "$classification" == standalone_distribution ]]; then
     target=$(current_target); release="$TOOLKIT_ROOT/$target"
@@ -1327,9 +1441,9 @@ run_check() {
     INSTANCE_COUNT=0; INSTANCES_VALID=false
   fi
 
-  if [[ -f "$REPO/install-versions.lock" && -f "$REPO/pyproject.toml" && -d "$REPO/src/workspace_mcp_manager" ]]; then
+  if [[ -f "${INSTALL_LOCK:-$REPO/install-versions.lock}" && -f "$REPO/pyproject.toml" && -d "$REPO/src/workspace_mcp_manager" ]]; then
     validate_candidate_source
-    strict_lock_validate "$REPO/install-versions.lock"
+    strict_lock_validate "${INSTALL_LOCK:-$REPO/install-versions.lock}"
     validate_checkout_provenance
     candidate_known=true
     candidate_id="dist-$RELEASE_COMMIT"
@@ -1416,6 +1530,11 @@ RELEASE_COMMIT=""
 UPGRADE=false
 RECOVER_ONLY=false
 CHECK=false
+MAINTENANCE=""
+MAINTENANCE_OPERATION=""
+MAINTENANCE_TARGET=""
+CONFIRMATION=""
+EXPECTED_SETUP_FINGERPRINT=""
 CONFIGURE=false
 QUALIFICATION=false
 QUALIFICATION_ARTIFACT_DIR=""
@@ -1424,9 +1543,16 @@ LOCK_HELD=false
 IN_MUTATION=false
 RECOVERING=false
 RECOVERY_RESULT="none"
+MAINTENANCE_RECOVERY_RESULT=""
 
 while (($#)); do
   case "$1" in
+    --expected-setup-fingerprint) (($#>=2)) || die "expected preview fingerprint is required"; EXPECTED_SETUP_FINGERPRINT=$2; shift 2 ;;
+    --maintenance-status) MAINTENANCE=status; shift ;;
+    --maintenance-preview) (($#>=2)) || die "--maintenance-preview requires an action"; MAINTENANCE=preview; MAINTENANCE_OPERATION=$2; shift 2 ;;
+    --maintenance-apply) MAINTENANCE=apply; shift ;;
+    --maintenance-target) (($#>=2)) || die "--maintenance-target requires an ID"; MAINTENANCE_TARGET=$2; shift 2 ;;
+    --confirmation) (($#>=2)) || die "--confirmation requires text"; CONFIRMATION=$2; shift 2 ;;
     --repo) (($#>=2)) || die "--repo requires a path"; REPO=$2; shift 2 ;;
     --account-home) (($#>=2)) || die "--account-home requires a path"; ACCOUNT_HOME=$2; shift 2 ;;
     --prefix) (($#>=2)) || die "--prefix requires a path"; PREFIX=$2; shift 2 ;;
@@ -1459,9 +1585,87 @@ REPO=$(absolute_path "$REPO")
 ACCOUNT_HOME=$(absolute_path "$ACCOUNT_HOME")
 if [[ -z "$PREFIX" ]]; then PREFIX="$ACCOUNT_HOME/.local"; fi
 PREFIX=$(absolute_path "$PREFIX")
+INSTALL_LOCK="$REPO/install-versions.lock"
+if [[ "$(uname -m)" == aarch64 && -f "$REPO/install-versions.aarch64.lock" ]]; then
+  INSTALL_LOCK="$REPO/install-versions.aarch64.lock"
+fi
 if [[ -n "$QUALIFICATION_ARTIFACT_DIR" ]]; then QUALIFICATION_ARTIFACT_DIR=$(absolute_path "$QUALIFICATION_ARTIFACT_DIR"); fi
 TOOLKIT_ROOT="$PREFIX/lib/workspace-mcp-manager"
 STATE_ROOT="$ACCOUNT_HOME/.local/state/workspace-mcp-manager"
+
+installation_state_fingerprint() {
+  "$BOOTSTRAP_PYTHON" - "$ACCOUNT_HOME" "$PREFIX" <<'PYFINGERPRINT'
+import hashlib,json,pathlib,sys,os
+home,prefix=[pathlib.Path(p).resolve() for p in sys.argv[1:]]
+registry=home/'.config/workspace-mcp-manager/instances'
+current=prefix/'lib/workspace-mcp-manager/current'
+state=home/'.local/state/workspace-mcp-manager'
+files=sorted(registry.glob('*.json'))
+files.extend(p for p in [state/'distribution.json', state/'distribution-transaction.json', state/'maintenance-transaction.json'] if p.exists() or p.is_symlink())
+entries={}
+for name in ['workspace-mcp-manager','workspace-mcp-manager-tui','workspace-mcp-reboot','workspace-mcp-manager-upgrade','workspace-mcp-manager-setup']:
+ p=prefix/'bin'/name
+ if p.is_symlink(): entries[name]={'symlink':os.readlink(p)}
+ elif p.exists(): entries[name]={'file':hashlib.sha256(p.read_bytes()).hexdigest()}
+payload={'current':os.readlink(current) if current.is_symlink() else None,
+         'files':[(str(p),hashlib.sha256(p.read_bytes()).hexdigest()) for p in files], 'entrypoints':entries}
+print(hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest())
+PYFINGERPRINT
+}
+
+enforce_setup_preview() {
+  [[ -n "$EXPECTED_SETUP_FINGERPRINT" ]] || return 0
+  [[ "$(installation_state_fingerprint)" == "$EXPECTED_SETUP_FINGERPRINT" ]] \
+    || die "installation state changed after preview; inspect again"
+}
+
+prepare_setup_recovery() {
+  local destination="$STATE_ROOT/setup-recovery" source name
+  [[ ! -L "$destination" ]] || die "foreign recovery capsule"
+  mkdir -p -- "$destination"
+  chmod 0700 "$destination"
+  for name in install.sh setup.sh maintenance.py; do
+    case "$name" in
+      install.sh) source="$REPO/scripts/install.sh" ;;
+      setup.sh) source="$REPO/bootstrap.sh" ;;
+      maintenance.py) source="$REPO/src/workspace_mcp_manager/maintenance.py" ;;
+    esac
+    [[ -f "$source" && ! -L "$source" && ! -L "$destination/$name" ]] || die "unsafe recovery capsule input"
+    atomic_file_from_stdin "$destination/$name" 0700 <"$source"
+  done
+}
+
+maintenance_run() {
+  local action=$1 helper
+  if [[ -f "$SCRIPT_DIR/maintenance.py" ]]; then
+    helper="$SCRIPT_DIR/maintenance.py"
+  else
+    helper="$REPO/src/workspace_mcp_manager/maintenance.py"
+  fi
+  [[ -f "$helper" && ! -L "$helper" ]] || die "maintenance backend is unavailable"
+  local args=(--action "$action" --account-home "$ACCOUNT_HOME" --prefix "$PREFIX")
+  $LOCK_HELD && args+=(--lock-held)
+  [[ -z "$MAINTENANCE_OPERATION" ]] || args+=(--operation "$MAINTENANCE_OPERATION")
+  [[ -z "$MAINTENANCE_TARGET" ]] || args+=(--target "$MAINTENANCE_TARGET")
+  [[ -z "$CONFIRMATION" ]] || args+=(--confirmation "$CONFIRMATION")
+  "$BOOTSTRAP_PYTHON" -B -I -S "$helper" "${args[@]}"
+}
+
+if [[ -n "$MAINTENANCE" ]]; then
+  ! $CHECK && ! $RECOVER_ONLY && ! $CONFIGURE && ! $UPGRADE || die "maintenance modes cannot be combined with installation modes"
+  case "$MAINTENANCE" in
+    status) maintenance_run status; exit $? ;;
+    preview) maintenance_run preview; exit $? ;;
+    apply)
+      preflight_read_only
+      acquire_mutation_lock
+      [[ ! -e "$STATE_ROOT/distribution-transaction.json" && ! -L "$STATE_ROOT/distribution-transaction.json" && ! -e "$STATE_ROOT/maintenance-transaction.json" && ! -L "$STATE_ROOT/maintenance-transaction.json" ]] || die "recover the pending transaction before applying maintenance"
+      if compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then die "recover pending legacy imports first"; fi
+      maintenance_run apply
+      exit $?
+      ;;
+  esac
+fi
 
 if $CHECK; then
   preflight_read_only
@@ -1471,6 +1675,13 @@ fi
 
 for command in flock sha256sum stat find sort grep awk cat cp mv ln readlink chmod dirname date; do require_command "$command"; done
 acquire_mutation_lock
+enforce_setup_preview
+if [[ -e "$STATE_ROOT/maintenance-transaction.json" || -L "$STATE_ROOT/maintenance-transaction.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then
+  $RECOVER_ONLY || die "recover the pending maintenance transaction first"
+  [[ ! -e "$STATE_ROOT/distribution-transaction.json" && ! -L "$STATE_ROOT/distribution-transaction.json" ]] || die "overlapping distribution and maintenance journals require inspection"
+  if MAINTENANCE_RECOVERY_RESULT=$(maintenance_run recover); then :
+  else printf '%s\n' "$MAINTENANCE_RECOVERY_RESULT"; exit 2; fi
+fi
 recover_transaction
 
 if $RECOVER_ONLY; then
@@ -1486,22 +1697,27 @@ if $RECOVER_ONLY; then
     die "cannot recover foreign or ambiguous distribution ownership"
   fi
   release_mutation_lock
-  "$BOOTSTRAP_PYTHON" - "$RECOVERY_RESULT" "$classification" <<'PY'
+  "$BOOTSTRAP_PYTHON" - "$RECOVERY_RESULT" "$classification" "$MAINTENANCE_RECOVERY_RESULT" <<'PY'
 import json,sys
-print(json.dumps({"ok":True,"action":"recover","recovery_result":sys.argv[1],"ownership":sys.argv[2]},sort_keys=True,separators=(",",":")))
+payload=json.loads(sys.argv[3]) if sys.argv[3] else {}
+result=payload.pop("result", sys.argv[1])
+payload.update(ok=True,action="recover",recovery_result=result,ownership=sys.argv[2])
+print(json.dumps(payload,sort_keys=True,separators=(",",":")))
 PY
   exit 0
 fi
 
 preflight_read_only
 validate_candidate_source
-strict_lock_validate "$REPO/install-versions.lock"
+strict_lock_validate "${INSTALL_LOCK:-$REPO/install-versions.lock}"
 validate_checkout_provenance
 validate_declarations_source || die "existing declaration validation failed: $VALIDATION_ERROR"
 
 DIST_ID="dist-$RELEASE_COMMIT"
 FINAL_RELEASE="$TOOLKIT_ROOT/releases/$DIST_ID"
 PREVIOUS_CLASSIFICATION=$(classify_ownership)
+LEGACY_REBOOT_TARGET=""
+if legacy_reboot_entrypoint; then LEGACY_REBOOT_TARGET=$(readlink -- "$PREFIX/bin/workspace-mcp-reboot"); fi
 [[ "$PREVIOUS_CLASSIFICATION" != foreign_or_ambiguous ]] || die "foreign or ambiguous distribution ownership blocks installation"
 PREVIOUS_CURRENT=$(current_target || true)
 PREVIOUS_RECEIPT_ID=$(receipt_distribution_id || true)
@@ -1528,6 +1744,8 @@ if [[ -e "$FINAL_RELEASE" || -L "$FINAL_RELEASE" ]]; then
   release_validate "$FINAL_RELEASE" "$RELEASE_COMMIT" || die "pre-existing immutable release is incomplete/corrupt"
   CANDIDATE_PREEXISTING=true
 fi
+
+prepare_setup_recovery
 
 TRANSACTION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
 OPERATION="install"
@@ -1557,6 +1775,7 @@ maybe_failpoint after_current_commit
 
 [[ "$(current_target)" == "releases/$DIST_ID" ]] || die "current commit verification failed"
 release_validate "$FINAL_RELEASE" "$RELEASE_COMMIT" || die "committed candidate content validation failed"
+ensure_setup_entrypoint
 stable_entrypoints_standalone_valid || die "stable entrypoint projection is invalid after commit"
 maybe_failpoint during_receipt_publication
 publish_receipt "$RECEIPT_TEMP"

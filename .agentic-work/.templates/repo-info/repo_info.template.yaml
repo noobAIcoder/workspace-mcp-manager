@@ -1,0 +1,62 @@
+# repo_info.v2 owns the fact-index schema. Every displayed mapping key is required;
+# list rows are repeatable shapes, not required observations. No extra keys.
+# v1 is incompatible: policy fields and duplicate routing were removed; shard
+# filenames are now installation-relative. Historical v1 meanings are unchanged.
+# null and <...> are unknown; [] means no entries recorded, not verified absence.
+# provenance.status: unverified | verified. Verified requires concrete provenance
+# and no unresolved placeholders. Provenance describes evidence, not authority.
+schema: repo_info.v2
+role: observed_repo_facts_index
+audience: coding_agents
+provenance:
+  status: unverified
+  repository_commit: null
+  verified_at: null
+  environment: null
+  evidence_source: null
+identity:
+  repo: null
+  project: null
+  purpose: null
+  status: null
+  default_branch: null
+  target: null
+  primary_operator: null
+# Fixed registrations. file is installation-root-relative. use_for is descriptive
+# navigation, not workflow routing or a requirement to materialize every shard.
+shards:
+  runtime:
+    file: runtime.yaml
+    schema: repo_runtime.v2
+    use_for: [runtime_environment, commands, services, deployment]
+  structure:
+    file: structure.yaml
+    schema: repo_structure.v2
+    use_for: [path_classification, entrypoints, generated_material]
+  validation:
+    file: validation.yaml
+    schema: repo_validation.v2
+    use_for: [validation_commands, evidence, known_baselines]
+  hazards:
+    file: hazards.yaml
+    schema: repo_hazards.v2
+    use_for: [risk_evidence, failure_modes, observed_mitigations]
+# Summaries cite their owning shard and evidence; they are not additional owners.
+summaries:
+  - id: "<summary-id>"
+    shard: "<runtime|structure|validation|hazards>"
+    statement: null
+    evidence: null
+# kind: repository | external. source is respectively repository-root-relative
+# or an explicitly designated external locator. References do not restate policy.
+authority_refs:
+  - id: "<authority-id>"
+    kind: "<repository|external>"
+    source: null
+    revision: null
+    sections: []
+blockers:
+  - id: "<blocker-id>"
+    affected_context: null
+    observation: null
+    evidence: null

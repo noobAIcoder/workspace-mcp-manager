@@ -28,7 +28,7 @@ from .paths import ManagerPaths
 from .planning import HostResourceObserver, ObservationStatus, PlanOperation, ReconciliationPlan, ReconciliationPlanner
 from .recovery_planning import project_recoverable_failed_first_apply
 from .redaction import redact_object, redact_text, sanitized_subprocess_env
-from .registry import InstanceRegistry
+from .registry import InstanceRegistry, assert_maintenance_allows, import_coordination
 
 
 JOURNAL_SCHEMA_VERSION = 1
@@ -364,6 +364,12 @@ class HostApplyService:
 
     @contextmanager
     def _instance_lock(self, instance_id: str):
+        with import_coordination(self.paths.state_root, instance_id, registry=self.registry):
+            with self._apply_instance_lock(instance_id):
+                yield
+
+    @contextmanager
+    def _apply_instance_lock(self, instance_id: str):
         self.lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = self.lock_root / f"{instance_id}.lock"
         with path.open("a+", encoding="utf-8") as handle:
@@ -527,6 +533,7 @@ class HostApplyService:
     ) -> dict[str, Any]:
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
+            assert_maintenance_allows(self.paths.state_root, removing=action == "remove" and desired.lifecycle.deployment is DeploymentTarget.ABSENT)
             bundle = self.generator.generate(desired)
 
             # P6 host-side verification gate that could not be run reliably from
@@ -1553,6 +1560,10 @@ class HostExecutionBridge:
         """Backward-compatible alias for the pre-P7.1-revision command."""
         return self.run_client_compatibility(instance_id)
 
+    def run_import(self, action: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        selected = request.get("preview", request).get("selected", [])
+        return self._run_json(["_runtime", "import", action], input_text=json.dumps(request), unit_fragment="legacy-import", timeout=max(180.0, 180.0 * len(selected)))
+
     def run_tooling(self, runtime_args: Sequence[str], *, unit_fragment: str) -> dict[str, Any]:
         if (
             len(runtime_args) < 2
@@ -1655,6 +1666,7 @@ class HostExecutionBridge:
         *,
         input_text: str | None = None,
         unit_fragment: str | None = None,
+        timeout: float = 180.0,
     ) -> dict[str, Any]:
         if not self.paths.manager_executable.is_file() or not os.access(self.paths.manager_executable, os.X_OK):
             raise ManagerError(
@@ -1678,7 +1690,7 @@ class HostExecutionBridge:
             str(self.paths.registry_dir),
             *runtime_args,
         ]
-        completed = _run(argv, timeout=180.0, check=False, input_text=input_text)
+        completed = _run(argv, timeout=timeout, check=False, input_text=input_text)
         stdout = completed.stdout.strip()
         stderr = redact_text(completed.stderr.strip())
         payload: dict[str, Any] | None = None

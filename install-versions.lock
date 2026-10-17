@@ -30,14 +30,14 @@
       "expected_observable_identity": "uv 0.12.3 (x86_64-unknown-linux-gnu)"
     },
     "coding_tools_mcp": {
-      "version": "0.3.0",
+      "version": "0.5.0",
       "source_kind": "pypi_wheel",
-      "source_identity": "coding_tools_mcp-0.3.0-py3-none-any.whl@5d6e131",
-      "acquisition_location": "https://files.pythonhosted.org/packages/69/2e/a263ebf32b2ffe506154c5acd9e2a9fe8d4600af131849b1ca23585bd536/coding_tools_mcp-0.3.0-py3-none-any.whl",
-      "sha256": "4d98f4a2cba6f677444986ae395446069e9ecb508861fc903f30a2aa8cefdba3",
+      "source_identity": "coding_tools_mcp-0.5.0-py3-none-any.whl@v0.5.0",
+      "acquisition_location": "https://files.pythonhosted.org/packages/52/53/ecbb1756a46299b8199cc996c8157d75bcb7019ce00213fcb338eb6bbbeb/coding_tools_mcp-0.5.0-py3-none-any.whl",
+      "sha256": "2d728ba41e49cad71a20228e228bb36492617d0caea5b6ae73d8e7c5186a1edc",
       "platform": "linux",
       "architecture": "x86_64",
-      "dependency_lock_identity": "requirements-coding-tools.lock@sha256:bc2a9c6762c3530e142eb80708b663c9342708bee32768fd54e5839b3c8efc6f",
+      "dependency_lock_identity": "requirements-coding-tools.lock@sha256:7271eea115a805d55be22e5e79b260e73d49d2c8600d98195534c2786c2573aa",
       "dependencies": [
         {
           "name": "PyJWT",
@@ -47,21 +47,21 @@
           "sha256": "dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb"
         }
       ],
-      "validator_id": "coding-tools-mcp-0.3",
-      "expected_observable_identity": "0.3.0"
+      "validator_id": "coding-tools-mcp-0.5",
+      "expected_observable_identity": "0.5.0"
     },
     "tunnel_client": {
-      "version": "0.0.11",
+      "version": "0.0.15",
       "source_kind": "github_release_asset",
-      "source_identity": "openai/tunnel-client@8d55683eeef80bc5e360d95abf4692454fafc615:tunnel-client-v0.0.11-linux-amd64.zip",
-      "acquisition_location": "https://github.com/openai/tunnel-client/releases/download/v0.0.11/tunnel-client-v0.0.11-linux-amd64.zip",
-      "sha256": "29adfe5c1399dfb9fda9383f230c324355912f50dc36e2e416b1f1322317b3c4",
+      "source_identity": "openai/tunnel-client@a390c168ff1b2d14e73a95991c186c6aba3ff5a0:tunnel-client-v0.0.15-linux-amd64.zip",
+      "acquisition_location": "https://github.com/openai/tunnel-client/releases/download/v0.0.15/tunnel-client-v0.0.15-linux-amd64.zip",
+      "sha256": "8c836dc5d68d68b663d9a5c5b28ff9fa780d9f7a3fffb1c306880b8f32fab5f1",
       "platform": "linux",
       "architecture": "x86_64",
       "dependency_lock_identity": null,
       "dependencies": [],
-      "validator_id": "tunnel-client-0.0.11",
-      "expected_observable_identity": "0.0.11+8d55683eeef80bc5e360d95abf4692454fafc615 (git sha: 8d55683eeef80bc5e360d95abf4692454fafc615)"
+      "validator_id": "tunnel-client-0.0.15",
+      "expected_observable_identity": "0.0.15+a390c168ff1b2d14e73a95991c186c6aba3ff5a0 (git sha: a390c168ff1b2d14e73a95991c186c6aba3ff5a0)"
     }
   }
 }

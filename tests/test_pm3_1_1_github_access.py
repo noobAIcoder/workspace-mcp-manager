@@ -487,6 +487,73 @@ class ProjectionAndVerificationTests(unittest.TestCase):
             self.assertIsNone(observed[1]["session_id"])
 
 
+    def test_v050_mcp_verification_accepts_stateless_050_without_session_header(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = paths_for(root)
+            desired = managed_desired(root, deployment="present")
+            raw = desired.to_dict()
+            raw["lifecycle"]["runtime"] = "running"
+            desired = DesiredInstance.from_dict(raw)
+            registry = InstanceRegistry(paths.registry_dir)
+            registry.create(desired)
+            service = GithubAccessService(paths, registry)
+            observed: list[dict[str, object]] = []
+
+            def mcp_reply(_url, payload, **kwargs):
+                observed.append({"payload": payload, "session_id": kwargs.get("session_id")})
+                method = payload.get("method")
+                if method == "initialize":
+                    return (
+                        {
+                            "result": {
+                                "protocolVersion": "2025-11-25",
+                                "serverInfo": {"name": "coding-tools-mcp", "version": "0.5.0"},
+                            }
+                        },
+                        None,
+                    )
+                if method == "tools/call":
+                    self.assertIsNone(kwargs.get("session_id"))
+                    return (
+                        {
+                            "result": {
+                                "isError": False,
+                                "structuredContent": {
+                                    "ok": True,
+                                    "exit_code": 0,
+                                    "truncated": False,
+                                    "stdout": "pm311-test-user\n",
+                                },
+                            }
+                        },
+                        None,
+                    )
+                raise AssertionError(method)
+
+            active = BoundedCommandResult(
+                argv=("systemctl",),
+                returncode=0,
+                stdout=b"active\n",
+                stderr=b"",
+                timed_out=False,
+                output_overflow=False,
+            )
+            with mock.patch("workspace_mcp_manager.github_access.shutil.which", return_value="/usr/bin/systemctl"), \
+                 mock.patch("workspace_mcp_manager.github_access._run_bounded", return_value=active), \
+                 mock.patch.object(service, "_http_json", side_effect=mcp_reply):
+                result, reason = service._verify_mcp(desired, "/usr/bin/gh", "pm311-test-user")
+            self.assertEqual((result, reason), ("passed", None))
+            self.assertEqual([item["payload"]["method"] for item in observed], ["initialize", "tools/call"])
+            self.assertIsNone(observed[1]["session_id"])
+
+            arguments = observed[1]["payload"]["params"]["arguments"]
+            self.assertEqual(arguments["timeout_ms"], 8000)
+            self.assertEqual(arguments["max_output_bytes"], 8192)
+            self.assertEqual(arguments["preview_bytes"], 4096)
+            self.assertEqual(arguments["verbosity"], "full")
+
+
 class CandidateAuthorityTests(unittest.TestCase):
     def test_frontend_managed_intent_derives_profile_and_binary(self) -> None:
         if shutil.which("git") is None:

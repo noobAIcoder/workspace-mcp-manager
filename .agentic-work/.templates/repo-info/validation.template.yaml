@@ -1,0 +1,54 @@
+# repo_validation.v2 owns this schema. Every displayed mapping key is required;
+# list rows are repeatable shapes. null/<...> are unknown; [] records no entries.
+# Incompatible with v1: remove selection, acceptance, mandatory-command and
+# reporting policies. Their governing sources belong in authority_refs.
+# Command/evidence descriptions report observed coverage, not acceptance rules.
+schema: repo_validation.v2
+role: observed_validation_evidence
+audience: coding_agents
+provenance:
+  status: unverified
+  repository_commit: null
+  verified_at: null
+  environment: null
+  evidence_source: null
+# evidence_kind: deterministic | semantic | integration | runtime_qualification |
+# manual_inspection. cwd is repository-root-relative. run may be null when unknown.
+commands:
+  - id: "<validation-command-id>"
+    kind: null
+    cwd: null
+    run: null
+    evidence_kind: "<evidence-kind>"
+    establishes: null
+    does_not_establish: null
+    environment: null
+    prerequisites: []
+    observed_success_signal: null
+    reproducibility: null
+    requirement_refs: []  # local authority_refs IDs, not independent criteria
+    evidence: null
+limits:
+  hardware_required: []
+  network_required: []
+  secret_names_required: []
+  unavailable_environments: []
+# result: pass | fail | not_run | unknown. Missing evidence never implies pass.
+known_baselines:
+  - id: "<baseline-id>"
+    repository_commit: null
+    verified_at: null
+    environment: null
+    command_ids: []
+    result: unknown
+    evidence: null
+observations:
+  - id: "<observation-id>"
+    statement: null
+    evidence: null
+authority_refs:
+  - id: "<authority-id>"
+    kind: "<repository|external>"
+    source: null
+    revision: null
+    sections: []

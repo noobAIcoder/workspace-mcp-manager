@@ -1,0 +1,40 @@
+# repo_hazards.v2 owns this schema. Every displayed mapping key is required;
+# list rows are repeatable shapes. null/<...> are unknown; [] records no entries.
+# Incompatible with v1: remove mandatory handling, matcher precedence and the
+# unconditional Spec Set severity dependency. Ratings cite their own scale.
+# Matching records are evidence only; unmatched hazards do not imply safety.
+schema: repo_hazards.v2
+role: observed_hazard_evidence
+audience: coding_agents
+provenance:
+  status: unverified
+  repository_commit: null
+  verified_at: null
+  environment: null
+  evidence_source: null
+# Matcher types: exact | prefix | glob | regex | signature | condition.
+# Matching is descriptive; no automatic precedence or execution follows.
+hazards:
+  - id: "<hazard-id>"
+    kind: null
+    severity: null
+    severity_scale_ref: null  # local authority_refs ID when a scale is used
+    matcher:
+      type: "<matcher-type>"
+      value: null
+    consequence: null
+    detection: null
+    observed_mitigation: null
+    observed_verification: null
+    handling_refs: []  # local authority_refs IDs; no independent required action
+    evidence: null
+# Views select existing registry entries without duplicating their content.
+views:
+  - id: "<view-id>"
+    include_kinds: []
+authority_refs:
+  - id: "<authority-id>"
+    kind: "<repository|external>"
+    source: null
+    revision: null
+    sections: []

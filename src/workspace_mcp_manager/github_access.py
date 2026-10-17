@@ -61,7 +61,7 @@ MCP_TOOL_TIMEOUT_MS = 8_000
 MCP_OUTPUT_LIMIT = 8_192
 MCP_PREVIEW_LIMIT = 4_096
 MCP_PROTOCOL_VERSION = "2025-11-25"
-QUALIFIED_MCP_VERSIONS = frozenset({"0.2.2", "0.3.0"})
+QUALIFIED_MCP_VERSIONS = frozenset({"0.2.2", "0.3.0", "0.5.0"})
 
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 GH_VERSION_RE = re.compile(r"^gh version ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")

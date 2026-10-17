@@ -154,7 +154,8 @@ validation.
 
 The production distribution channel is fixed to the canonical repository and
 `release` branch. The qualified public installation form downloads the bootstrap
-script completely before executing it:
+script completely before executing it. In a terminal, it opens a numbered
+setup menu:
 
 ```sh
 tmp="$(mktemp)"
@@ -166,7 +167,49 @@ rm -f "$tmp"
 exit "$status"
 ```
 
-The initial qualified host is **WSL2, Ubuntu 24.04, x86_64**. Bootstrap
+After installation, open the same menu with:
+
+```sh
+workspace-mcp-manager-setup
+```
+
+The menu inspects local status without contacting the release server. It offers
+install/update/migration, release checks, interrupted-operation recovery,
+rollback to a validated retained release, uninstall, and opening the manager.
+Every change has a preview and confirmation; blank input cancels. Updates and
+rollback preserve existing instance declarations, runtime paths, and services.
+Rollback keeps a maintenance-capable release available through the setup command.
+
+Uninstall requires typing `UNINSTALL`. It first removes instance deployments
+through the normal lifecycle reconciler. If any removal fails, the manager
+remains installed; completed removals stay removed and recovery enables retry.
+Original declarations, removed profiles/logs, and any retained historical toolkit
+are saved under `~/.local/state/workspace-mcp-manager/backups/uninstall-<id>/`
+with a private backup directory. Credentials, workspaces, and other configuration
+remain in place. Declaration records remain absent/stopped, so reinstall does
+not automatically redeploy instances. Unknown program files or remaining
+service references block deletion.
+
+Recovery, rollback, and uninstall work offline. Before an uninstall, the preview
+shows a recovery helper command that survives removal of the program files:
+
+```sh
+bash ~/.local/state/workspace-mcp-manager/setup-recovery/setup.sh --interactive
+```
+
+Keep any custom `--account-home` and `--prefix` arguments when using that helper.
+Rollback validates actual retained runtimes and declaration compatibility; it
+never downloads a replacement for an invalid local release.
+
+For automation, download the bootstrap as above and invoke it explicitly with
+`bash "$tmp" --non-interactive`. That mode installs, updates, or migrates without
+a prompt; `--non-interactive --check` only checks the acquired release. Running
+without a terminal and without an explicit mode exits without installing.
+Existing `workspace-mcp-manager-upgrade` automation remains noninteractive.
+Use `--interactive` to select the menu explicitly; `--configure` can open the
+manager after a successful installation/update.
+
+Supported installation profiles are **WSL2 Ubuntu 24.04 x86_64** and **native Ubuntu 22.04 ARM64 (aarch64)**. Live migration qualification remains a separate gate. Bootstrap
 prerequisites are Bash, Git, curl, Python >= 3.11, `sha256sum`, `realpath`,
 `mktemp`, `flock`, GNU coreutils, `tar`, `unzip`, and an available user-systemd
 manager. The installer does not invoke `sudo`, require system `pip`, or require
@@ -253,6 +296,18 @@ release that is actually executing, even if `current` moves concurrently.
 
 No automatic release pruning is performed. At minimum this preserves the
 immediately previous release and every release still referenced by a declaration.
+
+The bundled runtime lock selects coding-tools-mcp **0.5.0** with PyJWT **2.10.1**
+and the full Linux amd64 tunnel-client **0.0.15** artifact. The tunnel archive
+includes its NOTICE, dependency licenses, and SPDX SBOM. Managed GitHub
+verification supports coding-tools-mcp 0.2.2, 0.3.0, and 0.5.0, including
+sessionless verification with explicit command timeouts. Python, uv, Textual,
+and the manager package version are unchanged. No experimental runtime flags
+are enabled by this update.
+
+Repository validation and the remaining live WSL qualification gate are recorded
+in [the runtime update report](reports/runtime-update-0.5.0-status.md). Earlier
+qualification reports remain historical evidence for their original runtimes.
 
 Version/release inspection:
 
@@ -392,3 +447,48 @@ For automation, successful/valid public results return exit 0, structured public
 results with `ok=false` return exit 1, and public `ManagerError` failures return
 exit 2. Internal JSON host-worker commands use transport-success semantics so
 structured semantic failures are preserved across the host boundary.
+
+### Import and replace an existing workspace-mcp toolkit
+
+Run the updated setup frontend and choose **7. Import and replace legacy toolkit**.
+The wizard guides installation/update of the manager if necessary, lists legacy
+instances, and lets you select IDs or `all`. Review settings and the upgrade to
+coding-tools-mcp **0.5.0** and tunnel-client **0.0.15**, then type `MIGRATE` to
+confirm the service interruption. Empty input cancels. The installed manager
+release must include import support; changing a local bootstrap alone does not
+publish that release to the production channel.
+
+Instances migrate sequentially. A failure stops the batch; completed migrations
+stay committed, the failing instance is restored when possible, and unattempted
+instances keep running. Choose **Recover** after an interruption. Unresolved
+recovery blocks changes to the affected instance and distribution. After all
+legacy instances have transferred, verified program files are archived and old
+commands retired. Unknown files or remaining references retain the toolkit and
+report the reason.
+
+Credential files and GitHub profiles remain in place. The importer never displays
+or copies their contents. The recognized predecessor is the inspected workspace-mcp **0.3.2** program; modified builds require compatibility review. Configurations with inline tunnel credentials, custom
+unit directives, or config/unit drift are blocked for review. Known mixed service
+intent produces a draft; an optional JSON map of selected IDs to reviewed v2
+declarations can resolve lifecycle/recovery intent. Other settings cannot be
+silently overridden. Previously disabled boot enablement remains disabled on
+subsequent manager applies without changing the declaration schema.
+
+For JSON automation, separate preview from apply:
+
+```bash
+workspace-mcp-manager instance import list --pretty
+workspace-mcp-manager instance import preview --all > import-preview.json
+# Inspect import-preview.json and obtain its fingerprint before applying.
+workspace-mcp-manager instance import apply --preview import-preview.json \
+  --expected-preview-fingerprint <reviewed-fingerprint>
+```
+
+`preview one two` selects specific IDs. `preview --all` also offers retirement
+when no legacy instances remain. Preview is read-only. Optional
+`--candidate reviewed-declarations.json` resolves supported intent ambiguities.
+Recovery data and protected archives live under
+`~/.local/state/workspace-mcp-manager/imports/`. State containing a referenced
+credential file is retained at its original location so that reference stays
+valid. Source changes and fixture tests do not establish live migration
+qualification; see `reports/legacy-import-work.md` for observed evidence.

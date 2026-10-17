@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -675,6 +675,23 @@ class ResourceGenerator:
                     ),
                 ]
             )
+        # Import metadata preserves pre-existing boot enablement without
+        # changing the public declaration schema. Pending policy is used only
+        # while import coordination excludes ordinary lifecycle writes.
+        receipt = self.paths.state_root / 'imports/receipts' / (iid + '.json')
+        pending = self.paths.state_root / 'imports' / (iid + '.json')
+        policy_path = receipt if receipt.exists() or receipt.is_symlink() else pending
+        if policy_path.exists() or policy_path.is_symlink():
+            try:
+                if policy_path.is_symlink():
+                    raise ValueError('symlinked import policy')
+                policy_data = json.loads(policy_path.read_text())
+                policy = policy_data.get('unit_enablement', {})
+                if policy_data.get('instance_id') != iid or not isinstance(policy, dict) or any(type(value) is not bool for value in policy.values()):
+                    raise ValueError('invalid enablement policy')
+            except (OSError, ValueError, AttributeError) as exc:
+                raise config_error('cannot read imported service enablement policy') from exc
+            resources = [replace(item, enable_when_present=policy.get(item.unit_name, item.enable_when_present)) if item.unit_name else item for item in resources]
         return GeneratedBundle(
             instance_id=iid,
             desired_fingerprint=desired.fingerprint(),

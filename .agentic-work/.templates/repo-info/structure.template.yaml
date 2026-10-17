@@ -1,0 +1,43 @@
+# repo_structure.v2 owns this schema. Every displayed mapping key is required;
+# list rows are repeatable shapes. null/<...> are unknown; [] records no entries.
+# Incompatible with v1: remove edit/delete/default policies and mandatory paths.
+# All paths are repository-root-relative. Path classes do not grant permission.
+schema: repo_structure.v2
+role: observed_structure_facts
+audience: coding_agents
+provenance:
+  status: unverified
+  repository_commit: null
+  verified_at: null
+  environment: null
+  evidence_source: null
+root:
+  monorepo: null  # boolean when known
+  workspace_files: []
+# class: source | tests | config | scripts | docs | data | generated | legacy | vendor
+paths:
+  - id: "<path-id>"
+    class: "<path-class>"
+    path: null
+    purpose: null
+    language_or_tool: null
+    produced_by: null
+    regenerate_command_id: null  # runtime.commands ID; loads runtime if needed
+    status: null
+    upstream_source: null
+    policy_refs: []  # local authority_refs IDs, not edit/delete assertions
+    evidence: null
+entrypoints:
+  - id: "<entrypoint-id>"
+    kind: null
+    path: null
+observations:
+  - id: "<observation-id>"
+    statement: null
+    evidence: null
+authority_refs:
+  - id: "<authority-id>"
+    kind: "<repository|external>"
+    source: null
+    revision: null
+    sections: []
