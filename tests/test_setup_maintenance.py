@@ -70,6 +70,11 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(preview['target'], self.b.name)
         self.assertEqual(before, sorted(str(p) for p in self.home.rglob('*')))
 
+    def test_standalone_requires_upgrade_entrypoint(self):
+        (self.prefix / 'bin/workspace-mcp-manager-upgrade').unlink()
+        with self.assertRaisesRegex(MaintenanceError, 'missing entry point: workspace-mcp-manager-upgrade'):
+            self.service.status()
+
     def test_rollback_preserves_declarations_and_runtime_paths(self):
         registry = self.home / '.config/workspace-mcp-manager/instances'
         registry.mkdir(parents=True)
@@ -332,6 +337,101 @@ class MaintenanceTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload['recovery_result'], 'uninstall-completed')
         self.assertEqual(payload['ownership'], 'absent')
+
+
+class PredecessorInspectionTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name)
+        self.prefix = self.home / '.local'
+        self.root = self.prefix / 'lib/workspace-mcp-manager'
+        self.release = self.root / 'releases' / ('c' * 64)
+        (self.release / 'src/workspace_mcp_manager').mkdir(parents=True)
+        (self.release / 'tui-runtime/site-packages/textual').mkdir(parents=True)
+        (self.release / 'requirements-tui.lock').write_text('# predecessor\n')
+        (self.release / 'install.json').write_text('{"schema_version":2}\n')
+        (self.release / 'bin').mkdir()
+        (self.prefix / 'bin').mkdir()
+        for name in ('workspace-mcp-manager', 'workspace-mcp-manager-tui', 'workspace-mcp-reboot'):
+            command = self.release / 'bin' / name
+            command.write_text('#!/bin/sh\nexit 0\n')
+            command.chmod(0o755)
+            (self.prefix / 'bin' / name).symlink_to('../lib/workspace-mcp-manager/current/bin/' + name)
+        (self.root / 'current').symlink_to('releases/' + self.release.name)
+        registry = self.home / '.config/workspace-mcp-manager/instances'
+        registry.mkdir(parents=True)
+        (registry / 'one.json').write_text('{"instance_id":"one"}\n')
+        self.service = Maintenance(self.home, self.prefix)
+
+    def test_offline_status_recognizes_predecessor_without_systemd(self):
+        before = {path: path.read_bytes() for path in self.home.rglob('*') if path.is_file()}
+        with mock.patch('workspace_mcp_manager.maintenance.subprocess.run', side_effect=AssertionError('inspection must be offline')):
+            status = self.service.status()
+        self.assertEqual(status['ownership'], 'recognized_existing')
+        self.assertEqual(status['current'], self.release.name)
+        self.assertEqual(status['releases'], [])
+        self.assertEqual(set(status['instances']), {'one'})
+        self.assertFalse(status['recovery_required'])
+        self.assertEqual(before, {path: path.read_bytes() for path in self.home.rglob('*') if path.is_file()})
+
+    def test_menu_offers_migration_and_open_manager(self):
+        result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', str(self.home)], input='0\n', text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('1. Migrate\n', result.stdout)
+        self.assertIn('6. Open manager\n', result.stdout)
+        self.assertIn('Instances: 1', result.stdout)
+        self.assertNotIn('Inspection:', result.stdout)
+
+    def test_predecessor_cannot_use_standalone_maintenance(self):
+        for action in ('rollback', 'uninstall'):
+            with self.subTest(action=action), self.assertRaisesRegex(MaintenanceError, 'requires a validated standalone'):
+                self.service.preview(action, 'dist-' + 'a' * 40)
+
+    def test_missing_predecessor_content_is_rejected(self):
+        for relative in ('requirements-tui.lock', 'install.json', 'bin/workspace-mcp-manager'):
+            with self.subTest(relative=relative):
+                path = self.release / relative
+                content, mode = path.read_bytes(), path.stat().st_mode
+                path.unlink()
+                with self.assertRaises(MaintenanceError):
+                    self.service.status()
+                path.write_bytes(content)
+                path.chmod(mode)
+
+    def test_nonexecutable_predecessor_command_is_rejected(self):
+        (self.release / 'bin/workspace-mcp-manager').chmod(0o644)
+        with self.assertRaises(MaintenanceError):
+            self.service.status()
+
+    def test_missing_predecessor_runtime_is_rejected(self):
+        (self.release / 'tui-runtime/site-packages/textual').rmdir()
+        with self.assertRaises(MaintenanceError):
+            self.service.status()
+
+    def test_predecessor_recovery_state_is_reported(self):
+        self.service.state.mkdir(parents=True)
+        (self.service.state / 'distribution-transaction.json').write_text('{}\n')
+        status = self.service.status()
+        self.assertEqual(status['ownership'], 'recognized_existing')
+        self.assertTrue(status['recovery_required'])
+
+    def test_invalid_metadata_is_rejected(self):
+        (self.release / 'install.json').write_text('{"schema_version":3}\n')
+        with self.assertRaises(MaintenanceError):
+            self.service.status()
+
+    def test_foreign_entrypoint_is_rejected(self):
+        path = self.prefix / 'bin/workspace-mcp-manager'
+        path.unlink()
+        path.symlink_to('/bin/true')
+        with self.assertRaises(MaintenanceError):
+            self.service.status()
+
+    def test_unexpected_upgrade_entrypoint_is_rejected(self):
+        (self.prefix / 'bin/workspace-mcp-manager-upgrade').symlink_to('../lib/workspace-mcp-manager/current/bin/workspace-mcp-manager-upgrade')
+        with self.assertRaises(MaintenanceError):
+            self.service.status()
 
 
 class SetupMenuTests(unittest.TestCase):

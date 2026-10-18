@@ -173,10 +173,14 @@ class Maintenance:
                 result[path.stem] = data
         return result
 
-    def entrypoints(self):
+    def entrypoints(self, *, predecessor=False):
         result = {}
         for name in (*COMMANDS, SETUP):
             path = self.prefix / 'bin' / name
+            if predecessor and name == COMMANDS[3]:
+                if path.exists() or path.is_symlink():
+                    raise MaintenanceError(f'unexpected predecessor entry point: {name}')
+                continue
             if not path.exists() and not path.is_symlink():
                 if name != SETUP and self.root.exists():
                     raise MaintenanceError(f'missing entry point: {name}')
@@ -203,7 +207,9 @@ class Maintenance:
 
     def status(self):
         declarations = self.declarations()
-        entries = self.entrypoints()
+        current = self.root / 'current'
+        predecessor = current.is_symlink() and re.fullmatch(r'releases/[0-9a-f]{64}', os.readlink(current)) is not None
+        entries = self.entrypoints(predecessor=predecessor)
         pending = any(path.exists() or path.is_symlink() for path in [self.journal, self.state / 'distribution-transaction.json']) or bool(list((self.state / 'imports').glob('*.json')))
         base = {'ok': True, 'ownership': 'absent', 'current': None, 'releases': [],
                 'instances': declarations, 'recovery_required': pending, 'entrypoints': entries}
@@ -213,8 +219,7 @@ class Maintenance:
             return base
         if self.root.is_symlink() or set(p.name for p in self.root.iterdir()) != {'current', 'releases'}:
             raise MaintenanceError('foreign or ambiguous installation contents')
-        current = self.root / 'current'
-        if not current.is_symlink() or not re.fullmatch(r'releases/dist-[0-9a-f]{40}', os.readlink(current)):
+        if not current.is_symlink() or not re.fullmatch(r'releases/(?:dist-[0-9a-f]{40}|[0-9a-f]{64})', os.readlink(current)):
             raise MaintenanceError('invalid current release')
         releases = self.root / 'releases'
         if releases.is_symlink() or not releases.is_dir():
@@ -234,12 +239,20 @@ class Maintenance:
                         raise MaintenanceError('incomplete historical release')
                 if not (path / 'requirements-tui.lock').is_file():
                     raise MaintenanceError('incomplete historical dependency lock')
+                if predecessor and path.name == current.readlink().name:
+                    if (path / 'requirements-tui.lock').is_symlink() or not all(os.access(path / 'bin' / name, os.X_OK) for name in COMMANDS[:3]):
+                        raise MaintenanceError('incomplete predecessor release')
                 inventory(path)
                 legacy.append(path.name)
                 continue
             data = validate_release(path)
             items.append({'id': path.name, 'version': data['product_version'],
                           'components': {key: value['version'] for key, value in data['components'].items()}})
+        if predecessor:
+            if current.readlink().name not in legacy:
+                raise MaintenanceError('current predecessor release is missing')
+            base.update(ownership='recognized_existing', current=current.readlink().name, retained_legacy=legacy)
+            return base
         if not any(item['id'] == current.readlink().name for item in items):
             raise MaintenanceError('current release is missing')
         base.update(ownership='standalone_distribution', current=current.readlink().name, releases=items, retained_legacy=legacy)
