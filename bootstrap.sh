@@ -42,6 +42,7 @@ CONFIGURE=false
 INTERACTIVE=auto
 CHECK_REMOTE=false
 REVIEW=false
+REVIEW_RESULT_FILE=""
 QUALIFICATION=false
 QUALIFICATION_ARTIFACT_DIR=""
 QUALIFICATION_FAILPOINT=""
@@ -52,6 +53,7 @@ while (($#)); do
     --non-interactive) INTERACTIVE=false; shift ;;
     --check) CHECK_REMOTE=true; shift ;;
     --review) REVIEW=true; shift ;;
+    --review-result-file) (($#>=2)) || die "--review-result-file requires a path"; REVIEW_RESULT_FILE=$2; shift 2 ;;
     --configure) CONFIGURE=true; shift ;;
     --account-home) (($#>=2)) || die "--account-home requires a path"; ACCOUNT_HOME=$2; shift 2 ;;
     --prefix) (($#>=2)) || die "--prefix requires a path"; PREFIX=$2; shift 2 ;;
@@ -66,6 +68,10 @@ while (($#)); do
 done
 
 [[ -n "$ACCOUNT_HOME" ]] || die "account home is unavailable"
+if [[ -n "$REVIEW_RESULT_FILE" ]]; then
+  $REVIEW && ! $CHECK_REMOTE || die "review result output requires --review"
+  [[ -f "$REVIEW_RESULT_FILE" && ! -L "$REVIEW_RESULT_FILE" ]] || die "review result output must be an existing regular file"
+fi
 if ! $QUALIFICATION; then
   [[ "$REPOSITORY" == "$PRODUCTION_REPOSITORY" ]] || die "production repository is fixed"
   [[ "$RELEASE_REF" == "$PRODUCTION_REF" ]] || die "production ref is fixed"
@@ -114,7 +120,7 @@ registry=home/'.config/workspace-mcp-manager/instances'
 current=prefix/'lib/workspace-mcp-manager/current'
 state=home/'.local/state/workspace-mcp-manager'
 files=sorted(registry.glob('*.json'))
-files.extend(p for p in [state/'distribution.json', state/'distribution-transaction.json', state/'maintenance-transaction.json'] if p.exists() or p.is_symlink())
+files.extend(p for p in [state/'distribution.json', state/'distribution-transaction.json', state/'maintenance-transaction.json', state/'instance-upgrade.json'] if p.exists() or p.is_symlink())
 entries={}
 for name in ['workspace-mcp-manager','workspace-mcp-manager-tui','workspace-mcp-reboot','workspace-mcp-manager-upgrade','workspace-mcp-manager-setup']:
  p=prefix/'bin'/name
@@ -141,12 +147,13 @@ if not p.get("ok",True):
  print("Blocked or interrupted: "+str(error))
 else:
  action=p.get("action") or ("legacy instances imported" if "completed" in p else "operation")
- print("Completed: "+{"install":"manager installed", "upgrade":"manager updated", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled"}.get(action, str(action).replace("_", " "))+".")
+ print("Completed: "+{"install":"manager installed", "upgrade":"manager updated", "instance-upgrade":"instance runtimes refreshed", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled"}.get(action, str(action).replace("_", " "))+".")
 if p.get("backup"): print("Preserved data: "+p["backup"])
 if p.get("product_version"): print("Manager version: "+p["product_version"])
 if p.get("completed_instances"): print("Removed deployments: "+", ".join(p["completed_instances"]))
 if p.get("remaining_instances"): print("Deployments still requiring removal: "+", ".join(p["remaining_instances"]))
-if p.get("completed"): print("Imported instances: "+", ".join(p["completed"]))
+if p.get("completed"): print(("Upgraded instances: " if p.get("action")=="instance-upgrade" else "Imported instances: ")+", ".join(p["completed"]))
+if p.get("remaining"): print("Instances remaining: "+", ".join(p["remaining"]))
 if p.get("failed"): print("Needs attention: "+p["failed"])
 if p.get("unattempted"): print("Instances not attempted: "+", ".join(p["unattempted"]))
 '
@@ -230,7 +237,7 @@ setup_inspect() {
     rm -f -- "$diagnostic"
   else
     local marker
-    for marker in "$PREFIX/lib/workspace-mcp-manager" "$PREFIX/bin/workspace-mcp-manager" "$PREFIX/bin/workspace-mcp-manager-tui" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/maintenance-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/distribution-transaction.json"; do
+    for marker in "$PREFIX/lib/workspace-mcp-manager" "$PREFIX/bin/workspace-mcp-manager" "$PREFIX/bin/workspace-mcp-manager-tui" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/maintenance-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/distribution-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/instance-upgrade.json"; do
       if [[ -e "$marker" || -L "$marker" ]]; then
         status='{"ok":false,"ownership":"unknown"}'
         inspection_error='Installation files were found, but no local inspection backend is available. Use setup from a complete checkout or the installed recovery helper.'
@@ -246,7 +253,7 @@ setup_inspect() {
   pending=false
   [[ "$(json_value recovery_required <<<"$status" 2>/dev/null)" != True ]] || pending=true
   local journal
-  for journal in "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/maintenance-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/distribution-transaction.json"; do
+  for journal in "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/maintenance-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/distribution-transaction.json" "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/instance-upgrade.json"; do
     [[ ! -e "$journal" && ! -L "$journal" ]] || pending=true
   done
   if compgen -G "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/imports/*.json" >/dev/null; then pending=true; fi
@@ -298,6 +305,12 @@ setup_render_menu() {
   if $pending; then primary+=' (unavailable: recover in Maintenance first)'; fi
   printf '\n1. %s\n2. %s\n3. Maintenance\n4. Installation details\n' "$primary" "$open"
   $legacy && printf '5. Import legacy toolkit instances\n'
+  local full='Upgrade manager and all instances'
+  if $pending; then full+=' (unavailable: recover in Maintenance first)'
+  elif [[ "$ownership" == absent ]]; then full+=' (unavailable: install the manager first)'
+  elif [[ "$ownership" == unknown ]]; then full+=' (unavailable: verify installation status first)'; fi
+  printf '6. %s\n' "$full"
+  printf '\nOption 1 updates only the manager; option 6 also refreshes instance runtimes.\n'
   printf '0. Exit\n\nChoice [0]: '
 }
 
@@ -312,6 +325,11 @@ print("Active release: "+str(s.get("current") or s.get("installed_distribution_i
 for r in s.get("releases",[]):
  print("Retained release: "+r["id"]+"; manager "+r["version"])
  for k,v in r.get("components",{}).items(): print("  "+k+": "+v)
+if s.get("instance_upgrade"):
+ u=s["instance_upgrade"]
+ print("Instance upgrade target: "+u["target_release"])
+ print("Completed upgrades: "+(", ".join(u["completed"]) or "none"))
+ print("Remaining upgrades: "+(", ".join(u["remaining"]) or "none"))
 '
   if $pending; then printf 'Recovery: required\n'
   elif [[ "$ownership" == unknown ]]; then printf 'Recovery: unknown\n'
@@ -349,7 +367,8 @@ setup_next_steps() {
 }
 
 setup_install_task() {
-  local choice before
+  local choice outcome_file outcome target mode=${1:-manager}
+  install_ready=false
   if $pending; then printf 'Blocked: recover the interrupted operation in Maintenance first.\n'; return 0; fi
   case "$ownership" in absent|recognized_existing|standalone_distribution) ;; *) printf 'Blocked: verify installation status in Installation details first.\n'; return 0 ;; esac
   printf '\nInstall or update manager\n\nThis task contacts the release server and reviews the candidate before any change.\n'
@@ -359,15 +378,111 @@ setup_install_task() {
   [[ "$choice" == 1 ]] || { printf 'Cancelled: no installation changes.\n'; return 0; }
   setup_readiness
   if ! $host_ready; then printf 'Blocked: installation prerequisites need attention.\n%s\n' "$readiness"; return 0; fi
-  before=$(installation_fingerprint)
-  local args=("${remote_args[@]}" --review)
-  $CONFIGURE && args+=(--configure)
+  outcome_file=$(mktemp)
+  local args=("${remote_args[@]}" --review --review-result-file "$outcome_file")
+  if $CONFIGURE && [[ "$mode" != all ]]; then args+=(--configure); fi
   printf 'Checking the release server…\n'
   if ! bash "$self" "${args[@]}"; then
+    rm -f -- "$outcome_file"
     printf 'Blocked or interrupted: installation/update did not complete. Review the diagnostic above, then check Maintenance for recovery.\n'; return 0
   fi
+  outcome=$(json_value outcome <"$outcome_file" 2>/dev/null) || outcome=unknown
+  target=$(json_value target_release <"$outcome_file" 2>/dev/null) || target=''
+  rm -f -- "$outcome_file"
   setup_inspect
-  if [[ "$(installation_fingerprint)" != "$before" && "$ownership" == standalone_distribution ]] && ! $pending && ! $CONFIGURE; then setup_next_steps; fi
+  install_outcome="$outcome"
+  if [[ "$outcome" == completed || "$outcome" == already-current ]] && [[ "$ownership" == standalone_distribution && "$(json_value current <<<"$status")" == "$target" ]] && ! $pending; then
+    install_ready=true
+    if [[ "$mode" != all && "$outcome" == completed ]] && ! $CONFIGURE; then setup_next_steps; fi
+  fi
+}
+
+# Private child-to-menu outcome avoids confusing cancellation with a committed update.
+review_outcome() {
+  [[ -n "$REVIEW_RESULT_FILE" ]] || return 0
+  python3 - "$REVIEW_RESULT_FILE" "$1" "$(json_value candidate_distribution_id <<<"$preview")" <<'PYOUTCOME'
+import json,os,sys
+fd=os.open(sys.argv[1],os.O_WRONLY|os.O_TRUNC|os.O_NOFOLLOW)
+with os.fdopen(fd,'w') as out:
+ json.dump({'outcome':sys.argv[2],'target_release':sys.argv[3]},out)
+PYOUTCOME
+}
+
+setup_instance_upgrade_preview() {
+  python3 - "$1" <<'PYUPGRADE'
+import json,sys
+try:
+ p=json.load(open(sys.argv[1]))
+ print('Stage 2 — Review all instance runtimes')
+ print('Target manager version: '+str(p.get('product_version') or 'unknown'))
+ for name,component in p.get('components',{}).items(): print('  '+name+': '+component['version'])
+ for row in p.get('instances',[]):
+  c=row['candidate']; o=row['original']; state=c['lifecycle']
+  effect='restart and verify readiness' if row['force_restart'] else ('reconcile and keep stopped' if state['deployment']=='present' else 'configuration only; remain absent')
+  print(row['instance_id']+': '+effect)
+  for key in ('mcp','tunnel'): print('  '+key+': '+o[key]['binary']+' -> '+c[key]['binary'])
+  for error in row.get('errors',[]): print('  Blocker: '+error)
+ print('Other instance settings and credential references are retained. Running connections will briefly disconnect.')
+except (ValueError,KeyError,TypeError,OSError):
+ print('The instance preview could not be read. Review the diagnostic above.')
+ raise SystemExit(1)
+PYUPGRADE
+}
+
+setup_full_upgrade_task() {
+  local manager release preview fingerprint confirmation result
+  if $pending; then printf 'Blocked: recover the interrupted operation in Maintenance first.\n'; return 0; fi
+  if [[ "$ownership" != standalone_distribution && "$ownership" != recognized_existing ]]; then
+    printf 'Blocked: install or verify the manager first.\n'; return 0
+  fi
+  printf '\nUpgrade manager and all instances\n\nStage 1 updates the manager. Stage 2 separately reviews and refreshes all instance runtimes, even when the release is already current.\nInstances are processed one at a time; running instances restart, stopped instances stay stopped, and absent instances stay absent. A failure stops the operation for recovery and resume.\n'
+  setup_install_task all
+  if ! $install_ready || $SETUP_EXIT; then return 0; fi
+  release=$(json_value current <<<"$status")
+  [[ "$release" =~ ^dist-[0-9a-f]{40}$ ]] || { printf 'Blocked: the installed target release could not be verified.\n'; return 0; }
+  manager="$PREFIX/lib/workspace-mcp-manager/releases/$release/bin/workspace-mcp-manager"
+  if [[ ! -x "$manager" ]]; then printf 'Blocked: the target manager command is unavailable. Instance runtimes were not changed.\n'; return 0; fi
+  preview=$(mktemp)
+  printf 'Inspecting instance runtime changes…\n'
+  if ! "$manager" instance upgrade preview --all >"$preview"; then
+    setup_instance_upgrade_preview "$preview" || true
+    rm -f -- "$preview"; printf 'Blocked: instance preview failed. The manager stage is complete; instance runtimes were not changed.\n'; return 0
+  fi
+  if ! python3 -c 'import json,pathlib,sys; p=json.load(open(sys.argv[1])); expected=[pathlib.Path(v).resolve() for v in sys.argv[2:]]; observed=[pathlib.Path(p[k]).resolve() for k in ("account_home","prefix","target_root")]; assert expected==observed and p.get("ok") is True and all(r.get("valid") for r in p["instances"])' "$preview" "$ACCOUNT_HOME" "$PREFIX" "$PREFIX/lib/workspace-mcp-manager/releases/$release" 2>/dev/null; then
+    rm -f -- "$preview"; printf 'Blocked: instance preview does not match the selected account, target, or readiness requirements. Instance runtimes were not changed.\n'; return 0
+  fi
+  setup_instance_upgrade_preview "$preview"
+  printf 'Type UPGRADE to confirm all instance runtime changes (blank cancels): '
+  if ! setup_read confirmation; then confirmation=''; fi
+  if [[ "$confirmation" != UPGRADE ]]; then
+    rm -f -- "$preview"; printf 'Cancelled: the manager stage is complete; instance runtimes were not changed.\n'; return 0
+  fi
+  fingerprint=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fingerprint"])' "$preview")
+  printf 'Refreshing instances sequentially…\n'
+  if result=$("$manager" instance upgrade apply --preview "$preview" --expected-preview-fingerprint "$fingerprint"); then
+    setup_result <<<"$result"
+    rm -f -- "$preview"
+    setup_inspect
+    if ! $pending; then
+      if $CONFIGURE; then setup_open_manager; else setup_next_steps; fi
+    fi
+  else
+    setup_result <<<"$result" || printf '%s\n' "$result"
+    rm -f -- "$preview"
+    printf 'Full upgrade stopped. Completed upgrades are retained. Use Maintenance > Recover interrupted operation to resume pending work.\n'
+  fi
+}
+
+setup_resume_instance_upgrade() {
+  local release manager result
+  release=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_upgrade"]["target_release"])' <<<"$status" 2>/dev/null) || release=''
+  if [[ "$ownership" != standalone_distribution || ! "$release" =~ ^dist-[0-9a-f]{40}$ ]]; then
+    printf 'Blocked: the instance upgrade recovery target could not be verified. Review Installation details.\n'; return 0
+  fi
+  manager="$PREFIX/lib/workspace-mcp-manager/releases/$release/bin/workspace-mcp-manager"
+  if [[ ! -x "$manager" ]]; then printf 'Blocked: the recorded target manager is unavailable. Preserve the backup and review Installation details.\n'; return 0; fi
+  if result=$("$manager" instance upgrade recover); then setup_result <<<"$result"
+  else setup_result <<<"$result" || printf '%s\n' "$result"; printf 'Resume did not complete. Review the failed and remaining instances before retrying.\n'; fi
 }
 
 setup_maintenance_task() {
@@ -395,6 +510,10 @@ setup_maintenance_task() {
         printf 'Review: recover unfinished local work. Completed instance removals and imports stay completed.\nContinue? [y/N]: '
         setup_read confirmation || return 0
         [[ "$confirmation" == y || "$confirmation" == Y ]] || { printf 'Cancelled: recovery was not started.\n'; continue; }
+        if [[ -e "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/instance-upgrade.json" || -L "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/instance-upgrade.json" ]]; then
+          setup_resume_instance_upgrade
+          return 0
+        fi
         if result=$(bash "$backend" --recover-only --account-home "$ACCOUNT_HOME" --prefix "$PREFIX"); then setup_result <<<"$result"
         else setup_result <<<"$result" || printf '%s\n' "$result"; printf 'Recovery did not complete. Review Installation details before retrying.\n'; fi
         return 0
@@ -545,7 +664,7 @@ PYIMPORT
 
 setup_menu() {
   local backend status ownership pending legacy inspection_error readiness host_ready self
-  local choice SETUP_EXIT=false
+  local choice SETUP_EXIT=false install_ready=false install_outcome=""
   if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
     printf 'Blocked: setup inspection requires Python >=3.10. Install Python, then reopen setup.\n'
     return 0
@@ -568,6 +687,7 @@ setup_menu() {
       3) setup_maintenance_task ;;
       4) setup_details ;;
       5) setup_import_task ;;
+      6) setup_full_upgrade_task ;;
       *) printf 'Choose one of the listed tasks, or 0 to exit.\n' ;;
     esac
   done
@@ -655,12 +775,13 @@ PYVERSIONS
   if [[ "$(json_value recovery_required <<<"$preview")" == True ]]; then die "recover the interrupted operation before continuing"; fi
   if [[ "$(json_value install_required <<<"$preview")" == False ]]; then
     printf 'Already current; no update needed.\n'
+    review_outcome already-current
     if $CONFIGURE; then "$PREFIX/bin/workspace-mcp-manager-tui"; fi
     exit 0
   fi
   printf 'Apply this installation/update? [y/N]: '
-  IFS= read -r confirmation || { printf 'Cancelled: no installation changes.\n'; exit 0; }
-  [[ "$confirmation" == y || "$confirmation" == Y ]] || { printf 'Cancelled: no installation changes.\n'; exit 0; }
+  IFS= read -r confirmation || { printf 'Cancelled: no installation changes.\n'; review_outcome cancelled; exit 0; }
+  [[ "$confirmation" == y || "$confirmation" == Y ]] || { printf 'Cancelled: no installation changes.\n'; review_outcome cancelled; exit 0; }
   [[ "$(installation_fingerprint)" == "$preview_fingerprint" ]] || die "installation state changed after preview; inspect again"
   refreshed=$(bash "$CHECKOUT/scripts/install.sh" --check "${check_args[@]}") || die "candidate reinspection failed"
   [[ "$refreshed" == "$preview" ]] || die "installation state changed after preview; inspect again"
@@ -670,6 +791,7 @@ printf 'Validating and staging the selected distribution…\n' >&2
 if $REVIEW; then
   if result=$(bash "$CHECKOUT/scripts/install.sh" "${args[@]}"); then
     setup_result <<<"$result"
+    review_outcome completed
     if $CONFIGURE; then "$PREFIX/bin/workspace-mcp-manager-tui"; fi
   else
     setup_result <<<"$result" || printf '%s\n' "$result"

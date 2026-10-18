@@ -326,7 +326,8 @@ validate_candidate_source() {
     scripts/install.sh \
     scripts/upgrade.sh \
     bootstrap.sh \
-    src/workspace_mcp_manager/maintenance.py; do
+    src/workspace_mcp_manager/maintenance.py \
+    src/workspace_mcp_manager/upgrade_state.py; do
     [[ -f "$REPO/$required" && ! -L "$REPO/$required" ]] || die "candidate file is missing/not regular: $required"
   done
   [[ -d "$REPO/src/workspace_mcp_manager" && ! -L "$REPO/src/workspace_mcp_manager" ]] || die "candidate source package is missing/not regular"
@@ -946,6 +947,7 @@ stage_distribution_frontends() {
   cp -- "$REPO/scripts/upgrade.sh" "$stage/distribution/upgrade.sh"
   cp -- "$REPO/bootstrap.sh" "$stage/distribution/setup.sh"
   cp -- "$REPO/src/workspace_mcp_manager/maintenance.py" "$stage/distribution/maintenance.py"
+  cp -- "$REPO/src/workspace_mcp_manager/upgrade_state.py" "$stage/distribution/upgrade_state.py"
   chmod 0755 "$stage/distribution/setup.sh"
   cp -- "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$stage/distribution/install-versions.lock"
   chmod 0755 "$stage/distribution/install.sh" "$stage/distribution/upgrade.sh"
@@ -1429,7 +1431,7 @@ PY
 run_check() {
   local classification recovery_required=false candidate_known=false candidate_id="" installed_id="" install_required=false upgrade_required=unknown receipt_ok=unknown target release
   local installed_product_version="" candidate_product_version=""
-  if [[ -f "$STATE_ROOT/distribution-transaction.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
+  if [[ -f "$STATE_ROOT/distribution-transaction.json" || -e "$STATE_ROOT/instance-upgrade.json" || -L "$STATE_ROOT/instance-upgrade.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
   classification=$(classify_ownership_for_check)
   if [[ "$classification" == standalone_distribution ]]; then
     target=$(current_target); release="$TOOLKIT_ROOT/$target"
@@ -1606,7 +1608,7 @@ registry=home/'.config/workspace-mcp-manager/instances'
 current=prefix/'lib/workspace-mcp-manager/current'
 state=home/'.local/state/workspace-mcp-manager'
 files=sorted(registry.glob('*.json'))
-files.extend(p for p in [state/'distribution.json', state/'distribution-transaction.json', state/'maintenance-transaction.json'] if p.exists() or p.is_symlink())
+files.extend(p for p in [state/'distribution.json', state/'distribution-transaction.json', state/'maintenance-transaction.json', state/'instance-upgrade.json'] if p.exists() or p.is_symlink())
 entries={}
 for name in ['workspace-mcp-manager','workspace-mcp-manager-tui','workspace-mcp-reboot','workspace-mcp-manager-upgrade','workspace-mcp-manager-setup']:
  p=prefix/'bin'/name
@@ -1629,11 +1631,12 @@ prepare_setup_recovery() {
   [[ ! -L "$destination" ]] || die "foreign recovery capsule"
   mkdir -p -- "$destination"
   chmod 0700 "$destination"
-  for name in install.sh setup.sh maintenance.py; do
+  for name in install.sh setup.sh maintenance.py upgrade_state.py; do
     case "$name" in
       install.sh) source="$REPO/scripts/install.sh" ;;
       setup.sh) source="$REPO/bootstrap.sh" ;;
       maintenance.py) source="$REPO/src/workspace_mcp_manager/maintenance.py" ;;
+      upgrade_state.py) source="$REPO/src/workspace_mcp_manager/upgrade_state.py" ;;
     esac
     [[ -f "$source" && ! -L "$source" && ! -L "$destination/$name" ]] || die "unsafe recovery capsule input"
     atomic_file_from_stdin "$destination/$name" 0700 <"$source"
@@ -1664,6 +1667,7 @@ if [[ -n "$MAINTENANCE" ]]; then
     apply)
       preflight_read_only
       acquire_mutation_lock
+      [[ ! -e "$STATE_ROOT/instance-upgrade.json" && ! -L "$STATE_ROOT/instance-upgrade.json" ]] || die "resume the pending instance upgrade through Setup Maintenance first"
       [[ ! -e "$STATE_ROOT/distribution-transaction.json" && ! -L "$STATE_ROOT/distribution-transaction.json" && ! -e "$STATE_ROOT/maintenance-transaction.json" && ! -L "$STATE_ROOT/maintenance-transaction.json" ]] || die "recover the pending transaction before applying maintenance"
       if compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then die "recover pending legacy imports first"; fi
       maintenance_run apply
@@ -1680,6 +1684,7 @@ fi
 
 for command in flock sha256sum stat find sort grep awk cat cp mv ln readlink chmod dirname date; do require_command "$command"; done
 acquire_mutation_lock
+[[ ! -e "$STATE_ROOT/instance-upgrade.json" && ! -L "$STATE_ROOT/instance-upgrade.json" ]] || die "resume the pending instance upgrade through Setup Maintenance first"
 enforce_setup_preview
 if [[ -e "$STATE_ROOT/maintenance-transaction.json" || -L "$STATE_ROOT/maintenance-transaction.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then
   $RECOVER_ONLY || die "recover the pending maintenance transaction first"

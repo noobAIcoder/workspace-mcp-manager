@@ -195,7 +195,7 @@ class LegacyImportService:
                     raise ImportBlocked('foreign import state owner')
                 os.chmod(directory, 0o700)
                 sync_dir(directory.parent)
-            for name in ('distribution-transaction.json', 'maintenance-transaction.json'):
+            for name in ('distribution-transaction.json', 'maintenance-transaction.json', 'instance-upgrade.json'):
                 if exists(self.paths.state_root / name):
                     raise ImportBlocked('recover pending distribution maintenance first')
             yield

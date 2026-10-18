@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .domain import DesiredInstance, InstanceId
 from .errors import ErrorCode, ManagerError
+from .upgrade_state import JOURNAL_NAME, upgrade_authorized
 
 
 # An in-process capability used only while the importer owns the exclusive gate.
@@ -55,7 +56,10 @@ def import_coordination(state_root, instance_id, *, exclusive=False, registry=No
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def assert_maintenance_allows(state_root: Path, *, removing: bool = False) -> None:
+def assert_maintenance_allows(state_root: Path, *, removing: bool = False, instance_id: str | None = None) -> None:
+    upgrade = state_root / JOURNAL_NAME
+    if (upgrade.exists() or upgrade.is_symlink()) and not upgrade_authorized(state_root, instance_id):
+        raise ManagerError(ErrorCode.RECONCILIATION_CONFLICT, 'instance upgrade is pending; resume it before changing instances')
     journal = state_root / "maintenance-transaction.json"
     if not journal.exists() and not journal.is_symlink():
         return
@@ -80,7 +84,8 @@ class InstanceRegistry:
         if self.directory.name == "instances" and self.directory.parent.name == "workspace-mcp-manager" and self.directory.parent.parent.name == ".config":
             home = self.directory.parent.parent.parent
             removing = desired is not None and desired.lifecycle.to_dict() == {"deployment": "absent", "runtime": "stopped"}
-            assert_maintenance_allows(home / ".local/state/workspace-mcp-manager", removing=removing)
+            assert_maintenance_allows(home / ".local/state/workspace-mcp-manager", removing=removing,
+                                      instance_id=desired.instance_id.value if desired is not None else None)
 
     def path_for(self, instance_id: InstanceId | str) -> Path:
         iid = instance_id if isinstance(instance_id, InstanceId) else InstanceId(instance_id)

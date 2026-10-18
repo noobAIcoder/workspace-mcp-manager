@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import fcntl
 import time
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -146,6 +147,8 @@ class Maintenance:
             yield
             return
         self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if (self.state / 'distribution.lock').is_symlink():
+            raise MaintenanceError('symlinked distribution lock')
         with (self.state / 'distribution.lock').open('a') as stream:
             deadline = time.monotonic() + 5
             while True:
@@ -213,6 +216,24 @@ class Maintenance:
         pending = any(path.exists() or path.is_symlink() for path in [self.journal, self.state / 'distribution-transaction.json']) or bool(list((self.state / 'imports').glob('*.json')))
         base = {'ok': True, 'ownership': 'absent', 'current': None, 'releases': [],
                 'instances': declarations, 'recovery_required': pending, 'entrypoints': entries}
+        upgrade = self.state / 'instance-upgrade.json'
+        if upgrade.exists() or upgrade.is_symlink():
+            helper = Path(__file__).with_name('upgrade_state.py')
+            if not helper.is_file() or helper.is_symlink():
+                raise MaintenanceError('instance upgrade inspector is unavailable')
+            spec = importlib.util.spec_from_file_location('workspace_upgrade_state', helper)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            try:
+                state = module.read_upgrade(upgrade)
+            except ValueError as exc:
+                raise MaintenanceError(str(exc)) from exc
+            if state['prefix'] != str(self.prefix):
+                raise MaintenanceError('instance upgrade belongs to a different prefix')
+            base.update(recovery_required=True, instance_upgrade={
+                'target_release': state['target_release'], 'target_root': state['target_root'],
+                'completed': [r['instance_id'] for r in state['entries'] if r['phase'] == 'completed'],
+                'failed': state['failed'], 'remaining': [r['instance_id'] for r in state['entries'] if r['phase'] != 'completed']})
         if not self.root.exists() and not self.root.is_symlink():
             if entries and not self.journal.exists():
                 raise MaintenanceError('entry points exist without an owned distribution')
@@ -449,7 +470,7 @@ class Maintenance:
         if destination.is_symlink():
             raise MaintenanceError('foreign recovery capsule')
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for source, name in [(installer, 'install.sh'), (bootstrap, 'setup.sh'), (Path(__file__).resolve(), 'maintenance.py')]:
+        for source, name in [(installer, 'install.sh'), (bootstrap, 'setup.sh'), (Path(__file__).resolve(), 'maintenance.py'), (directory / 'upgrade_state.py', 'upgrade_state.py')]:
             if not source.is_file():
                 raise MaintenanceError('cannot prepare offline recovery capsule')
             target = destination / name

@@ -11,6 +11,7 @@ from . import __version__
 from .access import AccessManager
 from .cleanup import LegacyCleanupService
 from .legacy_import import LegacyImportService
+from .instance_upgrade import InstanceUpgradeService
 from .codex_jobs import CodexJobManager
 from .diagnostics import DEFAULT_SINCE_SECONDS, ResilienceDiagnosticService
 from .domain import DesiredInstance
@@ -108,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     instance = subparsers.add_parser("instance")
     instance_sub = instance.add_subparsers(dest="command", required=True)
+    upgrades = instance_sub.add_parser('upgrade', help='refresh all instance runtimes using the executing distribution')
+    upgrade_sub = upgrades.add_subparsers(dest='upgrade_action', required=True)
+    upgrade_preview = upgrade_sub.add_parser('preview')
+    upgrade_preview.add_argument('--all', action='store_true', required=True)
+    upgrade_apply = upgrade_sub.add_parser('apply')
+    upgrade_apply.add_argument('--preview', type=Path, required=True)
+    upgrade_apply.add_argument('--expected-preview-fingerprint', required=True)
+    upgrade_recover = upgrade_sub.add_parser('recover')
+    for upgrade_parser in (upgrade_preview, upgrade_apply, upgrade_recover):
+        upgrade_parser.add_argument('--pretty', action='store_true')
     for command in ("validate", "create", "update"):
         item = instance_sub.add_parser(command)
         item.add_argument("file", type=Path)
@@ -257,6 +268,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     runtime = subparsers.add_parser("_runtime", help=argparse.SUPPRESS)
     runtime_sub = runtime.add_subparsers(dest="command", required=True)
+    runtime_upgrade = runtime_sub.add_parser('instance-upgrade')
+    runtime_upgrade.add_argument('action', choices=('preview', 'apply', 'recover'))
     for command in ("tunnel", "admission-guard"):
         item = runtime_sub.add_parser(command)
         item.add_argument("instance_id")
@@ -395,6 +408,9 @@ def _run_instance(
     paths: ManagerPaths,
 ) -> dict[str, Any]:
     bridge = HostExecutionBridge(paths)
+    if args.command == 'upgrade':
+        request = {'preview': _load_import_json(args.preview), 'expected_fingerprint': args.expected_preview_fingerprint} if args.upgrade_action == 'apply' else {}
+        return bridge.run_instance_upgrade(args.upgrade_action, request)
     if args.command == "import":
         if args.import_action == "list":
             request = {}
@@ -510,6 +526,21 @@ def _run_runtime(
     registry: InstanceRegistry,
     paths: ManagerPaths,
 ) -> dict[str, Any] | None:
+    if args.command == 'instance-upgrade':
+        try:
+            request = json.load(sys.stdin)
+            if not isinstance(request, dict):
+                raise ValueError('object required')
+        except (ValueError, OSError) as exc:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, 'invalid instance upgrade request JSON') from exc
+        service = InstanceUpgradeService(paths, registry)
+        if args.action == 'preview':
+            return service.preview()
+        if args.action == 'apply':
+            if not isinstance(request.get('preview'), dict) or not isinstance(request.get('expected_fingerprint'), str):
+                raise ManagerError(ErrorCode.CONFIG_INVALID, 'reviewed instance upgrade preview and fingerprint required')
+            return service.apply(request['preview'], request['expected_fingerprint'])
+        return service.recover()
     if args.command == "import":
         service = LegacyImportService(paths, registry)
         try:

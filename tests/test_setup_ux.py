@@ -155,7 +155,7 @@ esac
         (capsule / 'install.sh').write_text("#!/bin/bash\nprintf '%s\\n' '{\"ok\":true,\"ownership\":\"absent\",\"instances\":{},\"releases\":[]}'\n")
         (program / 'install.sh').write_text('''#!/bin/bash
 case "$1" in
- --maintenance-status) printf '%s\\n' '{"ok":true,"ownership":"standalone_distribution","instances":{},"releases":[]}' ;;
+ --maintenance-status) printf '%s\\n' '{"ok":true,"ownership":"standalone_distribution","current":"dist-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","instances":{},"releases":[]}' ;;
  --maintenance-preview) printf '%s\\n' '{"ok":true,"action":"uninstall","status":{"instances":{}}}' ;;
  --maintenance-apply) cat >/dev/null; mv -- "$TEST_PROGRAM" "$TEST_QUARANTINE"; printf '%s\\n' '{"ok":true,"action":"uninstall"}' ;;
  *) exit 2 ;;
@@ -199,7 +199,7 @@ printf '%s\\n' '{"ok":true,"action":"install","product_version":"0.3.0"}'
             subprocess.run(command, cwd=self.remote, check=True)
         (self.root / 'install.sh').write_text('''#!/bin/bash
 if [[ -f "$TEST_APPLIED" ]]; then
- printf '%s\\n' '{"ok":true,"ownership":"standalone_distribution","instances":{},"releases":[]}'
+ printf '%s\\n' '{"ok":true,"ownership":"standalone_distribution","current":"dist-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","instances":{},"releases":[]}'
 else
  printf '%s\\n' '{"ok":true,"ownership":"absent","instances":{},"releases":[]}'
 fi
@@ -286,6 +286,75 @@ fi
         result = self.run_menu('1\n1\n')
         self.assertFalse(self.marker.exists())
         self.assertIn('Cancelled: no installation changes', result.stdout)
+
+
+    def prepare_full_upgrade(self):
+        self.marker.parent.mkdir(parents=True, exist_ok=True)
+        self.marker.write_text('{"previous":true}')
+        manager = self.home / '.local/lib/workspace-mcp-manager/releases' / CURRENT / 'bin/workspace-mcp-manager'
+        manager.parent.mkdir(parents=True)
+        self.fleet_marker = self.root / 'fleet-applied'
+        preview = {'ok':True, 'account_home':str(self.home), 'prefix':str(self.home / '.local'),
+                   'target_root':str(manager.parents[1]), 'target_release':CURRENT, 'fingerprint':'fleet-preview',
+                   'product_version':'0.3.0', 'instances':[{'instance_id':'one', 'original':{'mcp':{'binary':'/old/mcp'},'tunnel':{'binary':'/old/tunnel'}},
+                   'candidate':{'mcp':{'binary':'/new/mcp'},'tunnel':{'binary':'/new/tunnel'},'lifecycle':{'deployment':'present','runtime':'running'}},'force_restart':True,'valid':True,'errors':[]}]}
+        manager.write_text('#!/bin/bash\ncase "$3" in\n preview) printf \'%s\\n\' ' + shlex.quote(json.dumps(preview)) + '\n;;\n apply) touch ' + shlex.quote(str(self.fleet_marker)) + '; printf \'%s\\n\' \'{"ok":true,"action":"instance-upgrade","completed":["one"],"remaining":[]}\';;\n *) exit 2;;\nesac\n')
+        manager.chmod(0o755)
+
+    def test_full_upgrade_requires_second_confirmation(self):
+        self.prepare_full_upgrade()
+        result = self.run_menu('6\n1\ny\n\n0\n')
+        self.assertIn('Type UPGRADE', result.stdout)
+        self.assertFalse(self.fleet_marker.exists())
+        self.assertIn('instance runtimes were not changed', result.stdout)
+
+    def test_full_upgrade_refreshes_an_already_current_release(self):
+        self.prepare_full_upgrade()
+        result = self.run_menu('6\n1\nUPGRADE\n0\n', current=True)
+        self.assertIn('Already current', result.stdout)
+        self.assertTrue(self.fleet_marker.exists())
+        self.assertIn('Upgrade manager and all instances', result.stdout)
+
+    def test_cancelled_manager_stage_does_not_start_instance_stage(self):
+        self.prepare_full_upgrade()
+        result = self.run_menu('6\n1\n\n0\n')
+        self.assertFalse(self.fleet_marker.exists())
+        self.assertNotIn('Type UPGRADE', result.stdout)
+
+    def test_full_upgrade_configure_opens_manager_after_refresh(self):
+        self.prepare_full_upgrade()
+        result = self.run_menu('6\n1\ny\nUPGRADE\n0\n', configure=True)
+        self.assertTrue(self.fleet_marker.exists())
+        self.assertTrue(self.tui_marker.exists())
+        self.assertNotIn('Next steps', result.stdout)
+
+    def test_full_upgrade_refuses_preview_for_another_account(self):
+        self.prepare_full_upgrade()
+        manager = self.home / '.local/lib/workspace-mcp-manager/releases' / CURRENT / 'bin/workspace-mcp-manager'
+        manager.write_text(manager.read_text().replace(str(self.home), '/different-account'))
+        result = self.run_menu('6\n1\n0\n', current=True)
+        self.assertFalse(self.fleet_marker.exists())
+        self.assertNotIn('Type UPGRADE', result.stdout)
+        self.assertIn('preview does not match the selected account', result.stdout)
+
+    def test_maintenance_resumes_recorded_instance_upgrade(self):
+        self.prepare_full_upgrade()
+        manager = self.home / '.local/lib/workspace-mcp-manager/releases' / CURRENT / 'bin/workspace-mcp-manager'
+        manager.write_text(manager.read_text().replace(' apply)', ' apply|recover)'))
+        (self.marker.parent / 'instance-upgrade.json').write_text('{}')
+        status = {'ok':True,'ownership':'standalone_distribution','current':CURRENT,'instances':{},'releases':[],
+                  'recovery_required':True,'instance_upgrade':{'target_release':CURRENT}}
+        (self.root / 'install.sh').write_text("#!/bin/bash\nprintf '%s\\n' " + shlex.quote(json.dumps(status)) + '\n')
+        result = self.run_menu('3\n1\ny\n0\n')
+        self.assertTrue(self.fleet_marker.exists())
+        self.assertIn('Completed: instance runtimes refreshed', result.stdout)
+
+    def test_malformed_pending_upgrade_never_dispatches_unverified_recovery(self):
+        self.prepare_full_upgrade()
+        (self.marker.parent / 'instance-upgrade.json').write_text('{}')
+        result = self.run_menu('3\n1\ny\n0\n')
+        self.assertFalse(self.fleet_marker.exists())
+        self.assertIn('recovery target could not be verified', result.stdout)
 
 
 if __name__ == '__main__':

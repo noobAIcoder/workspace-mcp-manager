@@ -179,7 +179,8 @@ it found, and recommends a next step. Its main choices are:
 1. **Install manager**, **Upgrade manager installation**, or **Check for manager
    updates**, depending on the detected installation. This opens a task page;
    checking the release server is a separate choice, followed by review and
-   confirmation before any change.
+   confirmation before any change. This updates the manager only; existing
+   instance runtime paths and services are preserved.
 2. **Open instance manager** to manage workspaces and instance settings.
 3. **Maintenance** for interrupted-operation recovery, restoring a previous
    manager version, or uninstalling.
@@ -189,14 +190,39 @@ it found, and recommends a next step. Its main choices are:
    detected. Importing transfers instances into manager control; upgrading an
    older manager installation preserves its existing instance settings and
    running services and does not import toolkit instances.
+6. **Upgrade manager and all instances** to update the manager and then refresh
+   every configured instance against its bundled MCP server and tunnel client.
+   The instance stage has its own preview and requires typing `UPGRADE`.
 
 Use **0** or blank input to go back or cancel; at the main menu, either exits.
 EOF also exits safely. Unavailable actions explain the prerequisite. Recovery
 takes priority when work was interrupted. After a successful installation or
 upgrade, setup offers to open the instance manager, return to setup, or exit.
-Updates and restoring a previous manager version preserve existing instance
+Manager-only updates and restoring a previous manager version preserve existing instance
 declarations, runtime paths, and services. Restoring a version keeps a
 maintenance-capable release available through the setup command.
+
+The full upgrade always refreshes deployments, including when the manager release
+is already current. Running instances restart one at a time and briefly lose
+connections; configured stopped instances remain stopped and absent instances
+receive updated runtime references without deployment. The preview identifies
+all runtime-path replacements, including custom binary paths. Other settings,
+credentials, identities, ports and workspaces are retained. Separately installed
+Codex CLI, GitHub CLI and OS packages are excluded.
+
+Original declarations are backed up privately under
+`~/.local/state/workspace-mcp-manager/backups/instance-upgrade-<id>/` before the
+instance stage changes anything. A failure stops subsequent upgrades. Use
+**Maintenance → Recover interrupted operation** to validate and resume the pinned
+target; completed instances are checked and skipped rather than restarted again.
+Previous releases and backups stay available. Cancelling the instance review
+leaves instance runtimes unchanged even if the manager stage already completed.
+
+The public manager also exposes `instance upgrade preview --all`,
+`instance upgrade apply --preview PATH --expected-preview-fingerprint VALUE`, and
+`instance upgrade recover`. Run these from the installed target distribution.
+Preview is read-only; apply requires the complete reviewed JSON and its matching
+fingerprint. Progress is written to stderr and the final result remains JSON.
 
 Uninstall requires typing `UNINSTALL`. It first removes instance deployments
 through the normal lifecycle reconciler. If any removal fails, the manager

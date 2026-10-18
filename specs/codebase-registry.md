@@ -11,6 +11,8 @@
 | `src/workspace_mcp_manager/planning.py` | Desired/observed reconciliation and ownership-gated plans | observe only |
 | `src/workspace_mcp_manager/host_apply.py` | Locked, journaled host reconciliation and rollback | generated resources, systemd, owned PM1 Git keys |
 | `src/workspace_mcp_manager/lifecycle.py` | Complete lifecycle wrapper including present/stopped execution | delegates to host apply |
+| `src/workspace_mcp_manager/instance_upgrade.py` | Reviewed sequential instance-runtime upgrade and resume | canonical declarations, private backups/journal; delegates host reconciliation |
+| `src/workspace_mcp_manager/upgrade_state.py` | Python 3.10-compatible upgrade journal validation and scoped worker authority | none |
 | `src/workspace_mcp_manager/development_environment.py` | PM1 GitHub profile, local Git identity/transport and agent-provider reconciliation | exact repository-local owned keys only |
 | `src/workspace_mcp_manager/admission_recovery.py` | Admission guard plus applied-evidence reconstruction for obsolete owned resources | reconstruction only |
 | `src/workspace_mcp_manager/git_diagnostics.py` | Instance Git/GitHub diagnostics under effective environment | read-only |

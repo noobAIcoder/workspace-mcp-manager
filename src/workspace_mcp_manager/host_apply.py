@@ -95,6 +95,7 @@ def _run(
     env: Mapping[str, str] | None = None,
     check: bool = True,
     input_text: str | None = None,
+    stream_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     safe_env = dict(env) if env is not None else sanitized_subprocess_env(os.environ)
     io_kwargs: dict[str, Any]
@@ -106,7 +107,7 @@ def _run(
         completed = subprocess.run(
             list(argv),
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=None if stream_stderr else subprocess.PIPE,
             text=True,
             errors="replace",
             timeout=timeout,
@@ -117,7 +118,7 @@ def _run(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ManagerError(ErrorCode.IO_ERROR, f"command failed to execute: {argv[0]}: {exc}") from exc
     if check and completed.returncode != 0:
-        detail = redact_text((completed.stderr or completed.stdout).strip())[-2000:]
+        detail = redact_text((completed.stderr or completed.stdout or '').strip())[-2000:]
         raise ManagerError(
             ErrorCode.IO_ERROR,
             f"command failed: {' '.join(argv[:3])}",
@@ -533,7 +534,7 @@ class HostApplyService:
     ) -> dict[str, Any]:
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
-            assert_maintenance_allows(self.paths.state_root, removing=action == "remove" and desired.lifecycle.deployment is DeploymentTarget.ABSENT)
+            assert_maintenance_allows(self.paths.state_root, removing=action == "remove" and desired.lifecycle.deployment is DeploymentTarget.ABSENT, instance_id=instance_id)
             bundle = self.generator.generate(desired)
 
             # P6 host-side verification gate that could not be run reliably from
@@ -1444,6 +1445,16 @@ class HostExecutionBridge:
     def __init__(self, paths: ManagerPaths) -> None:
         self.paths = paths
 
+    def run_instance_upgrade(self, action: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        if action not in {'preview', 'apply', 'recover'}:
+            raise ManagerError(ErrorCode.CONFIG_INVALID, 'invalid instance upgrade action')
+        # A fleet may legitimately exceed the normal single-instance timeout.
+        # Progress stays on stderr; stdout remains one structured result.
+        return self._run_json(['_runtime', 'instance-upgrade', action], input_text=json.dumps(request),
+                              unit_fragment='instance-upgrade-' + action, timeout=3600.0,
+                              progress=action != 'preview')
+
+
     def run_registry_write(
         self,
         action: str,
@@ -1667,6 +1678,7 @@ class HostExecutionBridge:
         input_text: str | None = None,
         unit_fragment: str | None = None,
         timeout: float = 180.0,
+        progress: bool = False,
     ) -> dict[str, Any]:
         if not self.paths.manager_executable.is_file() or not os.access(self.paths.manager_executable, os.X_OK):
             raise ManagerError(
@@ -1690,9 +1702,10 @@ class HostExecutionBridge:
             str(self.paths.registry_dir),
             *runtime_args,
         ]
-        completed = _run(argv, timeout=timeout, check=False, input_text=input_text)
+        run_options = {'stream_stderr': True} if progress else {}
+        completed = _run(argv, timeout=timeout, check=False, input_text=input_text, **run_options)
         stdout = completed.stdout.strip()
-        stderr = redact_text(completed.stderr.strip())
+        stderr = redact_text((completed.stderr or '').strip())
         payload: dict[str, Any] | None = None
         if stdout:
             # The worker emits one JSON document. Be tolerant of a systemd line

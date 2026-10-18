@@ -365,6 +365,47 @@ manager releases remain manageable. Installations also stage a private offline
 recovery capsule before starting their first transaction, so recovery does not
 depend on a completed release or a surviving temporary acquisition directory.
 
+### Full manager and instance upgrade
+
+Setup root choice 6 MUST offer upgrading the manager and all configured instances,
+separately from manager-only updates and legacy import. The manager stage uses
+normal pinned acquisition, review, confirmation, and distribution recovery. The
+instance stage uses the installed target release to produce a second preview and
+requires separate confirmation. Cancelling it MUST explain that instance runtimes
+are unchanged even if the manager stage committed. Already-current releases MUST
+still permit the instance refresh stage.
+
+Public manager operations are `instance upgrade preview --all`, `instance upgrade
+apply --preview PATH --expected-preview-fingerprint VALUE`, and `instance upgrade
+recover`. They use the host execution boundary. The target MUST be the immutable,
+verified executing distribution. Preview MUST cover all canonical declarations,
+original/candidate fingerprints, exact runtime-path replacements (including
+custom paths), lifecycle intent, restart policy, authoritative plans and blockers.
+Only MCP and tunnel binary paths change; other settings and credential references
+MUST be preserved. Present/running instances MUST reconcile and restart even for
+otherwise-NOOP plans; present/stopped instances MUST remain stopped. Absent
+declarations receive new runtime references without deployment.
+
+Before changing an instance, apply MUST durably back up original declarations in
+a private directory and persist a versioned `instance-upgrade.json` transaction.
+Its pinned target, original/candidate snapshots and fingerprints, restart policy,
+and per-instance progress support deterministic recovery. Credentials stay in
+place and are not copied. Distribution maintenance and conflicting registry or
+lifecycle mutations MUST be excluded, with a narrowly scoped internal capability
+for the upgrade worker. Old releases and backups MUST be retained.
+
+Instances are processed in lexical order. The first update, apply or verification
+failure stops further processing and reports completed, failed and remaining IDs.
+Recovery MUST validate the journal, target, backups and current declarations,
+recover/reconcile unfinished instance apply work, verify completed instances, and
+resume the remainder. Completed instances MUST NOT be restarted again by resume;
+unexpected drift blocks recovery. Durable applied evidence MUST distinguish an
+apply that committed immediately before interruption from one still incomplete.
+New explicitly confirmed refreshes always restart present/running instances.
+Offline setup status and Maintenance recovery MUST recognize the transaction
+while preserving Python 3.10 standard-library inspection. Codex/GitHub CLI upgrades,
+OS packages, legacy import, release pruning and whole-fleet rollback are excluded.
+
 ### Setup inspection compatibility
 
 Read-only setup inspection uses the standalone standard-library backend and
