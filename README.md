@@ -173,12 +173,30 @@ After installation, open the same menu with:
 workspace-mcp-manager-setup
 ```
 
-The menu inspects local status without contacting the release server. It offers
-install/update/migration, release checks, interrupted-operation recovery,
-rollback to a validated retained release, uninstall, and opening the manager.
-Every change has a preview and confirmation; blank input cancels. Updates and
-rollback preserve existing instance declarations, runtime paths, and services.
-Rollback keeps a maintenance-capable release available through the setup command.
+Setup inspects local status without contacting the release server, explains what
+it found, and recommends a next step. Its main choices are:
+
+1. **Install manager**, **Upgrade manager installation**, or **Check for manager
+   updates**, depending on the detected installation. This opens a task page;
+   checking the release server is a separate choice, followed by review and
+   confirmation before any change.
+2. **Open instance manager** to manage workspaces and instance settings.
+3. **Maintenance** for interrupted-operation recovery, restoring a previous
+   manager version, or uninstalling.
+4. **Installation details** for the selected account and installation path, full
+   release IDs, runtime versions, prerequisites, and diagnostics.
+5. **Import legacy toolkit instances**, shown only when an old toolkit is
+   detected. Importing transfers instances into manager control; upgrading an
+   older manager installation preserves its existing instance settings and
+   running services and does not import toolkit instances.
+
+Use **0** or blank input to go back or cancel; at the main menu, either exits.
+EOF also exits safely. Unavailable actions explain the prerequisite. Recovery
+takes priority when work was interrupted. After a successful installation or
+upgrade, setup offers to open the instance manager, return to setup, or exit.
+Updates and restoring a previous manager version preserve existing instance
+declarations, runtime paths, and services. Restoring a version keeps a
+maintenance-capable release available through the setup command.
 
 Uninstall requires typing `UNINSTALL`. It first removes instance deployments
 through the normal lifecycle reconciler. If any removal fails, the manager

@@ -378,9 +378,9 @@ class PredecessorInspectionTests(unittest.TestCase):
     def test_menu_offers_migration_and_open_manager(self):
         result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', str(self.home)], input='0\n', text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('1. Migrate\n', result.stdout)
-        self.assertIn('6. Open manager\n', result.stdout)
-        self.assertIn('Instances: 1', result.stdout)
+        self.assertIn('1. Upgrade manager installation\n', result.stdout)
+        self.assertIn('2. Open instance manager\n', result.stdout)
+        self.assertIn('1 configured instance', result.stdout)
         self.assertNotIn('Inspection:', result.stdout)
 
     def test_predecessor_cannot_use_standalone_maintenance(self):
@@ -444,7 +444,7 @@ class SetupMenuTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             completed = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', directory], input='0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn('Uninstall', completed.stdout)
+            self.assertIn('3. Maintenance', completed.stdout)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_inspection_errors_are_visible(self):
@@ -466,8 +466,8 @@ class SetupMenuTests(unittest.TestCase):
             (toolkit / 'VERSION').write_text('0.3.2\n')
             result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', directory], input='0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('Manager installation: absent', result.stdout)
-            self.assertIn('Legacy workspace-mcp toolkit: detected', result.stdout)
+            self.assertIn('No manager installation was found.', result.stdout)
+            self.assertIn('5. Import legacy toolkit instances', result.stdout)
             self.assertEqual((toolkit / 'VERSION').read_text(), '0.3.2\n')
 
     def test_status_uses_system_python_without_package_imports(self):
@@ -557,7 +557,7 @@ case "$1" in
  *) exit 2 ;;
 esac
 ''')
-                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(root / 'home')], input='5\n' + confirmation + '\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'MENU_MARKER': str(marker)})
+                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(root / 'home')], input='3\n3\n' + confirmation + '\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'MENU_MARKER': str(marker)})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(marker.exists(), applies)
                 self.assertIn('Type UNINSTALL', result.stdout)
@@ -588,7 +588,7 @@ class SetupPackagingTests(unittest.TestCase):
             harness = code + '\nBOOTSTRAP_PYTHON=' + shlex.quote(sys.executable) + '\nACCOUNT_HOME=' + shlex.quote(str(home)) + '\nPREFIX=' + shlex.quote(str(prefix)) + '\nwrite_setup_wrapper ' + shlex.quote(str(stage)) + ' ' + shlex.quote(str(final))
             result = subprocess.run(['bash', '-c', harness], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            result = subprocess.run(['bash', str(stage / 'bin/workspace-mcp-manager-setup'), '--interactive'], input='0\n', text=True, capture_output=True, timeout=10)
+            result = subprocess.run(['bash', str(stage / 'bin/workspace-mcp-manager-setup'), '--interactive'], input='4\n0\n0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(str(prefix), result.stdout)
 
@@ -643,15 +643,16 @@ class ImportMenuTests(unittest.TestCase):
     def test_import_menu_separates_preview_from_explicit_handover(self):
         import shutil
         import sys
-        for confirmation, expected in [('', False), ('yes', False), ('MIGRATE', True)]:
-            with self.subTest(confirmation=confirmation), tempfile.TemporaryDirectory() as directory:
+        for confirmation, expected, fail in [('', False, False), ('yes', False, False), ('MIGRATE', True, False), ('MIGRATE', True, True)]:
+            with self.subTest(confirmation=confirmation, fail=fail), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 shutil.copy2(ROOT / 'bootstrap.sh', root / 'setup.sh')
                 (root / 'install.sh').write_text("#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"ownership\":\"standalone_distribution\",\"instances\":{},\"releases\":[]}'\n")
                 home = root / 'home'; manager = home / '.local/bin/workspace-mcp-manager'
                 manager.parent.mkdir(parents=True)
+                (home / '.config/workspace-mcp').mkdir(parents=True)
                 marker = root / 'migrated'
-                manager.write_text('#!' + sys.executable + '\n' + '''import json,sys,pathlib
+                manager.write_text('#!' + sys.executable + '\n' + '''import json,sys,pathlib,os
 args=sys.argv[1:]
 if '--help' in args: raise SystemExit(0)
 if args[:3]==['instance','import','list']:
@@ -660,15 +661,22 @@ elif args[:3]==['instance','import','preview']:
  print(json.dumps({'ok':True,'fingerprint':'fixture','instances':[{'instance_id':'one','action':'import','desired':{'workspace_path':'/workspace','lifecycle':{'runtime':'running'},'mcp':{'binary':'/bundled/mcp','port':9000,'permission_mode':'dangerous'},'tunnel':{'binary':'/bundled/tunnel','id':'tunnel_ABC','health_port':9001}}}], 'interruption':'Connections will restart.', 'retirement':{'state':'ready'}}))
 elif args[:3]==['instance','import','apply']:
  pathlib.Path(''' + repr(str(marker)) + ''').touch()
+ if os.environ.get('IMPORT_FAIL')=='1':
+  print(json.dumps({'ok':False,'completed':[],'failed':'one','unattempted':[],'error':'fixture import failed','recovery_required':True}))
+  raise SystemExit(2)
  print(json.dumps({'ok':True,'completed':['one']}))
 else: raise SystemExit(2)
 ''')
                 manager.chmod(0o755)
-                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(home)], input='7\nall\n'+confirmation+'\n0\n', text=True, capture_output=True, timeout=10)
+                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(home)], input='5\nall\n'+confirmation+'\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'IMPORT_FAIL': '1' if fail else '0'})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(marker.exists(), expected)
-                self.assertIn('Import and replace legacy toolkit', result.stdout)
+                self.assertIn('Import legacy toolkit instances', result.stdout)
                 self.assertIn('Type MIGRATE', result.stdout)
+                if fail:
+                    self.assertIn('Blocked or interrupted: fixture import failed', result.stdout)
+                    self.assertIn('Needs attention: one', result.stdout)
+                    self.assertNotIn('Completed:', result.stdout)
 
 
 class ImportAccountBoundaryTests(unittest.TestCase):
@@ -682,10 +690,11 @@ class ImportAccountBoundaryTests(unittest.TestCase):
             home = root / 'home'
             manager = home / '.local/bin/workspace-mcp-manager'
             manager.parent.mkdir(parents=True)
+            (home / '.config/workspace-mcp').mkdir(parents=True)
             marker = root / 'preview-called'
             manager.write_text('#!' + sys.executable + '\n' + "import sys,json,pathlib\nif '--help' in sys.argv: raise SystemExit(0)\nif 'list' in sys.argv: print(json.dumps({'ok':True,'account_home':'/different-account','manager_prefix':'/different-prefix','candidates':[{'instance_id':'one','state':'ready'}]})); raise SystemExit(0)\npathlib.Path(" + repr(str(marker)) + ").touch()\nraise SystemExit(1)\n")
             manager.chmod(0o755)
-            result = subprocess.run(['bash',str(root / 'setup.sh'),'--interactive','--account-home',str(home)], input='7\none\n\n0\n', text=True, capture_output=True, timeout=10)
+            result = subprocess.run(['bash',str(root / 'setup.sh'),'--interactive','--account-home',str(home)], input='5\none\n\n0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(marker.exists())
             self.assertIn('account or prefix differs', result.stdout)

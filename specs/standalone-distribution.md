@@ -286,6 +286,38 @@ Unavailable actions MUST explain why. All changes require inspect, preview,
 confirmation (default Cancel), execution, and a refreshed result. EOF cancels;
 progress reports phases rather than speculative percentages.
 
+### Guided setup navigation
+
+Setup MUST explain verified installation state and recommend installation for an
+absent manager, upgrading for a recognized predecessor, opening the instance
+manager for an installed standalone release, or recovery for pending work.
+Failed or unknown inspection MUST NOT be represented as absence, zero configured
+instances, or a healthy installation. Release identity, not product-version
+equality, determines whether a release is already current.
+
+The numbered root choices are: 1 install/upgrade/check for manager updates
+(state-dependent wording), 2 open instance manager, 3 maintenance, 4 installation
+details, and 5 import legacy toolkit instances only when detected. Choice 0 or
+blank exits. Unavailable actions MUST explain why and MUST NOT execute.
+Maintenance groups recovery, restoring a previous manager version, and uninstall.
+Restore selection MUST exclude the active release and historical predecessors.
+Subpages MUST offer 0 or blank for Back/Cancel; EOF exits safely throughout.
+
+Manager predecessor upgrading MUST be distinguished from importing legacy
+toolkit instances. Guided tasks explain their effects before inspection and
+preview, preserve existing confirmation and fingerprint safeguards, and refresh
+authoritative status after operations. Successful installation/upgrading offers
+opening the instance manager, returning to setup, or exiting; explicit
+`--configure` retains its existing behavior. Results distinguish completion,
+cancellation, blocking, and interruption, and identify actionable next steps.
+
+Full release IDs, runtime versions, selected account home/prefix, prerequisites,
+and technical diagnostics belong in Installation details. Verified product
+versions MAY appear in summaries; unavailable versions remain unknown. Check
+reports add nullable `installed_product_version` and `candidate_product_version`
+fields; all existing machine-readable fields and automation flags retain their
+semantics. Setup MUST handle older backends without the added fields.
+
 Distribution maintenance remains delegated to scripts/install.sh. Additive
 structured previews identify affected releases, instances, preserved data,
 blockers, and a fingerprint rechecked under the distribution lock before apply.
