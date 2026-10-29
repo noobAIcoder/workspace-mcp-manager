@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     access_list = access_sub.add_parser("list")
     access_list.add_argument("instance_id")
     access_list.add_argument("--pretty", action="store_true")
-    for command in ("add-ro", "add-rw"):
+    for command in ("add-ro", "add-rw", "add-rx", "add-rwx"):
         item = access_sub.add_parser(command)
         item.add_argument("instance_id")
         item.add_argument("alias")
@@ -260,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
     access_update = access_sub.add_parser("update")
     access_update.add_argument("instance_id")
     access_update.add_argument("existing_alias")
-    access_update.add_argument("mode", choices=("ro", "rw"))
+    access_update.add_argument("mode", choices=("ro", "rw", "rx", "rwx"))
     access_update.add_argument("alias")
     access_update.add_argument("path")
     access_update.add_argument("--expected-current-fingerprint")
@@ -329,12 +329,12 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_github_access.add_argument("action", choices=("status", "verify"))
     runtime_github_access.add_argument("instance_id")
     runtime_access = runtime_sub.add_parser("access")
-    runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "remove", "update"))
+    runtime_access.add_argument("action", choices=("list", "add-ro", "add-rw", "add-rx", "add-rwx", "remove", "update"))
     runtime_access.add_argument("instance_id")
     runtime_access.add_argument("alias", nargs="?")
     runtime_access.add_argument("path", nargs="?")
     runtime_access.add_argument("--existing-alias")
-    runtime_access.add_argument("--mode", choices=("ro", "rw"))
+    runtime_access.add_argument("--mode", choices=("ro", "rw", "rx", "rwx"))
     runtime_access.add_argument("--expected-current-fingerprint")
     runtime_codex_start = runtime_sub.add_parser("codex-start")
     runtime_codex_start.add_argument("mode", choices=("read", "write"))
@@ -636,12 +636,12 @@ def _run_runtime(
             if args.alias is not None or args.path is not None:
                 raise ManagerError(ErrorCode.CONFIG_INVALID, "list does not accept alias or path")
             return access.list(args.instance_id)
-        if args.action in {"add-ro", "add-rw"}:
+        if args.action in {"add-ro", "add-rw", "add-rx", "add-rwx"}:
             if args.alias is None or args.path is None:
                 raise ManagerError(ErrorCode.CONFIG_INVALID, f"{args.action} requires alias and path")
             return access.add(
                 args.instance_id,
-                mode="ro" if args.action == "add-ro" else "rw",
+                mode=args.action.removeprefix("add-"),
                 alias=args.alias,
                 path=args.path,
                 expected_current_fingerprint=args.expected_current_fingerprint,

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
-from .domain import ACCESS_ALIAS_RE, AccessFolder, DesiredInstance
+from .domain import ACCESS_ALIAS_RE, ACCESS_MODES, AccessFolder, DesiredInstance
 from .errors import ErrorCode, ManagerError, config_error
 from .generation import OWNER_PREFIX, GeneratedBundle, GeneratedResource, ResourceKind
 from .paths import ManagerPaths
@@ -15,7 +15,7 @@ from .registry import InstanceRegistry
 
 
 APPLIED_SCHEMA_VERSION = 1
-ACCESS_RESOURCE_PREFIXES = ("access-ro-", "access-rw-")
+ACCESS_RESOURCE_PREFIXES = ("access-ro-", "access-rw-", "access-rx-", "access-rwx-")
 ACCESS_RESOURCE_IDS = frozenset({"access-root", "access-owner", "access-ignore"})
 
 
@@ -61,10 +61,7 @@ class AccessManager:
                 "path": folder.path,
                 "mount_path": str(access_root / folder.alias),
             }
-            for mode, folders in (
-                ("ro", desired.access.read_only),
-                ("rw", desired.access.read_write),
-            )
+            for mode, folders in desired.access.groups()
             for folder in folders
         ]
         entries.sort(key=lambda item: (_normalized_alias(item["alias"]), item["mode"], item["path"]))
@@ -106,14 +103,14 @@ class AccessManager:
         path: str,
         expected_current_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        if mode not in {"ro", "rw"}:
+        if mode not in ACCESS_MODES:
             raise ManagerError(ErrorCode.CONFIG_INVALID, f"unsupported access mode: {mode}")
         with self._instance_lock(instance_id):
             desired = self.registry.get(instance_id)
             self._require_expected(desired, expected_current_fingerprint)
             raw = desired.to_dict()
-            key = "read_only" if mode == "ro" else "read_write"
-            raw["access"][key].append({"alias": alias, "path": path})
+            key = ACCESS_MODES[mode]
+            raw["access"].setdefault(key, []).append({"alias": alias, "path": path})
             updated = DesiredInstance.from_dict(raw)
             self.registry.update(updated, expected_current_fingerprint=desired.fingerprint())
         return self._payload(updated, action=f"add-{mode}", apply_required=True)
@@ -131,9 +128,9 @@ class AccessManager:
             self._require_expected(desired, expected_current_fingerprint)
             raw = desired.to_dict()
             removed: dict[str, str] | None = None
-            for key, mode in (("read_only", "ro"), ("read_write", "rw")):
+            for mode, key in ACCESS_MODES.items():
                 retained: list[dict[str, str]] = []
-                for item in raw["access"][key]:
+                for item in raw["access"].get(key, []):
                     folder = AccessFolder.from_dict(item, f"access.{key}")
                     if folder.normalized_alias == normalized:
                         removed = {"alias": folder.alias, "mode": mode, "path": folder.path}
@@ -158,7 +155,7 @@ class AccessManager:
         path: str,
         expected_current_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        if mode not in {"ro", "rw"}:
+        if mode not in ACCESS_MODES:
             raise ManagerError(ErrorCode.CONFIG_INVALID, f"unsupported access mode: {mode}")
         normalized = _normalized_alias(existing_alias)
         with self._instance_lock(instance_id):
@@ -166,9 +163,9 @@ class AccessManager:
             self._require_expected(desired, expected_current_fingerprint)
             raw = desired.to_dict()
             previous: dict[str, str] | None = None
-            for key, previous_mode in (("read_only", "ro"), ("read_write", "rw")):
+            for previous_mode, key in ACCESS_MODES.items():
                 retained: list[dict[str, str]] = []
-                for item in raw["access"][key]:
+                for item in raw["access"].get(key, []):
                     folder = AccessFolder.from_dict(item, f"access.{key}")
                     if folder.normalized_alias == normalized:
                         previous = {
@@ -181,8 +178,8 @@ class AccessManager:
                 raw["access"][key] = retained
             if previous is None:
                 raise config_error("access alias is not configured", alias=existing_alias)
-            target = "read_only" if mode == "ro" else "read_write"
-            raw["access"][target].append({"alias": alias, "path": path})
+            target = ACCESS_MODES[mode]
+            raw["access"].setdefault(target, []).append({"alias": alias, "path": path})
             updated = DesiredInstance.from_dict(raw)
             self.registry.update(updated, expected_current_fingerprint=desired.fingerprint())
         result = self._payload(updated, action="update", apply_required=True)
@@ -312,6 +309,9 @@ def stale_applied_access_resources(
             continue
         if resource_id in current_ids:
             continue
-        result.append(_reconstruct_access_resource(desired, entry))
+        resource = _reconstruct_access_resource(desired, entry)
+        if any(current.path == resource.path for current in bundle.resources):
+            continue
+        result.append(resource)
     result.sort(key=lambda resource: resource.resource_id)
     return tuple(result)

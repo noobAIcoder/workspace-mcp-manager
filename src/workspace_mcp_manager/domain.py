@@ -280,24 +280,41 @@ class AccessFolder:
         return {"alias": self.alias, "path": self.path}
 
 
+ACCESS_MODES = {
+    "ro": "read_only",
+    "rx": "read_execute",
+    "rw": "read_write",
+    "rwx": "read_write_execute",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class AccessConfig:
     read_only: tuple[AccessFolder, ...]
     read_write: tuple[AccessFolder, ...]
+    read_execute: tuple[AccessFolder, ...] = ()
+    read_write_execute: tuple[AccessFolder, ...] = ()
+
+    def groups(self) -> tuple[tuple[str, tuple[AccessFolder, ...]], ...]:
+        return tuple((mode, getattr(self, key)) for mode, key in ACCESS_MODES.items())
+
+    @property
+    def folders(self) -> tuple[AccessFolder, ...]:
+        return tuple(folder for _, group in self.groups() for folder in group)
 
     @classmethod
     def from_dict(cls, value: Any, *, workspace_path: str) -> "AccessConfig":
-        data = _strict_object(value, field="access", required={"read_only", "read_write"})
+        data = _strict_object(value, field="access", required={"read_only", "read_write"}, optional={"read_execute", "read_write_execute"})
         groups: dict[str, tuple[AccessFolder, ...]] = {}
-        for mode in ("read_only", "read_write"):
-            raw = data[mode]
+        for mode in ACCESS_MODES.values():
+            raw = data.get(mode, [])
             if not isinstance(raw, list):
                 raise config_error(f"access.{mode} must be an array")
             groups[mode] = tuple(
                 AccessFolder.from_dict(item, f"access.{mode}[{index}]")
                 for index, item in enumerate(raw)
             )
-        all_folders = groups["read_only"] + groups["read_write"]
+        all_folders = tuple(folder for group in groups.values() for folder in group)
         aliases = [folder.normalized_alias for folder in all_folders]
         if len(set(aliases)) != len(aliases):
             raise config_error("access folder aliases collide after normalization")
@@ -317,12 +334,14 @@ class AccessConfig:
                     alias=folder.alias,
                     path=folder.path,
                 )
-        return cls(read_only=groups["read_only"], read_write=groups["read_write"])
+        return cls(**groups)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "read_only": [folder.to_dict() for folder in self.read_only],
             "read_write": [folder.to_dict() for folder in self.read_write],
+            **({"read_execute": [f.to_dict() for f in self.read_execute]} if self.read_execute else {}),
+            **({"read_write_execute": [f.to_dict() for f in self.read_write_execute]} if self.read_write_execute else {}),
         }
 
 

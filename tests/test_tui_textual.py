@@ -725,6 +725,22 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
             self.assertEqual(client.apply_calls[-1], "a" * 64)
 
+    async def test_access_dialog_accepts_all_four_modes(self) -> None:
+        from textual.app import App
+
+        for mode in ("ro", "rx", "rw", "rwx"):
+            with self.subTest(mode=mode):
+                results = []
+                app = App()
+                async with app.run_test(size=(80, 24)) as pilot:
+                    app.push_screen(AccessModal(forced_mode=mode), results.append)
+                    await pilot.pause()
+                    app.screen.query_one("#access-alias", Input).value = "tools"
+                    app.screen.query_one("#access-path", Input).value = "/srv/tools"
+                    app.screen.query_one("#save", Button).press()
+                    await pilot.pause()
+                    self.assertEqual(results, [{"mode": mode, "alias": "tools", "path": "/srv/tools"}])
+
     async def test_git_transport_changes_through_structured_settings(self) -> None:
         client = FakeClient()
         client.desired["git"]["remote"] = {"name": "origin", "protocol": "ssh"}

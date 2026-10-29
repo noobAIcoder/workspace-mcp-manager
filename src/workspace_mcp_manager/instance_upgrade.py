@@ -44,7 +44,7 @@ class InstanceUpgradeService:
                 self.blocked('the executing instance-upgrade release is no longer current')
             if status['recovery_required'] and not self.journal.exists():
                 self.blocked('recover pending distribution maintenance or imports first')
-        except (ValueError, OSError, MaintenanceError) as exc:
+        except (ValueError, OSError, MaintenanceError, TypeError, KeyError) as exc:
             self.blocked(str(exc))
         for name in ('distribution-transaction.json', 'maintenance-transaction.json'):
             p = self.paths.state_root / name
@@ -109,7 +109,7 @@ class InstanceUpgradeService:
                     state.update(schema_version=1, token=token, backup=str(backup), entries=rows, status='running', failed=None, error=None)
                     atomic_json(self.journal, state)
                 return self._continue(state)
-        except MaintenanceError as exc:
+        except (MaintenanceError, OSError) as exc:
             self.blocked(str(exc))
 
     def recover(self):
@@ -126,7 +126,7 @@ class InstanceUpgradeService:
                 # Re-read under the lock: another recovery may have advanced it.
                 state = read_upgrade(self.journal)
                 return self._continue(state)
-        except (MaintenanceError, ValueError) as exc:
+        except (MaintenanceError, ValueError, OSError) as exc:
             self.blocked(str(exc))
 
     def _verify(self, desired):

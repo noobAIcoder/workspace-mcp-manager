@@ -283,3 +283,11 @@ full P6-PM1 regression
 
 Completion requires all gates defined by the PM3 Operator UX TODO, culminating
 in `PM3_OPERATOR_UX_QUALIFICATION=PASS`.
+
+
+### Four-mode folder access
+
+Access add/edit controls, setup candidates, summaries, and reviewed resource
+labels MUST support RO, RX, RW, and RWX as defined by the P8 access contract.
+CLI additions are `access add-rx` and `access add-rwx`; updates accept all four
+mode codes. Existing stale-state and reviewed-apply requirements remain in force.

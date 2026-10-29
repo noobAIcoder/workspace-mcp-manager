@@ -372,7 +372,7 @@ class AccessModal(ModalScreen[dict[str, str] | None]):
             yield Static("[b]Access[/b]")
             yield Label("Mode", classes="field-label")
             yield Select(
-                (("Read-only", "ro"), ("Read-write", "rw")),
+                (("Read-only", "ro"), ("Read-execute", "rx"), ("Read-write", "rw"), ("Read-write-execute", "rwx")),
                 value=mode,
                 allow_blank=False,
                 id="access-mode",
@@ -398,7 +398,7 @@ class AccessModal(ModalScreen[dict[str, str] | None]):
         mode = str(mode_value)
         alias = self.query_one("#access-alias", Input).value.strip()
         path = self.query_one("#access-path", Input).value.strip()
-        if mode not in {"ro", "rw"} or not alias or not path.startswith("/"):
+        if mode not in {"ro", "rx", "rw", "rwx"} or not alias or not path.startswith("/"):
             self.query_one("#access-error", Static).update("Mode, alias, and an absolute path are required.")
             return
         self.dismiss({"mode": mode, "alias": alias, "path": path})
@@ -659,6 +659,10 @@ class InstanceScreen(BaseScreen):
                     with Horizontal(classes="actions"):
                         yield Button("Add read-only", id="access-add-ro", classes="mutation-action")
                         yield Button("Add read-write", id="access-add-rw", classes="mutation-action")
+                    with Horizontal(classes="actions"):
+                        yield Button("Add read-execute", id="access-add-rx", classes="mutation-action")
+                        yield Button("Add read-write-execute", id="access-add-rwx", classes="mutation-action")
+                    with Horizontal(classes="actions"):
                         yield Button("Edit", id="access-edit", classes="mutation-action")
                         yield Button("Remove", id="access-remove", classes="mutation-action")
                 with TabPane("Git & GitHub", id="git"):
@@ -777,7 +781,8 @@ class InstanceScreen(BaseScreen):
             f"Changes: {state_text(summary.get('reconciliation'))}   "
             f"Recovery: {state_text(summary.get('recovery'))}\n"
             f"Git: {git.get('remote_protocol') or 'not configured'}   "
-            f"Access: {access.get('read_only_count', 0)} RO / {access.get('read_write_count', 0)} RW"
+            f"Access: {access.get('read_only_count', 0)} RO / {access.get('read_execute_count', 0)} RX / "
+            f"{access.get('read_write_count', 0)} RW / {access.get('read_write_execute_count', 0)} RWX"
         )
         self.query_one("#instance-header", Static).update(text)
 
@@ -971,6 +976,8 @@ class InstanceScreen(BaseScreen):
             self._open_access_modal(mode="ro")
         elif button_id == "access-add-rw":
             self._open_access_modal(mode="rw")
+        elif button_id in {"access-add-rx", "access-add-rwx"}:
+            self._open_access_modal(mode=button_id.removeprefix("access-add-"))
         elif button_id == "access-edit":
             entry = self.selected_access()
             if entry:
@@ -1698,6 +1705,10 @@ class NewInstanceScreen(BaseScreen):
                     with Horizontal(classes="actions"):
                         yield Button("+ Read-only folder", id="new-access-add-ro")
                         yield Button("+ Read-write folder", id="new-access-add-rw")
+                    with Horizontal(classes="actions"):
+                        yield Button("+ Read-execute folder", id="new-access-add-rx")
+                        yield Button("+ Read-write-execute folder", id="new-access-add-rwx")
+                    with Horizontal(classes="actions"):
                         yield Button("Remove selected", id="new-access-remove")
                 with Vertical(id="wizard-review", classes="wizard-step"):
                     yield RichLog(id="wizard-review-log", wrap=True, markup=True)
@@ -1961,7 +1972,7 @@ class NewInstanceScreen(BaseScreen):
         access = desired.get("access") if isinstance(desired.get("access"), Mapping) else {}
         access_lines: list[str] = []
         access_options: list[tuple[str, str]] = []
-        for group, mode in (("read_only", "ro"), ("read_write", "rw")):
+        for group, mode in (("read_only", "ro"), ("read_write", "rw"), ("read_execute", "rx"), ("read_write_execute", "rwx")):
             values = access.get(group) if isinstance(access.get(group), list) else []
             for item in values:
                 if not isinstance(item, Mapping):
@@ -2217,8 +2228,8 @@ class NewInstanceScreen(BaseScreen):
         if button_id == "new-open-existing" and self.existing_instance_id:
             self.app.push_screen(InstanceScreen(self.existing_instance_id))
             return
-        if button_id in {"new-access-add-ro", "new-access-add-rw"}:
-            mode = "ro" if button_id.endswith("-ro") else "rw"
+        if button_id in {"new-access-add-ro", "new-access-add-rw", "new-access-add-rx", "new-access-add-rwx"}:
+            mode = button_id.removeprefix("new-access-add-")
             self.app.push_screen(
                 DirectoryPicker(Path(self.query_one("#new-workspace", Input).value.strip() or os.getcwd())),
                 partial(self._access_picked, mode),

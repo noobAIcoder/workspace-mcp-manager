@@ -589,7 +589,7 @@ class ManagerClient:
         path: str,
         expected_current_fingerprint: str | None = None,
     ) -> Mapping[str, Any]:
-        command = "add-ro" if mode == "ro" else "add-rw"
+        command = "add-" + mode
         args = ["access", command, instance_id, alias, path]
         if expected_current_fingerprint is not None:
             args.extend(["--expected-current-fingerprint", expected_current_fingerprint])

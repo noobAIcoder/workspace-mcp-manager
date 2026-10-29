@@ -469,7 +469,7 @@ setup_full_upgrade_task() {
   else
     setup_result <<<"$result" || printf '%s\n' "$result"
     rm -f -- "$preview"
-    printf 'Full upgrade stopped. Completed upgrades are retained. Use Maintenance > Recover interrupted operation to resume pending work.\n'
+    printf 'Full upgrade did not report successful completion. Completed upgrades are retained. Use Maintenance > Recover interrupted operation to inspect or resume pending work.\n'
   fi
 }
 

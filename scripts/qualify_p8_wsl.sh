@@ -7,6 +7,8 @@ WORKSPACE="${P8_WORKSPACE:-/home/cloudtoor/repos/workspace-mcp-manager-qual}"
 QUAL_ROOT="${P8_QUAL_ROOT:-/home/cloudtoor/.local/state/workspace-mcp-manager/p8-qualification}"
 RO_SOURCE="$QUAL_ROOT/ro"
 RW_SOURCE="$QUAL_ROOT/rw"
+RX_SOURCE="$QUAL_ROOT/rx"
+RWX_SOURCE="$QUAL_ROOT/rwx"
 ACCESS_ROOT="$WORKSPACE/.workspace-mcp-access"
 MCP_UNIT="/home/cloudtoor/.config/systemd/user/coding-tools-mcp-${INSTANCE_ID}.service"
 
@@ -32,13 +34,20 @@ prepare() {
   if [ -e "$QUAL_ROOT" ] || [ -L "$QUAL_ROOT" ]; then
     fail "qualification source root already exists; run cleanup or inspect it first: $QUAL_ROOT"
   fi
-  install -d -m 0700 "$RO_SOURCE" "$RW_SOURCE"
+  install -d -m 0700 "$RO_SOURCE" "$RW_SOURCE" "$RX_SOURCE" "$RWX_SOURCE"
+  local source
+  for source in "$RO_SOURCE" "$RW_SOURCE" "$RX_SOURCE" "$RWX_SOURCE"; do
+    install -m 0700 /usr/bin/true "$source/execute-probe"
+    printf "read-probe\n" > "$source/read-probe.txt"
+  done
   printf 'p8-read-only-source\n' > "$RO_SOURCE/readonly.txt"
   printf 'p8-read-write-source\n' > "$RW_SOURCE/readwrite.txt"
   chmod 0600 "$RO_SOURCE/readonly.txt" "$RW_SOURCE/readwrite.txt"
 
   workspace-mcp-manager access add-ro "$INSTANCE_ID" p8-ro "$RO_SOURCE" --pretty
   workspace-mcp-manager access add-rw "$INSTANCE_ID" p8-rw "$RW_SOURCE" --pretty
+  workspace-mcp-manager access add-rx "$INSTANCE_ID" p8-rx "$RX_SOURCE" --pretty
+  workspace-mcp-manager access add-rwx "$INSTANCE_ID" p8-rwx "$RWX_SOURCE" --pretty
   workspace-mcp-manager access list "$INSTANCE_ID" --pretty
 
   local plan
@@ -62,8 +71,14 @@ prepare() {
   [ -f "$ACCESS_ROOT/.gitignore" ] || fail "access .gitignore is missing"
   [ -d "$ACCESS_ROOT/p8-ro" ] || fail "RO mountpoint directory is missing"
   [ -d "$ACCESS_ROOT/p8-rw" ] || fail "RW mountpoint directory is missing"
+  grep -F "NoExecPaths=$ACCESS_ROOT/p8-ro" "$MCP_UNIT" >/dev/null || fail "RO noexec restriction missing"
+  grep -F "NoExecPaths=$ACCESS_ROOT/p8-rw" "$MCP_UNIT" >/dev/null || fail "RW noexec restriction missing"
+  [ -d "$ACCESS_ROOT/p8-rx" ] || fail "RX mountpoint missing"
+  [ -d "$ACCESS_ROOT/p8-rwx" ] || fail "RWX mountpoint missing"
   assert_clean_git
 
+  printf 'P8_RX_SOURCE=%s\n' "$RX_SOURCE"
+  printf 'P8_RWX_SOURCE=%s\n' "$RWX_SOURCE"
   printf 'P8_RO_SOURCE=%s\n' "$RO_SOURCE"
   printf 'P8_RW_SOURCE=%s\n' "$RW_SOURCE"
   printf 'P8_HOST_PREPARED=PASS\n'
@@ -72,6 +87,8 @@ prepare() {
 cleanup() {
   workspace-mcp-manager access remove "$INSTANCE_ID" p8-ro --pretty
   workspace-mcp-manager access remove "$INSTANCE_ID" p8-rw --pretty
+  workspace-mcp-manager access remove "$INSTANCE_ID" p8-rx --pretty
+  workspace-mcp-manager access remove "$INSTANCE_ID" p8-rwx --pretty
 
   local plan
   plan="$(workspace-mcp-manager instance plan "$INSTANCE_ID")"
@@ -89,7 +106,11 @@ cleanup() {
 
   if [ -d "$QUAL_ROOT" ] && [ ! -L "$QUAL_ROOT" ]; then
     rm -f "$RO_SOURCE/readonly.txt" "$RW_SOURCE/readwrite.txt"
-    rmdir "$RO_SOURCE" "$RW_SOURCE" "$QUAL_ROOT"
+    local source
+    for source in "$RO_SOURCE" "$RW_SOURCE" "$RX_SOURCE" "$RWX_SOURCE"; do
+      rm -f "$source/execute-probe" "$source/read-probe.txt"
+    done
+    rmdir "$RO_SOURCE" "$RW_SOURCE" "$RX_SOURCE" "$RWX_SOURCE" "$QUAL_ROOT"
   elif [ -e "$QUAL_ROOT" ] || [ -L "$QUAL_ROOT" ]; then
     fail "refusing to clean unexpected qualification source-root type"
   fi

@@ -65,7 +65,9 @@ This intentionally avoids co-locating generated profiles with the external
 - Instance IDs MUST use lowercase letters/digits and single hyphens.
 - Access aliases preserve the legacy letters/digits/single-hyphen-or-underscore
   contract and MUST remain unique after `-`/`_` normalization.
-- RO/RW source paths MUST be unique and MUST be external to `workspace_path`.
+- RO/RX/RW/RWX source paths MUST be unique across groups and MUST be external
+  to `workspace_path`. The optional `read_execute` and `read_write_execute` groups
+  default to empty; P8 defines their execution and compatibility semantics.
 - MCP and tunnel-health endpoints MUST NOT collide within one declaration.
 - Secrets MUST NOT be accepted as declaration fields.
 

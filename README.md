@@ -31,7 +31,7 @@ environment propagation, Node toolchain execution, Git status, and tunnel
 health/readiness. P7 also regression-covers safe updates of an active owned MCP
 unit without weakening endpoint-collision checks.
 
-P8 adds deterministic RO/RW external-folder access. Desired access mutations run
+P8 adds deterministic RO/RX/RW/RWX external-folder access. Desired access mutations run
 through the host boundary, generated user-systemd units mount sources under
 `.workspace-mcp-access/<alias>`, access ownership is tracked and cleaned from
 applied-state evidence, and both namespace preflight and live plugin enforcement
@@ -440,8 +440,10 @@ workspace-mcp-manager instance remove <id>
 workspace-mcp-manager access list <id>
 workspace-mcp-manager access add-ro <id> <alias> <path>
 workspace-mcp-manager access add-rw <id> <alias> <path>
+workspace-mcp-manager access add-rx <id> <alias> <path>
+workspace-mcp-manager access add-rwx <id> <alias> <path>
 workspace-mcp-manager access remove <id> <alias>
-workspace-mcp-manager access update <id> <existing-alias> ro|rw <alias> <path>
+workspace-mcp-manager access update <id> <existing-alias> ro|rx|rw|rwx <alias> <path>
 
 workspace-mcp-manager codex start <id> --mode read|write (--prompt <text> | --prompt-stdin)
 workspace-mcp-manager codex status <id> <job-id>
@@ -451,6 +453,14 @@ workspace-mcp-manager codex cancel <id> <job-id>
 workspace-mcp-manager-tui
 workspace-mcp-manager-tui --snapshot [--instance <id>]
 ```
+
+Access modes are read-only (RO), read-execute (RX), read-write (RW), and
+read-write-execute (RWX). RO/RW aliases block direct execution using systemd
+`NoExecPaths=`; RX/RWX retain execution subject to host file permissions and
+filesystem restrictions. Existing RO/RW grants become non-executable on the
+next apply. Use `access update` to select RX/RWX when execution is needed.
+Readable scripts can still be passed to an interpreter. These restrictions
+apply through the managed alias; source permissions are never changed.
 
 For managed GitHub access, the CLI foreground prompt and Textual GitHub-access
 screen show the recommended fine-grained PAT profile for coding-tools repository

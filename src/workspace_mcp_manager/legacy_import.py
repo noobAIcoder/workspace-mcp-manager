@@ -427,9 +427,9 @@ class LegacyImportService:
             data = resolved
         desired = DesiredInstance.from_dict(data)
         access_root = Path(desired.workspace_path) / '.workspace-mcp-access'
-        if (desired.access.read_only or desired.access.read_write) and exists(access_root):
+        if desired.access.folders and exists(access_root):
             safe_location(access_root, self.home)
-            aliases = {folder.alias: folder.path for folder in (*desired.access.read_only, *desired.access.read_write)}
+            aliases = {folder.alias: folder.path for folder in desired.access.folders}
             if access_root.is_symlink() or not access_root.is_dir():
                 raise ImportBlocked('unsafe legacy access directory')
             for child in access_root.iterdir():
@@ -804,7 +804,7 @@ class LegacyImportService:
         allowed = {str(p) for p in (self.audit._config_path(iid), self.audit._config_backup_path(iid), self.audit._launcher_path(iid), self.audit._state_path(iid), self.audit._mcp_dropin_dir(iid))}
         allowed.update(str(self.paths.user_unit_dir / (prefix + iid + suffix)) for prefix,suffix in [('coding-tools-mcp-','.service'),('tunnel-client-','.service'),('workspace-mcp-admission-guard-','.service'),('workspace-mcp-admission-guard-','.timer')])
         allowed.add(str(self.home / '.config/tunnel-client' / (desired.tunnel.profile + '.yaml')))
-        if desired.access.read_only or desired.access.read_write:
+        if desired.access.folders:
             allowed.add(str(Path(desired.workspace_path) / '.workspace-mcp-access'))
         for original in journal['originals']:
             safe_location(Path(original['path']), self.home)

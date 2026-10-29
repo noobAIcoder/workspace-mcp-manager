@@ -707,6 +707,8 @@ class HostApplyTests(unittest.TestCase):
             raw["access"] = {
                 "read_only": [{"alias": "docs", "path": str(root / "shared-ro")}],
                 "read_write": [{"alias": "scratch", "path": str(root / "shared-rw")}],
+                "read_execute": [{"alias": "tools", "path": str(root / "shared-rx")}],
+                "read_write_execute": [{"alias": "build", "path": str(root / "shared-rwx")}],
             }
             desired = DesiredInstance.from_dict(raw)
             adapter = SystemdUserAdapter(state_root=paths.state_root)
@@ -721,6 +723,13 @@ class HostApplyTests(unittest.TestCase):
             self.assertTrue(any(item.startswith("--property=BindReadOnlyPaths=") for item in argv))
             self.assertTrue(any(item.startswith("--property=BindPaths=") for item in argv))
             self.assertEqual(argv[-1], "/usr/bin/true")
+
+            restrictions = [arg for arg in argv if arg.startswith("--property=NoExecPaths=")]
+            self.assertEqual(len(restrictions), 2)
+            self.assertTrue(any(arg.endswith("/docs") for arg in restrictions))
+            self.assertTrue(any(arg.endswith("/scratch") for arg in restrictions))
+            for alias in ("tools", "build"):
+                self.assertTrue(any(f"/{alias}:rbind" in arg for arg in argv))
 
     def test_present_apply_removes_stale_access_after_mcp_restart(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

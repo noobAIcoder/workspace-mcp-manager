@@ -262,8 +262,8 @@ class SystemdUserAdapter:
         *,
         target_root: Path | None = None,
     ) -> None:
-        folders = [(folder, True) for folder in desired.access.read_only] + [
-            (folder, False) for folder in desired.access.read_write
+        folders = [(folder, True) for folder in (*desired.access.read_only, *desired.access.read_execute)] + [
+            (folder, False) for folder in (*desired.access.read_write, *desired.access.read_write_execute)
         ]
         if not folders:
             return
@@ -311,6 +311,8 @@ class SystemdUserAdapter:
                     )
                 directive = "BindReadOnlyPaths" if read_only else "BindPaths"
                 argv.append(f"--property={directive}={folder.path}:{target}:rbind")
+            for folder in (*desired.access.read_only, *desired.access.read_write):
+                argv.append(f"--property=NoExecPaths={root / folder.alias}")
             argv.append("/usr/bin/true")
             completed = _run(argv, timeout=30.0, check=False)
             if completed.returncode != 0:
@@ -588,7 +590,7 @@ class HostApplyService:
                 raise self._conflict(plan)
             if (
                 desired.lifecycle.deployment is DeploymentTarget.PRESENT
-                and (desired.access.read_only or desired.access.read_write)
+                and desired.access.folders
             ):
                 self.systemd.preflight_access_namespace(desired)
 
@@ -715,7 +717,7 @@ class HostApplyService:
             ]
             other_file_ops = [item for item in file_ops if item not in access_file_ops]
             self._apply_resource_operations(access_file_ops, by_id, rollback, journal, journal_path)
-            if desired.access.read_only or desired.access.read_write:
+            if desired.access.folders:
                 self.systemd.preflight_access_namespace(
                     desired,
                     target_root=Path(desired.workspace_path) / ".workspace-mcp-access",
@@ -1656,7 +1658,7 @@ class HostExecutionBridge:
         mode: str | None = None,
         expected_current_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        if action not in {"list", "add-ro", "add-rw", "remove", "update"}:
+        if action not in {"list", "add-ro", "add-rw", "add-rx", "add-rwx", "remove", "update"}:
             raise ManagerError(ErrorCode.IO_ERROR, f"unsupported access action: {action}")
         args = ["_runtime", "access", action, instance_id]
         if alias is not None:

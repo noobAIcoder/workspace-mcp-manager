@@ -409,6 +409,34 @@ class CandidateTests(unittest.TestCase):
                 )
             )
 
+    def test_execute_access_edit_is_structured_and_manager_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = InstanceRegistry(paths_for(root).registry_dir)
+            target = root / "repo"
+            target.mkdir()
+            external = root / "External Models"
+            external.mkdir()
+            service = self._service(root, registry)
+            payload = service.candidate(
+                {
+                    "candidate_request_version": 1,
+                    "workspace_path": str(target),
+                    "field_edits": [],
+                    "access_edits": [{"operation": "add", "mode": "rwx", "path": str(external)}],
+                }
+            )
+            entry = payload["effective_declaration"]["access"]["read_write_execute"][0]
+            self.assertEqual(entry["alias"], "external-models")
+            self.assertEqual(entry["path"], str(external))
+            self.assertTrue(
+                any(
+                    item["path"].startswith("/access/read_write_execute/0")
+                    and item["source"] == "operator_override"
+                    for item in payload["field_provenance"]
+                )
+            )
+
     def test_stale_copy_source_fails_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

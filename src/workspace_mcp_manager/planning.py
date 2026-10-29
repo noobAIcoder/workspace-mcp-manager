@@ -490,9 +490,9 @@ class ReconciliationPlanner:
             (str(self.paths.manager_executable), "manager runtime executable", "file", True, False),
             (self.generator.curl_binary, "curl binary", "file", True, False),
         ]
-        for folder in desired.access.read_only:
+        for folder in (*desired.access.read_only, *desired.access.read_execute):
             checks.append((folder.path, f"RO access source {folder.alias}", "directory", False, False))
-        for folder in desired.access.read_write:
+        for folder in (*desired.access.read_write, *desired.access.read_write_execute):
             checks.append((folder.path, f"RW access source {folder.alias}", "directory", False, True))
 
         result: list[PlanItem] = []

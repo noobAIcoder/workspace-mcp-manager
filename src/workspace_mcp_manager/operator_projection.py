@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .domain import DesiredInstance
+from .domain import ACCESS_MODES, DesiredInstance
 from .errors import ErrorCode, ManagerError
 from .generation import ResourceGenerator
 from .host_apply import HostInstanceStatusService
@@ -44,12 +44,12 @@ class OperatorProjectionService:
 
     @staticmethod
     def _access_summary(desired: DesiredInstance) -> dict[str, Any]:
-        return {
-            "read_only_count": len(desired.access.read_only),
-            "read_write_count": len(desired.access.read_write),
-            "read_only_aliases": [item.alias for item in desired.access.read_only],
-            "read_write_aliases": [item.alias for item in desired.access.read_write],
-        }
+        summary: dict[str, Any] = {}
+        for mode, group in desired.access.groups():
+            key = ACCESS_MODES[mode]
+            summary[key + "_count"] = len(group)
+            summary[key + "_aliases"] = [item.alias for item in group]
+        return summary
 
     @staticmethod
     def _git_summary(desired: DesiredInstance) -> dict[str, Any]:

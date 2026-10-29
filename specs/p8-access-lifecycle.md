@@ -4,7 +4,7 @@ Status: normative implementation/qualification specification for P8.
 
 ## Objective
 
-Provide deterministic per-instance read-only and read-write external-folder
+Provide deterministic per-instance read-only, read-execute, read-write, and read-write-execute external-folder
 access without expanding the direct `coding-tools-mcp` file-tool boundary.
 
 This phase implements CAP-095 through CAP-110. P9 and later capabilities remain
@@ -18,10 +18,16 @@ An instance MAY declare external folders in:
 {
   "access": {
     "read_only": [{"alias": "docs", "path": "/srv/shared/docs"}],
-    "read_write": [{"alias": "scratch", "path": "/srv/shared/scratch"}]
+    "read_write": [{"alias": "scratch", "path": "/srv/shared/scratch"}],
+    "read_execute": [{"alias": "tools", "path": "/srv/shared/tools"}],
+    "read_write_execute": [{"alias": "build", "path": "/srv/shared/build"}]
   }
 }
 ```
+
+The new execute groups are optional and default to empty; existing declarations
+remain valid. Empty execute groups MUST NOT change canonical fingerprints.
+Aliases and source paths MUST be unique across all four groups.
 
 The manager MUST reject:
 
@@ -34,7 +40,7 @@ The manager MUST reject:
 - a source equal to, contained by, or containing the workspace path.
 
 Host planning MUST fail closed when a declared source cannot be observed as an
-existing directory. RW sources MUST additionally be writable/searchable by the
+existing directory. RW/RWX sources MUST additionally be writable/searchable by the
 account that owns the user service.
 
 ## Command contract
@@ -45,12 +51,15 @@ The public CLI MUST expose:
 workspace-mcp-manager access list <instance>
 workspace-mcp-manager access add-ro <instance> <alias> <path>
 workspace-mcp-manager access add-rw <instance> <alias> <path>
+workspace-mcp-manager access add-rx <instance> <alias> <path>
+workspace-mcp-manager access add-rwx <instance> <alias> <path>
+workspace-mcp-manager access update <instance> <existing-alias> ro|rx|rw|rwx <alias> <path>
 workspace-mcp-manager access remove <instance> <alias>
 ```
 
 `list` MUST be read-only.
 
-`add-ro`, `add-rw`, and `remove` MUST atomically mutate desired state through the
+All add commands, `update`, and `remove` MUST atomically mutate desired state through the
 existing transient user-systemd host boundary. They MUST serialize with apply
 transactions for the same instance. They MUST NOT silently apply host changes;
 their result MUST state that an apply is required.
@@ -69,13 +78,22 @@ Every declared folder MUST be exposed inside the MCP workspace at:
 The generated MCP unit MUST use:
 
 ```text
-RO -> BindReadOnlyPaths=
-RW -> BindPaths=
+RO/RX -> BindReadOnlyPaths=
+RW/RWX -> BindPaths=
+RO/RW -> NoExecPaths=<alias mountpoint>
 PrivateUsers=true
 ```
 
 `PrivateUsers=true` MUST be present whenever at least one external folder is
 configured and MUST be absent when none are configured.
+
+RO/RW MUST block direct execution through their mounted aliases; existing grants
+adopt this behavior on next apply. RX/RWX MUST preserve ordinary execution
+subject to source file permissions and filesystem restrictions. The manager MUST
+NOT chmod sources or widen the direct MCP file-tool boundary. Readable scripts
+may still be passed to an interpreter; this is not a general code-execution ban.
+Both namespace preflights MUST include the same execution restrictions as the
+generated service and MUST fail closed if the host cannot establish them.
 
 The manager MUST perform a real transient user-systemd access-namespace
 preflight before mutating generated resources for a present deployment with
@@ -98,6 +116,9 @@ When access is configured, the manager MUST own:
 
 The ownership marker MUST identify the instance. Cleanup MUST refuse foreign,
 unverified, malformed, or unexpectedly located access resources.
+
+Mode changes MUST retain mountpoints whose paths remain desired, after validating
+old applied ownership evidence.
 
 When an alias is removed from desired state, the next apply MUST remove the
 obsolete manager-owned mountpoint after the MCP service has been reconciled.
@@ -123,13 +144,16 @@ not treated as convergence for the new desired state.
 P8 passes only when the disposable `manager-qual` instance demonstrates through
 the real MCP/plugin surface:
 
-1. `access add-ro` and `access add-rw` desired-state mutation;
+1. all four add commands and mode updates through CLI and operator UI;
 2. deterministic plan and apply;
 3. mounted RO and RW aliases visible inside the workspace;
 4. RO content readable but not writable through MCP;
 5. RW content readable and writable through MCP;
+   RX content readable but not writable; RWX content readable and writable;
+   direct execution of `execute-probe` denied for RO/RW and successful for RX/RWX;
+   host fixture permissions unchanged;
 6. direct reads of the external source paths remain rejected by MCP file tools;
-7. `access remove` for both aliases followed by deterministic cleanup;
+7. `access remove` for all four aliases followed by deterministic cleanup;
 8. `.workspace-mcp-access` absent after the final removal;
 9. Git working tree clean before and after the qualification;
 10. full pure test suite green.

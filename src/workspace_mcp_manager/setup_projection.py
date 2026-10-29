@@ -833,7 +833,7 @@ def _apply_access_edits(candidate: dict[str, Any], edits: list[Any], provenance:
     access = candidate.get("access")
     if not isinstance(access, dict):
         raise config_error("candidate access state is invalid")
-    groups = {"ro": "read_only", "rw": "read_write"}
+    groups = {"ro": "read_only", "rw": "read_write", "rx": "read_execute", "rwx": "read_write_execute"}
     for index, raw in enumerate(edits):
         if not isinstance(raw, Mapping):
             raise config_error("access edit must be an object", index=index)
@@ -842,9 +842,9 @@ def _apply_access_edits(candidate: dict[str, Any], edits: list[Any], provenance:
         if operation not in {"add", "remove", "update"}:
             raise config_error("access edit operation must be add, remove, or update", index=index)
         if mode not in groups:
-            raise config_error("access edit mode must be ro or rw", index=index)
+            raise config_error("access edit mode must be ro, rx, rw, or rwx", index=index)
         group = groups[str(mode)]
-        values = access.get(group)
+        values = access.setdefault(group, [])
         if not isinstance(values, list):
             raise config_error("candidate access group is invalid", group=group)
         target_alias = raw.get("target_alias")
@@ -853,7 +853,7 @@ def _apply_access_edits(candidate: dict[str, Any], edits: list[Any], provenance:
                 raise config_error("access remove/update requires target_alias", index=index)
             found_group: str | None = None
             found_index: int | None = None
-            for candidate_group in ("read_only", "read_write"):
+            for candidate_group in ("read_only", "read_write", "read_execute", "read_write_execute"):
                 for item_index, item in enumerate(access.get(candidate_group, [])):
                     if isinstance(item, Mapping) and item.get("alias") == target_alias:
                         found_group, found_index = candidate_group, item_index

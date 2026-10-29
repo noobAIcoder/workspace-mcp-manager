@@ -383,6 +383,21 @@ class InstanceUpgradeTests(unittest.TestCase):
         after['tunnel']['binary'] = original['tunnel']['binary']
         self.assertEqual(after, original)
 
+    def test_backup_write_failure_is_structured_and_does_not_change_instances(self):
+        preview = self.service.preview()
+        with mock.patch('workspace_mcp_manager.instance_upgrade.atomic_json', side_effect=PermissionError('backup is not writable')):
+            with self.assertRaises(ManagerError):
+                self.service.apply(preview, preview['fingerprint'])
+        self.assertFalse(self.service.journal.exists())
+        self.assertEqual(self.calls, [])
+
+    def test_resume_write_failure_retains_journal_and_returns_structured_error(self):
+        self.fail = 'one'; self.run_upgrade()
+        with mock.patch('workspace_mcp_manager.instance_upgrade.atomic_json', side_effect=PermissionError('state is not writable')):
+            with self.assertRaises(ManagerError):
+                self.service.recover()
+        self.assertTrue(self.service.journal.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

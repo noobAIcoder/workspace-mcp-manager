@@ -91,10 +91,10 @@ def plan_fingerprint(
 def _resource_label(resource_id: str | None, target: str) -> str:
     if resource_id is None:
         return target
-    if resource_id.startswith("access-ro-"):
-        return f'RO access "{resource_id.removeprefix("access-ro-")}"'
-    if resource_id.startswith("access-rw-"):
-        return f'RW access "{resource_id.removeprefix("access-rw-")}"'
+    for mode in ("ro", "rx", "rw", "rwx"):
+        prefix = f"access-{mode}-"
+        if resource_id.startswith(prefix):
+            return f'{mode.upper()} access "{resource_id.removeprefix(prefix)}"'
     labels = {
         "mcp-unit": "MCP service",
         "tunnel-unit": "Tunnel service",

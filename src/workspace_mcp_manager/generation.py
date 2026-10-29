@@ -151,7 +151,7 @@ class ResourceGenerator:
                 f"Usage: {iid}-mcp <command> [args]",
                 "Commands:",
                 "  show render plan status logs git diagnose apply start stop restart remove",
-                "  access <list|add-ro|add-rw|remove> ...",
+                "  access <list|add-ro|add-rw|add-rx|add-rwx|remove|update> ...",
                 "  codex <start|status|output|cancel> ...",
                 "EOF",
                 "}",
@@ -168,7 +168,7 @@ class ResourceGenerator:
                 "  access)",
                 "    shift",
                 '    action=${1-}',
-                '    case "$action" in list|add-ro|add-rw|remove) ;; *) usage >&2; exit 2 ;; esac',
+                '    case "$action" in list|add-ro|add-rw|add-rx|add-rwx|remove|update) ;; *) usage >&2; exit 2 ;; esac',
                 "    shift",
                 '    exec "$MANAGER" --registry-dir "$REGISTRY" access "$action" "$INSTANCE" "$@"',
                 "    ;;",
@@ -275,14 +275,16 @@ class ResourceGenerator:
             )
         access_lines: list[str] = []
         access_root = Path(desired.workspace_path) / ".workspace-mcp-access"
-        folders = [(folder, True) for folder in desired.access.read_only] + [
-            (folder, False) for folder in desired.access.read_write
+        folders = [(folder, True) for folder in (*desired.access.read_only, *desired.access.read_execute)] + [
+            (folder, False) for folder in (*desired.access.read_write, *desired.access.read_write_execute)
         ]
         for folder, read_only in folders:
             directive = "BindReadOnlyPaths" if read_only else "BindPaths"
             source = systemd_path(folder.path)
             target = systemd_path(str(access_root / folder.alias))
             access_lines.append(f"{directive}={source}:{target}:rbind")
+        for folder in (*desired.access.read_only, *desired.access.read_write):
+            access_lines.append(f"NoExecPaths={systemd_path(str(access_root / folder.alias))}")
         if access_lines:
             environment_lines.append("PrivateUsers=true")
             environment_lines.extend(access_lines)
@@ -602,9 +604,7 @@ class ResourceGenerator:
                     active_when_running=True,
                 )
             )
-        folders = [(folder, "ro") for folder in desired.access.read_only] + [
-            (folder, "rw") for folder in desired.access.read_write
-        ]
+        folders = [(folder, mode) for mode, group in desired.access.groups() for folder in group]
         if folders:
             access_root = Path(desired.workspace_path) / ".workspace-mcp-access"
             access_owner = access_root / ".owner"
