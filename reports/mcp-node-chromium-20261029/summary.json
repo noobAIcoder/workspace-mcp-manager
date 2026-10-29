@@ -1,0 +1,140 @@
+{
+  "authority": "User implementation plan supplied 2026-10-29",
+  "workflow": {
+    "operation": "SPEC_IMPLEMENT_UPDATE",
+    "methodologies": [
+      "SDD",
+      "TDD"
+    ],
+    "flows": [
+      "SDD_TDD"
+    ],
+    "frameworks": [],
+    "context_limitation": ".agentic-work/REPO_INFO.yaml absent; inspected current sources and runtime instead.",
+    "TODO_SDD": {
+      "targets": [
+        "specs/p8-access-lifecycle.md",
+        "specs/external-contracts.md"
+      ],
+      "delta": "Require RX/RWX sources in MCP read/execute roots, preserving read-only RX mounts and file-tool boundaries.",
+      "acceptance": "Current user instruction authorizes implementation of supplied plan.",
+      "validation": "Regression fails before change and passes afterward."
+    },
+    "TODO_TDD": {
+      "scope": "Manager generation, per-command self-stat broker, configured-rule failures, child/worker/lifecycle/security behavior and MCP qualification.",
+      "red_evidence": [
+        "RX root omitted: count 0 instead of 1",
+        "Actual confined Node: EACCES /proc/self/stat",
+        "Original backend silently accepts missing/proc configured roots and ignores rule-install failure"
+      ],
+      "completion": "Node and relevant regressions pass; browser screenshot and downstream build remain blocked."
+    }
+  },
+  "overall_status": "PARTIAL: Node fixed and qualified; Chromium executable admission fixed but sandbox qualification blocked.",
+  "node": {
+    "root_cause": "Server-created /proc/self directory rule refers to server process inode, not future children.",
+    "changes": [
+      "coding_tools_mcp/server.py",
+      "coding_tools_mcp/landlock_exec.py",
+      "coding_tools_mcp/proc_stat_broker.py",
+      "tests/compliance/test_proc_stat_broker.py",
+      "tests/compliance/fixtures/proc_path_race.c"
+    ],
+    "behavior": "Unprivileged per-command seccomp supervisor copies bounded pathname memory, pins task/process proc identities, validates notification lifetime and injects an actual read-only process stat fd with atomic ADDFD SEND. Inherited native-ABI filter covers open/openat/openat2/creat where available. Unrelated opens continue under Landlock. Invalid flags are refused. Ptrace/process_vm_writev are denied to prevent notification bypass. Probe checks both close-on-exec behaviors before user execution. Subreaper lifetime and signal status are preserved.",
+    "permissions": "No proc-directory grants; exact read-only /proc/self/stat exception only. Explicit proc roots rejected. No other-process proc data or writes granted.",
+    "mcp_receipt": "node.json",
+    "command_id": "Xbg-K6IojN1SEKsYv2-T-U-G",
+    "result": "exit 0; genuine direct/child/worker RSS; sensitive proc, other-process proc and write checks denied",
+    "limitations": [
+      "Real kernel checks ran on native x86_64 with Landlock ABI 7. aarch64 implementation is unqualified here.",
+      "Exit/reuse protection tested through notification-expiry injection; forced kernel PID reuse was not exercised.",
+      "Nondumpable descendants retain ordinary Landlock opens but cannot use the broker exception if memory cannot be inspected."
+    ]
+  },
+  "chromium": {
+    "root_cause": "Access mounts existed but manager omitted RX/RWX source paths from MCP read/execute roots.",
+    "manager_files": [
+      "src/workspace_mcp_manager/generation.py",
+      "tests/test_access_execution.py",
+      "specs/p8-access-lifecycle.md",
+      "specs/external-contracts.md"
+    ],
+    "declaration": "/home/cloudtoor/.config/workspace-mcp-manager/instances/podolskyestates.json",
+    "service": "/home/cloudtoor/.config/systemd/user/coding-tools-mcp-podolskyestates.service",
+    "browser_root": "/home/cloudtoor/.cache/ms-playwright",
+    "access_mask": 13,
+    "rights": [
+      "execute",
+      "read_file",
+      "read_dir"
+    ],
+    "mount": "BindReadOnlyPaths=/home/cloudtoor/.cache/ms-playwright:/home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache:rbind",
+    "source_write_result": "EACCES",
+    "alias_write_result": "EROFS",
+    "executable": "/home/cloudtoor/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/chrome-headless-shell",
+    "chromiumSandbox": true,
+    "command_id": "RDVDbToXQ15A3xDEe5CGAkyz",
+    "browser_pid": 434443,
+    "result": "Executable launches, then exits SIGTRAP: No usable sandbox. Also logs failed /proc/self/maps read.",
+    "namespace_diagnostic": "unshare --user --map-root-user true: cannot open /proc/self/uid_map: Permission denied",
+    "disposition": "No proc-write grants, sandbox bypass, browser reinstall, chmod, or kernel/security policy changes. User namespace mapping remains unresolved within allowed policy. maps denial alone is not proven to cause the fatal sandbox error.",
+    "owned_profile_cleanup": true,
+    "screenshot": "Not reached; no browser acceptance claimed.",
+    "probe_correction": "First attempt used incorrect basename headless_shell; corrected after inspecting installed files. Both attempts removed their owned profiles."
+  },
+  "deployment": {
+    "runtime": "Podolsky-only patched-runtime copy; shared installed backend unchanged.",
+    "mcp_main_pid_before": 418762,
+    "mcp_main_pid_after": 433635,
+    "version": "0.3.0 with local backend changes; not an upstream release",
+    "policy_fingerprint": "1388f633138f95481b0e5872dd9bb0a33c0f06bd0d60ccb8fe369ff280816921",
+    "policy_receipt": "policy-after-node.json",
+    "source_deployed_hashes": {
+      "coding_tools_mcp/server.py": {
+        "source_sha256": "fd013a14117997057f2787f74febd129859e808b1c2c9a733110247d0e742e99",
+        "deployed_sha256": "fd013a14117997057f2787f74febd129859e808b1c2c9a733110247d0e742e99"
+      },
+      "coding_tools_mcp/landlock_exec.py": {
+        "source_sha256": "c67759cef9aa45d28d2d08f2cbd0dcb427040a554ce985584dbf695c92baa2c3",
+        "deployed_sha256": "c67759cef9aa45d28d2d08f2cbd0dcb427040a554ce985584dbf695c92baa2c3"
+      },
+      "coding_tools_mcp/proc_stat_broker.py": {
+        "source_sha256": "f1e7318012682a058cfa4e141ef000f2a0e48943cbb1b4086d225872f38e393c",
+        "deployed_sha256": "f1e7318012682a058cfa4e141ef000f2a0e48943cbb1b4086d225872f38e393c"
+      }
+    },
+    "restart_scope": "daemon-reload and restart coding-tools-mcp-podolskyestates.service only",
+    "old_service_process_check": "systemd GetUnitProcesses reported only MCP Python PID 418762 before restart, no development server child.",
+    "reconciliation": "Browser root also explicitly included in Podolsky mcp.external_roots so installed manager (not upgraded) preserves it. Manager source contains general RX/RWX generation fix.",
+    "backups": "/tmp/mcp-proc-fix/before-install"
+  },
+  "qualification": {
+    "manager_tests": {
+      "command": "PYTHONPATH=src:tests python3 -m unittest tests.test_access_execution tests.test_generation tests.test_host_apply tests.test_planning",
+      "passed": 47,
+      "status": "PASS; no skips"
+    },
+    "backend_tests": {
+      "command": "PYTHONPATH=/home/cloudtoor/repos/coding-tools-mcp /home/cloudtoor/.local/share/uv/tools/coding-tools-mcp/bin/python -m unittest tests.compliance.test_proc_stat_broker tests.compliance.test_runtime_helpers",
+      "cwd": "/tmp",
+      "status": "PASS; no skips",
+      "passed": 115
+    },
+    "build": "NOT RUN: user plan gates qualify-preview-build.mjs on passing Node and sandboxed browser checks.",
+    "fallback_and_preload": "Probe commands use native Node without qualification preload. Build was not attempted. Memory fallback file retained untouched.",
+    "root_config_hashes_unchanged": {
+      "tsconfig.json": "8e6471fef47c3a910c636de6e089767cbc8acfa6ba6d662225d9d8c554288da3",
+      "next-env.d.ts": "f2b3bca04d1bfe583daae1e1f798c92ec24bb6693bd88d0a09ba6802dee362a8"
+    },
+    "preservation": "No build run or .next mutation by this work; no live database, seed, migration or deployment commands. Browser installation retained.",
+    "dev_server": "Continuity not qualified: loopback HTTP checks to ports 3000/3001/3100/3102 failed or timed out before restart; port 3000 /preview timed out afterward too. No development server was stopped or restarted.",
+    "connector": "First remote connector exec after restart timed out before execution; local http://127.0.0.1:11114/mcp used for acceptance receipts. Remote server_info and write_stdin later worked.",
+    "backend_new_regressions": 18,
+    "preserved_signal_behavior": "SIGTERM existing regressions and added SIGKILL propagation pass.",
+    "final_health_receipt": {
+      "command_id": "Pxa2Cv2LFK3lfC7E75-G5rRR",
+      "exit_code": 0,
+      "stdout": "dev-preview-unavailable The operation was aborted due to timeout"
+    }
+  }
+}

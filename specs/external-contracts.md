@@ -26,7 +26,8 @@ entry is `expanduser()`/`resolve()`d; existing directories are added to the
 Landlock read/execute roots.
 
 The manager MUST therefore render multiple desired `mcp.external_roots[]` as an
-`os.pathsep`-joined environment value. It MUST NOT invent a different delimiter.
+`os.pathsep`-joined environment value, adding declared RX/RWX source paths
+without duplicates. It MUST NOT invent a different delimiter.
 
 External roots grant Landlock read/execute admission for `exec_command`; they do
 not expand the direct MCP file tools' workspace boundary.

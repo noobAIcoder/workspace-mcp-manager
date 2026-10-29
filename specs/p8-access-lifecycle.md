@@ -87,6 +87,11 @@ PrivateUsers=true
 `PrivateUsers=true` MUST be present whenever at least one external folder is
 configured and MUST be absent when none are configured.
 
+RX/RWX source paths MUST also be included, without duplicates, in
+`CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS` so Landlock admits execution from the
+source and its bind-mounted alias. These roots grant read-file, read-directory,
+and execute rights only; RX mounts MUST remain read-only.
+
 RO/RW MUST block direct execution through their mounted aliases; existing grants
 adopt this behavior on next apply. RX/RWX MUST preserve ordinary execution
 subject to source file permissions and filesystem restrictions. The manager MUST

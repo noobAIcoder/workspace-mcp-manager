@@ -70,6 +70,25 @@ class ExecutionAccessTests(unittest.TestCase):
         for mode in MODES:
             self.assertEqual(ids.count(f"access-{mode}-{mode}"), 1)
 
+    def test_read_execute_sources_reach_landlock_without_other_access_modes(self):
+        raw = empty_access_desired(Path("/tmp/workspace")).to_dict()
+        for mode, key in MODES.items():
+            raw["access"][key] = [{"alias": mode, "path": f"/srv/{mode}"}]
+        raw["mcp"]["external_roots"] = ["/srv/toolchain"]
+        desired = DesiredInstance.from_dict(raw)
+        generator = ResourceGenerator(paths_for(Path("/tmp/account")))
+        roots = generator._effective_external_roots(desired)
+        self.assertEqual(roots.count("/srv/rx"), 1)
+        self.assertIn("/srv/rwx", roots)
+        self.assertNotIn("/srv/ro", roots)
+        self.assertNotIn("/srv/rw", roots)
+        unit = next(r.content for r in generator.generate(desired).resources if r.resource_id == "mcp-unit")
+        self.assertIn("CODING_TOOLS_MCP_EXEC_ALLOW_ROOTS=/srv/toolchain:/srv/rx:/srv/rwx", unit)
+        self.assertIn("BindReadOnlyPaths=/srv/rx:", unit)
+        raw["mcp"]["external_roots"].append("/srv/rx")
+        duplicate = DesiredInstance.from_dict(raw)
+        self.assertEqual(generator._effective_external_roots(duplicate).count("/srv/rx"), 1)
+
     def test_mode_changes_keep_mountpoint_and_final_removal_cleans_it(self):
         for old_mode in MODES:
             for new_mode in MODES:

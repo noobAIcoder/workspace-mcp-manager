@@ -1,0 +1,44 @@
+{
+  "id": 14,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running\ncache-write-denied /home/cloudtoor/.cache/ms-playwright EACCES\ncache-write-denied /home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache EROFS\nbrowser-policy {\"executablePath\":\"/home/cloudtoor/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/headless_shell\",\"chromiumSandbox\":true,\"profile\":\"/tmp/coding-tools-mcp/0498a0a92c497beb/9PqxYnpkPlQhlRZg/tmp/browser-qualification-WnavKg/profile\",\"TMPDIR\":\"/tmp/coding-tools-mcp/0498a0a92c497beb/9PqxYnpkPlQhlRZg/tmp\"}\n\nCommand still running; poll with write_stdin(command_id=\"PZ6zcQp2rtK4_Df9rKkX4odc\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "PZ6zcQp2rtK4_Df9rKkX4odc",
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "PZ6zcQp2rtK4_Df9rKkX4odc",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "cache-write-denied /home/cloudtoor/.cache/ms-playwright EACCES\ncache-write-denied /home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache EROFS\nbrowser-policy {\"executablePath\":\"/home/cloudtoor/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/headless_shell\",\"chromiumSandbox\":true,\"profile\":\"/tmp/coding-tools-mcp/0498a0a92c497beb/9PqxYnpkPlQhlRZg/tmp/browser-qualification-WnavKg/profile\",\"TMPDIR\":\"/tmp/coding-tools-mcp/0498a0a92c497beb/9PqxYnpkPlQhlRZg/tmp\"}\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 510,
+      "stdout_output_lines": 4,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

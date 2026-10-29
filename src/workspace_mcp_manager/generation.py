@@ -225,6 +225,9 @@ class ResourceGenerator:
 
     def _effective_external_roots(self, desired: DesiredInstance) -> tuple[str, ...]:
         roots = list(desired.mcp.external_roots)
+        for folder in (*desired.access.read_execute, *desired.access.read_write_execute):
+            if folder.path not in roots:
+                roots.append(folder.path)
         if desired.github.config_dir and desired.github.config_dir not in roots:
             roots.append(desired.github.config_dir)
         ssh_auth_sock = effective_ssh_auth_sock(desired)

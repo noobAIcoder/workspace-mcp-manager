@@ -1,0 +1,45 @@
+{
+  "id": 30,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1019 ms\ntsconfig.json 8e6471fef47c3a910c636de6e089767cbc8acfa6ba6d662225d9d8c554288da3\nnext-env.d.ts f2b3bca04d1bfe583daae1e1f798c92ec24bb6693bd88d0a09ba6802dee362a8\nroot-next-exists true\n\nstderr:\nunshare: cannot open /proc/self/uid_map: Permission denied\n\nCommand still running; poll with write_stdin(command_id=\"Pxa2Cv2LFK3lfC7E75-G5rRR\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "Pxa2Cv2LFK3lfC7E75-G5rRR",
+      "elapsed_ms": 1019,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "Pxa2Cv2LFK3lfC7E75-G5rRR",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "unshare: cannot open /proc/self/uid_map: Permission denied\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 59,
+      "stderr_output_lines": 2,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "tsconfig.json 8e6471fef47c3a910c636de6e089767cbc8acfa6ba6d662225d9d8c554288da3\nnext-env.d.ts f2b3bca04d1bfe583daae1e1f798c92ec24bb6693bd88d0a09ba6802dee362a8\nroot-next-exists true\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 180,
+      "stdout_output_lines": 4,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": 11,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1022 ms\nCommand still running; poll with write_stdin(command_id=\"RDVDbToXQ15A3xDEe5CGAkyz\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "RDVDbToXQ15A3xDEe5CGAkyz",
+      "elapsed_ms": 1022,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "RDVDbToXQ15A3xDEe5CGAkyz",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}
