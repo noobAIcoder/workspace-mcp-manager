@@ -460,3 +460,19 @@ directory take precedence over moving that directory: retain it in place and
 record that preservation. Toolkit retirement MUST quiesce registry/lifecycle
 writes for the final reference check and archive commit. Credential references
 into the program directory block retirement.
+
+
+## Local checkout setup
+
+`bash scripts/setup-local.sh` MUST open the existing numbered setup menu using
+the launcher's checkout as the candidate, without fetching manager source.
+It MUST detect exact HEAD, raw origin, and symbolic branch (or detached commit);
+a missing origin uses a canonical file URL. Dirty tracked or untracked content
+MUST block installation with actionable diagnostics. Existing installer
+provenance, integrity, reviewed-state, locking, and recovery checks remain
+authoritative. Account-home and prefix overrides MUST be preserved.
+
+Manager-only installs the complete pinned distribution without changing instance
+deployments. Update-all additionally uses the installed target's reviewed,
+sequential all-instance upgrade, including when the distribution is already
+current. Separately installed developer tools and OS packages remain excluded.

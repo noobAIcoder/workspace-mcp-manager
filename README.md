@@ -365,6 +365,26 @@ Development occurs on `main`. A production promotion fast-forwards `release` to
 the exact qualified `main` SHA; no release-only commit is permitted and published
 version tags are immutable.
 
+## Install or update a local checkout
+
+Commit your changes, then run:
+
+```sh
+bash scripts/setup-local.sh
+```
+
+The numbered menu offers manager-only installation/update and **Update all
+bundled components and instances** (option 6). Both install the checkout's pinned
+Python, uv, MCP server, tunnel client, and UI dependencies. Option 6 additionally
+reviews and refreshes all instance deployments, even if the manager is already
+current; running instances restart. Codex CLI, GitHub CLI, Node, and OS packages
+are excluded. No newer upstream versions are selected automatically.
+
+The launcher detects SSH/HTTPS origins and the current commit automatically.
+Uncommitted and untracked files must be committed first. It also supports
+`--account-home PATH` and `--prefix PATH`. The existing installed setup command
+continues to use the published release channel.
+
 ## Run from source
 
 ```sh

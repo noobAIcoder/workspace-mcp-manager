@@ -14,6 +14,7 @@ usage() {
 Usage: bootstrap.sh [options]
 
 Options:
+  --local-repo PATH      Install a clean local checkout without fetching
   --interactive          Open the numbered setup/maintenance menu
   --non-interactive      Install/update without the menu (required without a TTY)
   --check                Fetch release and print a read-only candidate check
@@ -43,12 +44,14 @@ INTERACTIVE=auto
 CHECK_REMOTE=false
 REVIEW=false
 REVIEW_RESULT_FILE=""
+LOCAL_REPO=""
 QUALIFICATION=false
 QUALIFICATION_ARTIFACT_DIR=""
 QUALIFICATION_FAILPOINT=""
 
 while (($#)); do
   case "$1" in
+    --local-repo) (($#>=2)) || die "--local-repo requires a path"; LOCAL_REPO=$2; QUALIFICATION=true; shift 2 ;;
     --interactive) INTERACTIVE=true; shift ;;
     --non-interactive) INTERACTIVE=false; shift ;;
     --check) CHECK_REMOTE=true; shift ;;
@@ -305,7 +308,7 @@ setup_render_menu() {
   if $pending; then primary+=' (unavailable: recover in Maintenance first)'; fi
   printf '\n1. %s\n2. %s\n3. Maintenance\n4. Installation details\n' "$primary" "$open"
   $legacy && printf '5. Import legacy toolkit instances\n'
-  local full='Upgrade manager and all instances'
+  local full='Update all bundled components and instances'
   if $pending; then full+=' (unavailable: recover in Maintenance first)'
   elif [[ "$ownership" == absent ]]; then full+=' (unavailable: install the manager first)'
   elif [[ "$ownership" == unknown ]]; then full+=' (unavailable: verify installation status first)'; fi
@@ -371,9 +374,13 @@ setup_install_task() {
   install_ready=false
   if $pending; then printf 'Blocked: recover the interrupted operation in Maintenance first.\n'; return 0; fi
   case "$ownership" in absent|recognized_existing|standalone_distribution) ;; *) printf 'Blocked: verify installation status in Installation details first.\n'; return 0 ;; esac
-  printf '\nInstall or update manager\n\nThis task contacts the release server and reviews the candidate before any change.\n'
+  if [[ -n "$LOCAL_REPO" ]]; then
+    printf '\nInstall/update from local checkout: %s\nPinned bundled components are installed together. Existing instances change only with option 6.\n' "$LOCAL_REPO"
+  else
+    printf '\nInstall or update manager\n\nThis task contacts the release server and reviews the candidate before any change.\n'
+  fi
   if [[ "$ownership" == recognized_existing ]]; then printf 'Upgrading this older manager installation preserves instance settings and running services. This does not import legacy toolkit instances.\n'; fi
-  printf '\n1. Check release and review change\n0. Back\n\nChoice [0]: '
+  printf '\n1. Inspect candidate and review change\n0. Back\n\nChoice [0]: '
   setup_read choice || return 0
   [[ "$choice" == 1 ]] || { printf 'Cancelled: no installation changes.\n'; return 0; }
   setup_readiness
@@ -381,7 +388,7 @@ setup_install_task() {
   outcome_file=$(mktemp)
   local args=("${remote_args[@]}" --review --review-result-file "$outcome_file")
   if $CONFIGURE && [[ "$mode" != all ]]; then args+=(--configure); fi
-  printf 'Checking the release server…\n'
+  if [[ -n "$LOCAL_REPO" ]]; then printf 'Inspecting local checkout…\n'; else printf 'Checking the release server…\n'; fi
   if ! bash "$self" "${args[@]}"; then
     rm -f -- "$outcome_file"
     printf 'Blocked or interrupted: installation/update did not complete. Review the diagnostic above, then check Maintenance for recovery.\n'; return 0
@@ -671,6 +678,7 @@ setup_menu() {
   fi
   self=$(realpath -- "${BASH_SOURCE[0]}")
   local remote_args=(--non-interactive --account-home "$ACCOUNT_HOME" --prefix "$PREFIX")
+  [[ -z "$LOCAL_REPO" ]] || remote_args+=(--local-repo "$LOCAL_REPO")
   if $QUALIFICATION; then
     remote_args+=(--qualification --repository "$REPOSITORY" --ref "$RELEASE_REF")
     [[ -z "$QUALIFICATION_ARTIFACT_DIR" ]] || remote_args+=(--qualification-artifact-dir "$QUALIFICATION_ARTIFACT_DIR")
@@ -724,6 +732,18 @@ git_isolated() {
     git -c credential.helper= -c core.askPass= "$@"
 }
 
+if [[ -n "$LOCAL_REPO" ]]; then
+  CHECKOUT=$(realpath -- "$LOCAL_REPO")
+  git -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "local source must be a Git checkout"
+  dirty=$(git -C "$CHECKOUT" status --porcelain=v1 --untracked-files=all)
+  [[ -z "$dirty" ]] || die "commit local changes before installing:
+$dirty"
+  COMMIT=$(git -C "$CHECKOUT" rev-parse HEAD)
+  REPOSITORY=$(git -C "$CHECKOUT" config --get remote.origin.url || true)
+  [[ -n "$REPOSITORY" ]] || REPOSITORY="file://$CHECKOUT"
+  RELEASE_REF=$(git -C "$CHECKOUT" symbolic-ref -q HEAD || printf '%s' "$COMMIT")
+  printf 'Local checkout: %s\nCommit: %s\nSource: %s\n' "$CHECKOUT" "$COMMIT" "$REPOSITORY"
+else
 git_isolated -C "$CHECKOUT" init -q
 git_isolated -C "$CHECKOUT" remote add origin "$REPOSITORY"
 if $QUALIFICATION && [[ "$REPOSITORY" == file://* ]]; then
@@ -741,6 +761,8 @@ HEAD=$(git_isolated -C "$CHECKOUT" rev-parse HEAD) || die "cannot resolve detach
 [[ "$HEAD" == "$COMMIT" ]] || die "detached checkout HEAD disagrees with fetched commit"
 [[ "$(git_isolated -C "$CHECKOUT" config --get remote.origin.url)" == "$REPOSITORY" ]] \
   || die "temporary checkout repository provenance changed"
+
+fi
 
 args=(
   --upgrade
