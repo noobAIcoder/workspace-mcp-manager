@@ -1,0 +1,36 @@
+{
+  "id": 145,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: exited | exit code 1\n{\"qualificationBuildExit\":1,\"rootTypeConfigPreserved\":true,\"output\":\"test-results/next-build-HpTtiI\"}\nroot-config-after {\"tsconfig.json\":\"8e6471fef47c3a910c636de6e089767cbc8acfa6ba6d662225d9d8c554288da3\",\"next-env.d.ts\":\"f2b3bca04d1bfe583daae1e1f798c92ec24bb6693bd88d0a09ba6802dee362a8\"}\n",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+      "exit_code": 1,
+      "ok": true,
+      "signal": null,
+      "status": "exited",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "{\"qualificationBuildExit\":1,\"rootTypeConfigPreserved\":true,\"output\":\"test-results/next-build-HpTtiI\"}\nroot-config-after {\"tsconfig.json\":\"8e6471fef47c3a910c636de6e089767cbc8acfa6ba6d662225d9d8c554288da3\",\"next-env.d.ts\":\"f2b3bca04d1bfe583daae1e1f798c92ec24bb6693bd88d0a09ba6802dee362a8\"}\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 288,
+      "stdout_output_lines": 3,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

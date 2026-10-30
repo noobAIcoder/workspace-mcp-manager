@@ -1,0 +1,58 @@
+{
+  "status": "Chromium and Node acceptance PASS; production build recheck fails on current Google Fonts URL format",
+  "backend_source": "/home/cloudtoor/repos/coding-tools-mcp",
+  "deployment": "/home/cloudtoor/.local/state/workspace-mcp-manager/instances/podolskyestates/patched-runtime",
+  "backup": "/tmp/chromium-broker-fix/before-deploy",
+  "service_processes_after_qualification": "a(sus) 1 \"/user.slice/user-1000.slice/user@1000.service/app.slice/coding-tools-mcp-podolskyestates.service\" 583243 \"/home/cloudtoor/.local/share/uv/tools/coding-tools-mcp/bin/python /home/cloudtoor/.local/state/workspace-mcp-manager/instances/podolskyestates/patched-runtime/coding-tools-mcp --workspace /home/cloudtoor/repos/podolskyestates --host 127.0.0.1 --port 11114 --permission-mode trusted --shell-env-inherit all\"",
+  "browser_main_pid": 583297,
+  "browser_main_pid_absent": true,
+  "owned_profile_removed": true,
+  "source_deployed_hashes": {
+    "proc_stat_broker.py": {
+      "source": "d6977b122ad0bc05e897df5667506ac16393796afac6b578a5ce9f78ba4db40b",
+      "deployed": "d6977b122ad0bc05e897df5667506ac16393796afac6b578a5ce9f78ba4db40b"
+    },
+    "server.py": {
+      "source": "46a7c07ab47dbe50de9a60152777f6692d779b27b14934d35ff0450d0c2411cc",
+      "deployed": "46a7c07ab47dbe50de9a60152777f6692d779b27b14934d35ff0450d0c2411cc"
+    },
+    "landlock_exec.py": {
+      "source": "c67759cef9aa45d28d2d08f2cbd0dcb427040a554ce985584dbf695c92baa2c3",
+      "deployed": "c67759cef9aa45d28d2d08f2cbd0dcb427040a554ce985584dbf695c92baa2c3"
+    }
+  },
+  "browser_screenshot": {
+    "path": "browser-v4.png",
+    "bytes": 17671,
+    "sha256": "4a7a4516c57e7f9ffa90bfc0ff049dae8b4cfceb1e9b36d594d41e7aec907183"
+  },
+  "build": {
+    "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+    "exit_code": 1,
+    "root_config_preserved": true,
+    "owned_output_removed": true,
+    "cause": "Next 15.4.11 Google font loader assumes URL extension; current Cormorant Garamond CSS returns /l/font?kit=... URLs",
+    "font_probe_command_id": "L4neMYji8r90gmyUwzuRYkkI",
+    "application_changes": false
+  },
+  "qualified_architecture": "x86_64 only; aarch64 unqualified",
+  "browser_command_id": "o4YGSkS1J1rRX3xpZmKrNslR",
+  "node_command_id": "pXD8GXj-pxlEveQ5vWiVfsWb",
+  "tests": {
+    "passed": 129,
+    "skipped": 0,
+    "seconds": 7.396,
+    "modules": [
+      "tests.compliance.test_proc_stat_broker",
+      "tests.compliance.test_chromium_proc_broker",
+      "tests.compliance.test_runtime_helpers"
+    ]
+  },
+  "directory_expansion_approved": true,
+  "namespace_expansion_approved": true,
+  "pending_approvals": [],
+  "backup_directories": [
+    "/tmp/chromium-broker-fix/before-deploy",
+    "/tmp/chromium-broker-fix/before-directory-deploy"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "id": 24,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running\nowned-profile-cleaned true\n\nstderr:\nbrowserType.launchPersistentContext: Target page, context or browser has been closed\nBrowser logs:\nChromium sandboxing failed!\n================================\nTo avoid the sandboxing issue, do either of the following:\n  - (preferred): Configure your environment to support sandboxing\n  - (alternative): Launch Chromium without sandbox using 'chromiumSandbox: false' option\n================================\n\nCall log:\n  - <launching> /home/cloudtoor/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4/tmp/browser-qualification-bELspn/profile --remote-debugging-pipe about:blank\n  - <launched> pid=566324\n  - [pid=566324][err] [1030/040118.672211:FATAL:sandbox/linux/services/proc_util.cc:38] Check failed: . : Permission denied (13)\n  - [pid=566324][err] [1030/040118.860049:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:128] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md. Otherwise see https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md for more information on developing with the (older) SUID sandbox. If you want to live dangerously and need an immediate workaround, you can try using --no-sandbox.\n  - [pid=566324] <gracefully close start>\n  - [pid=566324] <kill>\n  - [pid=566324] <will force kill>\n  - [pid=566324] <process did exit: exitCode=null, signal=SIGTRAP>\n  - [pid=566324] starting temporary directories cleanup\n  - [pid=566324] finished temporary directories cleanup\n  - [pid=566324] <gracefully close end>\n\n    at async [eval]:14:11\n\nCommand still running; poll with write_stdin(command_id=\"qhVXU9fa2ZWPkt_VMVIoTTha\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "qhVXU9fa2ZWPkt_VMVIoTTha",
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "qhVXU9fa2ZWPkt_VMVIoTTha",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "browserType.launchPersistentContext: Target page, context or browser has been closed\nBrowser logs:\nChromium sandboxing failed!\n================================\nTo avoid the sandboxing issue, do either of the following:\n  - (preferred): Configure your environment to support sandboxing\n  - (alternative): Launch Chromium without sandbox using 'chromiumSandbox: false' option\n================================\n\nCall log:\n  - <launching> /home/cloudtoor/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4/tmp/browser-qualification-bELspn/profile --remote-debugging-pipe about:blank\n  - <launched> pid=566324\n  - [pid=566324][err] [1030/040118.672211:FATAL:sandbox/linux/services/proc_util.cc:38] Check failed: . : Permission denied (13)\n  - [pid=566324][err] [1030/040118.860049:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:128] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md. Otherwise see https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md for more information on developing with the (older) SUID sandbox. If you want to live dangerously and need an immediate workaround, you can try using --no-sandbox.\n  - [pid=566324] <gracefully close start>\n  - [pid=566324] <kill>\n  - [pid=566324] <will force kill>\n  - [pid=566324] <process did exit: exitCode=null, signal=SIGTRAP>\n  - [pid=566324] starting temporary directories cleanup\n  - [pid=566324] finished temporary directories cleanup\n  - [pid=566324] <gracefully close end>\n\n    at async [eval]:14:11\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 3280,
+      "stderr_output_lines": 24,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "owned-profile-cleaned true\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 27,
+      "stdout_output_lines": 2,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

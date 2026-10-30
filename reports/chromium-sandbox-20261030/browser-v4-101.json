@@ -1,0 +1,53 @@
+{
+  "id": 101,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1019 ms\ncache-write-denied /home/cloudtoor/.cache/ms-playwright EACCES\ncache-write-denied /home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache EROFS\nowned-profile /tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/tmp/chromium-acceptance-YK5p5N/profile\n\nCommand still running; poll with write_stdin(command_id=\"o4YGSkS1J1rRX3xpZmKrNslR\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "o4YGSkS1J1rRX3xpZmKrNslR",
+      "diagnostics": [
+        {
+          "code": "HOME_NOT_WRITABLE",
+          "evidence": "cache-write-denied /home/cloudtoor/.cache/ms-playwright EACCES cache-write-denied /home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache EROFS owned-profile /tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/tmp/chr...",
+          "severity": "error",
+          "suggested_next_command": "printf ok > \"$HOME/coding-tools-write-test\""
+        }
+      ],
+      "elapsed_ms": 1019,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "o4YGSkS1J1rRX3xpZmKrNslR",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "cache-write-denied /home/cloudtoor/.cache/ms-playwright EACCES\ncache-write-denied /home/cloudtoor/repos/podolskyestates/.workspace-mcp-access/local_cache EROFS\nowned-profile /tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/tmp/chromium-acceptance-YK5p5N/profile\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 269,
+      "stdout_output_lines": 4,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "id": 123,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running\nCommand still running; poll with write_stdin(command_id=\"Nzz44-3REzBVxmEHU-GQbx4C\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

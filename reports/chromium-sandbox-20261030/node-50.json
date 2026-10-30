@@ -1,0 +1,37 @@
+{
+  "id": 50,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: exited | exit code 0 | 448 ms\ndirect 569962 {\n  rss: 47124480,\n  heapTotal: 6270976,\n  heapUsed: 4825888,\n  external: 2022894,\n  arrayBuffers: 137507\n}\nchild 569969 {\n  rss: 43868160,\n  heapTotal: 6008832,\n  heapUsed: 4011752,\n  external: 1582649,\n  arrayBuffers: 137503\n}\n \ndenied /proc/1/stat r EACCES\ndenied /proc/self/environ r EACCES\ndenied /proc/self/stat w EACCES\ndenied /proc/self/stat r+ EACCES\nworker 569962 {\n  rss: 87973888,\n  heapTotal: 11251712,\n  heapUsed: 7513400,\n  external: 3012576,\n  arrayBuffers: 71835\n}\nworker 569962 {\n  rss: 88367104,\n  heapTotal: 11251712,\n  heapUsed: 6987864,\n  external: 3012576,\n  arrayBuffers: 71835\n}\nworker 569962 {\n  rss: 79802368,\n  heapTotal: 11513856,\n  heapUsed: 7755768,\n  external: 3012576,\n  arrayBuffers: 71835\n}\n",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "nM4PQ0P6zaujLu4N2jnEVqr1",
+      "elapsed_ms": 448,
+      "exit_code": 0,
+      "ok": true,
+      "signal": null,
+      "status": "exited",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "direct 569962 {\n  rss: 47124480,\n  heapTotal: 6270976,\n  heapUsed: 4825888,\n  external: 2022894,\n  arrayBuffers: 137507\n}\nchild 569969 {\n  rss: 43868160,\n  heapTotal: 6008832,\n  heapUsed: 4011752,\n  external: 1582649,\n  arrayBuffers: 137503\n}\n \ndenied /proc/1/stat r EACCES\ndenied /proc/self/environ r EACCES\ndenied /proc/self/stat w EACCES\ndenied /proc/self/stat r+ EACCES\nworker 569962 {\n  rss: 87973888,\n  heapTotal: 11251712,\n  heapUsed: 7513400,\n  external: 3012576,\n  arrayBuffers: 71835\n}\nworker 569962 {\n  rss: 88367104,\n  heapTotal: 11251712,\n  heapUsed: 6987864,\n  external: 3012576,\n  arrayBuffers: 71835\n}\nworker 569962 {\n  rss: 79802368,\n  heapTotal: 11513856,\n  heapUsed: 7755768,\n  external: 3012576,\n  arrayBuffers: 71835\n}\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 740,
+      "stdout_output_lines": 41,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

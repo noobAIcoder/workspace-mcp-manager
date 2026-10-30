@@ -1,0 +1,94 @@
+{
+  "id": 21,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "coding-tools-mcp 0.3.0\nWorkspace: /home/cloudtoor/repos/podolskyestates",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "annotation_override": null,
+      "auth_enabled": false,
+      "cache_dir": "/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4/cache",
+      "dangerously_skip_all_permissions": false,
+      "endpoint_path": "/mcp",
+      "exec_policy": {
+        "global_tmp_write": "tmp-prefix",
+        "inline_script": "allowed",
+        "secret_env_filter": "enabled",
+        "shell_expansion": "allowed"
+      },
+      "home": "/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4/home",
+      "landlock": {
+        "abi_version": 7,
+        "available": true,
+        "effective_policy": null,
+        "enabled": true,
+        "runtime": {
+          "module": "/home/cloudtoor/.local/state/workspace-mcp-manager/instances/podolskyestates/patched-runtime/coding_tools_mcp/server.py",
+          "pid": 566171,
+          "python": "/home/cloudtoor/.local/share/uv/tools/coding-tools-mcp/bin/python",
+          "uid": 1000,
+          "version": "0.3.0"
+        }
+      },
+      "network_allowed": true,
+      "ok": true,
+      "output_retention": {
+        "buffer_bytes_per_stream": 524288,
+        "head_bytes_per_stream": 65536
+      },
+      "permission_mode": "trusted",
+      "project_context": {
+        "nested_instruction_files": [
+          ".agentic-work/.execution-models/AGENTS.md",
+          ".agentic-work/.spec-set/AGENTS.md",
+          ".agentic-work/.work-models/AGENTS.md",
+          ".agentic-work/AGENTS.md"
+        ],
+        "root_instruction_files": [
+          "AGENTS.md"
+        ],
+        "warnings": []
+      },
+      "runtime_dir": "/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4",
+      "server": "coding-tools-mcp",
+      "shell_env_exclude": [],
+      "shell_env_include_only": [],
+      "shell_env_inherit": "all",
+      "supported_protocol_versions": [
+        "2026-07-28",
+        "2025-11-25",
+        "2025-06-18"
+      ],
+      "title": "Coding Tools MCP",
+      "tmpdir": "/tmp/coding-tools-mcp/0498a0a92c497beb/tYFUhYntTvoDWpb4/tmp",
+      "tool_count": 18,
+      "tools": [
+        "server_info",
+        "check_exec_environment",
+        "read_file",
+        "list_dir",
+        "list_files",
+        "search_text",
+        "apply_patch",
+        "exec_command",
+        "write_stdin",
+        "kill_command",
+        "read_output",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+        "git_blame",
+        "request_permissions",
+        "view_image"
+      ],
+      "version": "0.3.0",
+      "workspace": "/home/cloudtoor/repos/podolskyestates"
+    }
+  }
+}

@@ -1,0 +1,279 @@
+{
+  "id": 200,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "coding-tools-mcp 0.3.0\nWorkspace: /home/cloudtoor/repos/podolskyestates",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "annotation_override": null,
+      "auth_enabled": false,
+      "cache_dir": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/cache",
+      "dangerously_skip_all_permissions": false,
+      "endpoint_path": "/mcp",
+      "exec_policy": {
+        "global_tmp_write": "tmp-prefix",
+        "inline_script": "allowed",
+        "secret_env_filter": "enabled",
+        "shell_expansion": "allowed"
+      },
+      "home": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/home",
+      "landlock": {
+        "abi_version": 7,
+        "available": true,
+        "effective_policy": {
+          "abi_version": 7,
+          "fingerprint": "9d1915c555dddf5f80ed1a24bba979b1c6ab1f001aad0feb00055c31f8530673",
+          "handled_access_mask": 65535,
+          "proc_broker_scope": {
+            "mapping_handles": "sealed-placeholders; validated-write; owned-descendant-userns-only",
+            "max_mapping_handles": 128,
+            "namespace_setup": [
+              "setgroups=deny",
+              "uid_map=existing-id existing-id 1",
+              "gid_map=existing-id existing-id 1"
+            ],
+            "readonly_directories": [
+              "/proc/ entries only",
+              "self/fd/ entries only"
+            ],
+            "readonly_self": [
+              "stat",
+              "maps"
+            ],
+            "relative_directory_scope": "dot and self/fd/ against verified proc root descriptor"
+          },
+          "proc_stat_broker": "seccomp-notify-atomic-addfd-v2",
+          "rules": [
+            {
+              "access_mask": 65535,
+              "installed": true,
+              "path": "/home/cloudtoor/repos/podolskyestates"
+            },
+            {
+              "access_mask": 65535,
+              "installed": true,
+              "path": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/bin"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/etc/alternatives"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/etc/ca-certificates"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/debian_version"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/gai.conf"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/hosts"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/usr/share/zoneinfo/Asia/Jerusalem"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/lsb-release"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/nsswitch.conf"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/usr/lib/os-release"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/protocols"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/resolv.conf"
+            },
+            {
+              "access_mask": 5,
+              "installed": true,
+              "path": "/etc/services"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/etc/ssl"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/home/cloudtoor/.cache/ms-playwright"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/home/cloudtoor/.config/workspace-mcp-manager/github/podolskyestates"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/home/cloudtoor/.local/share/uv/tools/coding-tools-mcp"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/home/cloudtoor/.nvm/versions/node/v24.18.0"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/lib"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/lib64"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/run/systemd/resolve"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/run/user/1000/gnupg"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/sbin"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/bin"
+            },
+            {
+              "access_mask": 13,
+              "installed": true,
+              "path": "/usr/local/bin"
+            },
+            {
+              "access_mask": 49159,
+              "installed": true,
+              "path": "/dev/null"
+            },
+            {
+              "access_mask": 49159,
+              "installed": true,
+              "path": "/dev/zero"
+            },
+            {
+              "access_mask": 49159,
+              "installed": true,
+              "path": "/dev/random"
+            },
+            {
+              "access_mask": 49159,
+              "installed": true,
+              "path": "/dev/urandom"
+            }
+          ]
+        },
+        "enabled": true,
+        "runtime": {
+          "module": "/home/cloudtoor/.local/state/workspace-mcp-manager/instances/podolskyestates/patched-runtime/coding_tools_mcp/server.py",
+          "pid": 583243,
+          "python": "/home/cloudtoor/.local/share/uv/tools/coding-tools-mcp/bin/python",
+          "uid": 1000,
+          "version": "0.3.0"
+        }
+      },
+      "network_allowed": true,
+      "ok": true,
+      "output_retention": {
+        "buffer_bytes_per_stream": 524288,
+        "head_bytes_per_stream": 65536
+      },
+      "permission_mode": "trusted",
+      "project_context": {
+        "nested_instruction_files": [
+          ".agentic-work/.execution-models/AGENTS.md",
+          ".agentic-work/.spec-set/AGENTS.md",
+          ".agentic-work/.work-models/AGENTS.md",
+          ".agentic-work/AGENTS.md"
+        ],
+        "root_instruction_files": [
+          "AGENTS.md"
+        ],
+        "warnings": []
+      },
+      "runtime_dir": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi",
+      "server": "coding-tools-mcp",
+      "shell_env_exclude": [],
+      "shell_env_include_only": [],
+      "shell_env_inherit": "all",
+      "supported_protocol_versions": [
+        "2026-07-28",
+        "2025-11-25",
+        "2025-06-18"
+      ],
+      "title": "Coding Tools MCP",
+      "tmpdir": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/tmp",
+      "tool_count": 18,
+      "tools": [
+        "server_info",
+        "check_exec_environment",
+        "read_file",
+        "list_dir",
+        "list_files",
+        "search_text",
+        "apply_patch",
+        "exec_command",
+        "write_stdin",
+        "kill_command",
+        "read_output",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+        "git_blame",
+        "request_permissions",
+        "view_image"
+      ],
+      "version": "0.3.0",
+      "workspace": "/home/cloudtoor/repos/podolskyestates"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": 101,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1000 ms\nstderr:\nproc-broker: pid=578767 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=578767 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=578767 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=578767 unbrokered proc open b'/proc/stat'\nproc-broker: pid=578767 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=578767 unbrokered proc open b'/proc/sys/vm/overcommit_memory'\n\nCommand still running; poll with write_stdin(command_id=\"vCfVVZFRng-qIXsAjg3YFLAi\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "vCfVVZFRng-qIXsAjg3YFLAi",
+      "elapsed_ms": 1000,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "vCfVVZFRng-qIXsAjg3YFLAi",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "proc-broker: pid=578767 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=578767 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=578767 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=578767 unbrokered proc open b'/proc/stat'\nproc-broker: pid=578767 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=578767 unbrokered proc open b'/proc/sys/vm/overcommit_memory'\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 404,
+      "stderr_output_lines": 7,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

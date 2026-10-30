@@ -1,0 +1,45 @@
+{
+  "id": 101,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1019 ms\nstderr:\nproc-broker: pid=579539 syscall=39 args=[139451648609232, 0]\nproc-broker: pid=579539 syscall=39 args=[95330902037472, 8314034342958031407]\nproc-broker: pid=579539 syscall=39 args=[268896174, 0]\nproc-broker: pid=579539 syscall=39 args=[268896174, 0]\nproc-broker: pid=579539 syscall=39 args=[50418256, 140733286376128]\nproc-broker: pid=579539 syscall=39 args=[50521465, 140733286375824]\nproc-broker: pid=579539 syscall=39 args=[50717113, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717138, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717161, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717189, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717208, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50521531, 140733286375856]\nproc-broker: pid=579539 syscall=39 args=[50521570, 164658304]\nproc-broker: pid=579539 syscall=39 args=[50521621, 140733286376240]\nproc-broker: pid=579539 syscall=39 args=[165239152, 0]\nproc-broker: pid=579539 syscall=39 args=[165399568, 0]\nproc-broker: pid=579539 syscall=39 args=[165399344, 48]\nproc-broker: pid=579539 syscall=39 args=[50521664, 140733286376432]\nproc-broker: pid=579539 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375240]\nproc-broker: pid=579539 syscall=39 args=[165399344, 32]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375384]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375320]\nproc-broker: pid=579539 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=579539 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=579539 syscall=39 args=[165047793, 62208177]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286373768]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286374648]\nproc-broker: pid=579539 syscall=39 args=[50418256, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[140733286375392, 8112570107573326827]\nproc-broker: pid=579539 syscall=39 args=[50431563, 140733286376176]\nproc-broker: pid=579539 syscall=39 args=[165474304, 165949104]\nproc-broker: pid=579539 syscall=39 args=[140733286372696, 140733286372640]\nproc-broker: pid=579539 syscall=39 args=[140733286372696, 140733286372640]\nproc-broker: pid=579542 unbrokered proc open b'/proc/stat'\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286355440]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286349312]\nproc-broker: pid=579539 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286343040]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286334736]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286349104]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286334176]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350176]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350480]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350608]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286345536]\nproc-broker: pid=579539 syscall=39 args=[0, 168121248]\nproc-broker: pid=579539 syscall=39 args=[0, 167365216]\nproc-broker: pid=579539 syscall=39 args=[0, 167342704]\nproc-broker: pid=579539 syscall=39 args=[0, 167189984]\nproc-broker: pid=579539 syscall=39 args=[0, 166709696]\nproc-broker: pid=579539 syscall=39 args=[0, 167069008]\nproc-broker: pid=579539 syscall=39 args=[0, 168053184]\nproc-broker: pid=579539 syscall=39 args=[0, 167113584]\nproc-broker: pid=579539 syscall=39 args=[0, 167364752]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286357296]\n\nCommand still running; poll with write_stdin(command_id=\"zXj0G_vawN6hP95zOYB_rpHr\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "zXj0G_vawN6hP95zOYB_rpHr",
+      "elapsed_ms": 1019,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "zXj0G_vawN6hP95zOYB_rpHr",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "proc-broker: pid=579539 syscall=39 args=[139451648609232, 0]\nproc-broker: pid=579539 syscall=39 args=[95330902037472, 8314034342958031407]\nproc-broker: pid=579539 syscall=39 args=[268896174, 0]\nproc-broker: pid=579539 syscall=39 args=[268896174, 0]\nproc-broker: pid=579539 syscall=39 args=[50418256, 140733286376128]\nproc-broker: pid=579539 syscall=39 args=[50521465, 140733286375824]\nproc-broker: pid=579539 syscall=39 args=[50717113, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717138, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717161, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717189, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50717208, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[50521531, 140733286375856]\nproc-broker: pid=579539 syscall=39 args=[50521570, 164658304]\nproc-broker: pid=579539 syscall=39 args=[50521621, 140733286376240]\nproc-broker: pid=579539 syscall=39 args=[165239152, 0]\nproc-broker: pid=579539 syscall=39 args=[165399568, 0]\nproc-broker: pid=579539 syscall=39 args=[165399344, 48]\nproc-broker: pid=579539 syscall=39 args=[50521664, 140733286376432]\nproc-broker: pid=579539 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375240]\nproc-broker: pid=579539 syscall=39 args=[165399344, 32]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375384]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286375320]\nproc-broker: pid=579539 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=579539 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=579539 syscall=39 args=[165047793, 62208177]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286373768]\nproc-broker: pid=579539 syscall=39 args=[0, 140733286374648]\nproc-broker: pid=579539 syscall=39 args=[50418256, 140733286375440]\nproc-broker: pid=579539 syscall=39 args=[140733286375392, 8112570107573326827]\nproc-broker: pid=579539 syscall=39 args=[50431563, 140733286376176]\nproc-broker: pid=579539 syscall=39 args=[165474304, 165949104]\nproc-broker: pid=579539 syscall=39 args=[140733286372696, 140733286372640]\nproc-broker: pid=579539 syscall=39 args=[140733286372696, 140733286372640]\nproc-broker: pid=579542 unbrokered proc open b'/proc/stat'\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286355440]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286349312]\nproc-broker: pid=579539 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286343040]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286334736]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286349104]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286334176]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350176]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350480]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286350608]\nproc-broker: pid=579539 syscall=39 args=[139922197659664, 140733286345536]\nproc-broker: pid=579539 syscall=39 args=[0, 168121248]\nproc-broker: pid=579539 syscall=39 args=[0, 167365216]\nproc-broker: pid=579539 syscall=39 args=[0, 167342704]\nproc-broker: pid=579539 syscall=39 args=[0, 167189984]\nproc-broker: pid=579539 syscall=39 args=[0, 166709696]\nproc-broker: pid=579539 syscall=39 args=[0, 167069008]\nproc-broker: pid=579539 syscall=39 args=[0, 168053184]\nproc-broker: pid=579539 syscall=39 args=[0, 167113584]\nproc-broker: pid=579539 syscall=39 args=[0, 167364752]\nproc-broker: pid=579539 syscall=39 args=[70682619, 140733286357296]\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 3625,
+      "stderr_output_lines": 57,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

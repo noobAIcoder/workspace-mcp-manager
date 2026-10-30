@@ -1,0 +1,625 @@
+--- a/coding_tools_mcp/proc_stat_broker.py
++++ b/coding_tools_mcp/proc_stat_broker.py
+@@ -1,4 +1,4 @@
+-"""Per-command, unprivileged seccomp broker for read-only /proc/self/stat.
++"""Per-command unprivileged broker for self stat/maps and namespace setup.
+ 
+ The supervisor never opens a pathname supplied by the command. All other opens
+ continue in the requesting task and remain subject to its Landlock ruleset.
+@@ -16,6 +16,8 @@
+ import signal
+ import socket
+ import sys
++import struct
++from contextlib import contextmanager
+ 
+ class Filter(C.Structure):
+     _fields_ = [('code', C.c_ushort), ('jt', C.c_ubyte), ('jf', C.c_ubyte), ('k', C.c_uint)]
+@@ -36,6 +38,21 @@
+ VALID = 0x40082102
+ ADDFD = 0x40182103
+ 
++# Mapping handles contain no writable proc descriptor. The sealed placeholder
++# cannot be changed through mmap, pwrite, splice, io_uring, or a passed descriptor.
++# Only a validated write notification performs a fixed operation in the broker.
++MAPPING_HANDLES = {}
++MAX_MAPPING_HANDLES = 128
++
++
++def write_syscall():
++    return 1 if platform.machine() == 'x86_64' else 64
++
++
++def diagnostic(message):
++    if os.environ.get('CODING_TOOLS_MCP_PROC_DEBUG') == '1':
++        print('proc-broker:', message, file=sys.stderr, flush=True)
++
+ 
+ def ioctl(fd, operation, value):
+     result = LIBC.ioctl(fd, C.c_ulong(operation), C.byref(value))
+@@ -61,7 +78,7 @@
+                     (0x20, 0, 0, 0), (0x35, 0, 1, 0x40000000), (0x06, 0, 0, 0x80000000)]
+     for number in forbidden:
+         instructions += [(0x15, 0, 1, number), (0x06, 0, 0, 0x00050000 | errno.EPERM)]
+-    for number in opens:
++    for number in [*opens, write_syscall()]:
+         instructions += [(0x15, 0, 1, number), (0x06, 0, 0, 0x7FC00000)]
+     instructions += [(0x06, 0, 0, 0x7FFF0000)]
+     filters = (Filter * len(instructions))(*(Filter(*item) for item in instructions))
+@@ -116,7 +133,7 @@
+     return flags
+ 
+ 
+-def self_stat(notification, listener):
++def self_stat(notification, listener, leaf='stat'):
+     flags = read_flags(notification)
+     safe = os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOCTTY | os.O_NOFOLLOW | 0x8000  # O_LARGEFILE
+     if flags & ~safe:
+@@ -140,7 +157,7 @@
+                     with os.fdopen(check, 'rb') as source:
+                         if not any(line == f'Tgid:\t{tgid}\n'.encode() for line in source):
+                             raise OSError(errno.ESRCH, 'task identity changed')
+-                fd = os.open('stat', os.O_RDONLY | os.O_CLOEXEC, dir_fd=process)
++                fd = os.open(leaf, os.O_RDONLY | os.O_CLOEXEC, dir_fd=process)
+                 try:
+                     valid(listener, notification)
+                     # SEND atomically injects the fd and completes this exact request.
+@@ -155,27 +172,285 @@
+         os.close(task)
+ 
+ 
++@contextmanager
++def process_identity(tid):
++    task = os.open(f'/proc/{tid}', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
++    process = None
++    try:
++        with os.fdopen(os.open('status', os.O_RDONLY | os.O_CLOEXEC, dir_fd=task), 'rb') as stream:
++            status = dict(line.split(b':', 1) for line in stream if b':' in line)
++        tgid = int(status[b'Tgid'].strip())
++        if any(int(v) != expected for key, expected in [(b'Uid', os.getuid()), (b'Gid', os.getgid())]
++               for v in status[key].split()):
++            raise PermissionError(errno.EACCES, 'requesting credentials differ')
++        process = os.open(f'/proc/{tgid}', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
++        # Pin both objects while the seccomp notification pins the live task.
++        yield process, tgid
++    finally:
++        if process is not None:
++            os.close(process)
++        os.close(task)
++
++
++def namespace_identity(fd):
++    s = os.fstat(fd)
++    return s.st_dev, s.st_ino
++
++
++def owned_child_namespace(process):
++    ns = os.open('ns/user', os.O_RDONLY | os.O_CLOEXEC, dir_fd=process)
++    try:
++        own = os.open('/proc/self/ns/user', os.O_RDONLY | os.O_CLOEXEC)
++        try:
++            own_id = namespace_identity(own)
++        finally:
++            os.close(own)
++        if namespace_identity(ns) == own_id:
++            raise PermissionError(errno.EACCES, 'original namespace is not writable')
++        current = os.dup(ns)
++        try:
++            for _ in range(32):
++                owner = array.array('I', [0])
++                fcntl.ioctl(current, 0xb704, owner, True)  # NS_GET_OWNER_UID
++                if owner[0] != os.getuid():
++                    raise PermissionError(errno.EACCES, 'namespace has another owner')
++                parent = fcntl.ioctl(current, 0xb702)  # NS_GET_PARENT
++                os.close(current)
++                current = parent
++                if namespace_identity(current) == own_id:
++                    return ns
++            raise PermissionError(errno.EACCES, 'namespace ancestry exceeds bound')
++        finally:
++            os.close(current)
++    except BaseException:
++        os.close(ns)
++        raise
++
++
++def open_mapping(notification, listener, leaf):
++    flags = read_flags(notification)
++    safe = os.O_WRONLY | os.O_CLOEXEC | os.O_NOCTTY | os.O_NOFOLLOW | 0x8000
++    if flags & os.O_ACCMODE != os.O_WRONLY or flags & ~safe:
++        raise PermissionError(errno.EACCES, 'mapping requires plain write-only open')
++    if len(MAPPING_HANDLES) >= MAX_MAPPING_HANDLES:
++        raise OSError(errno.EMFILE, 'mapping handle bound reached')
++    valid(listener, notification)
++    with process_identity(notification.pid) as (process, tgid):
++        ns = owned_child_namespace(process)
++        placeholder = None
++        pinned = None
++        try:
++            # The namespace must still need the requested mapping. Kernel rules
++            # additionally enforce write-once and single-ID mapping semantics.
++            if leaf != 'setgroups':
++                with os.fdopen(os.open(leaf, os.O_RDONLY | os.O_CLOEXEC, dir_fd=process), 'rb') as stream:
++                    if stream.read(4096):
++                        raise PermissionError(errno.EACCES, 'namespace already mapped')
++            placeholder = os.memfd_create('mcp-namespace-operation', os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
++            fcntl.fcntl(placeholder, fcntl.F_ADD_SEALS,
++                        fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
++            pinned = os.dup(process)
++            valid(listener, notification)
++            ioctl(listener, ADDFD, AddFD(notification.id, 2, placeholder, 0, flags & os.O_CLOEXEC))
++            MAPPING_HANDLES[namespace_identity(placeholder)] = (placeholder, pinned, ns, tgid, leaf, False)
++            diagnostic(f'pid={notification.pid} mapping handle {leaf} opened')
++            placeholder = pinned = ns = None
++        finally:
++            for fd in (placeholder, pinned, ns):
++                if fd is not None:
++                    os.close(fd)
++
++
++def mapping_write(notification, listener):
++    number, address, size = notification.data.args[:3]
++    try:
++        # O_PATH pins identity without reopening a descriptor for write.
++        fd = os.open(f'/proc/{notification.pid}/fd/{number}', os.O_PATH | os.O_CLOEXEC)
++        try:
++            key = namespace_identity(fd)
++        finally:
++            os.close(fd)
++    except OSError:
++        ioctl(listener, SEND, Response(notification.id, 0, 0, 1))
++        return
++    record = MAPPING_HANDLES.get(key)
++    if record is None:
++        ioctl(listener, SEND, Response(notification.id, 0, 0, 1))
++        return
++    placeholder, process, ns, tgid, leaf, done = record
++    if done or size > 64 or size == 0:
++        raise PermissionError(errno.EACCES, 'invalid or repeated mapping write')
++    with process_identity(notification.pid) as (writer, writer_tgid):
++        if writer_tgid != tgid or namespace_identity(writer) != namespace_identity(process):
++            raise PermissionError(errno.EACCES, 'mapping belongs to another process')
++        current_ns = owned_child_namespace(writer)
++        try:
++            if namespace_identity(current_ns) != namespace_identity(ns):
++                raise PermissionError(errno.EACCES, 'namespace changed')
++        finally:
++            os.close(current_ns)
++        expected = b'deny' if leaf == 'setgroups' else f'{os.getuid() if leaf == "uid_map" else os.getgid()} {os.getuid() if leaf == "uid_map" else os.getgid()} 1'.encode()
++        value = read_memory(notification.pid, address, size)
++        if value not in (expected, expected + b'\n'):
++            raise PermissionError(errno.EACCES, 'only existing single-ID mapping or deny is allowed')
++        valid(listener, notification)
++        written = write_mapping(process, ns, leaf, value, notification, listener)
++        MAPPING_HANDLES[key] = (placeholder, process, ns, tgid, leaf, True)
++        diagnostic(f'pid={notification.pid} mapping {leaf} initialized')
++        ioctl(listener, SEND, Response(notification.id, written, 0, 0))
++
++
++def write_mapping(process, ns, leaf, value, notification, listener):
++    # Linux's unprivileged single-ID mapping rule requires the writer to be in
++    # the target's immediate parent user namespace. Never move the supervisor:
++    # a fixed-operation helper enters an already validated owned descendant.
++    def perform():
++        valid(listener, notification)
++        target = os.open(leaf, os.O_WRONLY | os.O_CLOEXEC, dir_fd=process)
++        try:
++            valid(listener, notification)
++            return os.write(target, value)
++        finally:
++            os.close(target)
++
++    parent = fcntl.ioctl(ns, 0xb702)  # NS_GET_PARENT; ns was ownership/ancestry checked
++    try:
++        own = os.open('/proc/self/ns/user', os.O_RDONLY | os.O_CLOEXEC)
++        try:
++            direct = namespace_identity(parent) == namespace_identity(own)
++        finally:
++            os.close(own)
++        if direct:
++            return perform()
++        uid, gid = os.getuid(), os.getgid()
++        reader, writer = os.pipe2(os.O_CLOEXEC)
++        try:
++            valid(listener, notification)
++            child = os.fork()
++        except BaseException:
++            os.close(reader)
++            os.close(writer)
++            raise
++        if child == 0:
++            os.close(reader)
++            error, count = errno.EIO, 0
++            try:
++                if LIBC.setns(parent, 0x10000000):
++                    raise OSError(C.get_errno(), 'cannot enter owned parent user namespace')
++                if os.getuid() != uid or os.getgid() != gid:
++                    raise PermissionError(errno.EACCES, 'namespace would change helper identity')
++                count = perform()
++                error = 0
++            except OSError as exc:
++                error = exc.errno or errno.EIO
++            finally:
++                os.write(writer, struct.pack('=ii', error, count))
++                os._exit(0)
++        os.close(writer)
++        try:
++            poller = select.poll()
++            poller.register(reader, select.POLLIN | select.POLLHUP)
++            if not poller.poll(5000):
++                os.kill(child, signal.SIGKILL)
++                raise OSError(errno.ETIMEDOUT, 'namespace helper timed out')
++            payload = os.read(reader, 8)
++            if len(payload) != 8:
++                raise OSError(errno.EIO, 'namespace helper failed')
++            error, count = struct.unpack('=ii', payload)
++            if error:
++                raise OSError(error, 'namespace helper refused mapping')
++            return count
++        finally:
++            os.close(reader)
++            os.waitpid(child, 0)
++    finally:
++        os.close(parent)
++
++
++def proc_directory(notification, listener, leaf=None):
++    flags = read_flags(notification)
++    safe = os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK | 0x8000
++    if flags & ~safe or not flags & os.O_DIRECTORY:
++        raise PermissionError(errno.EACCES, 'only read-only proc directory opens are permitted')
++    valid(listener, notification)
++    if leaf is None:
++        # This grants directory entries only, never a Landlock subtree rule.
++        fd = os.open('/proc', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
++        try:
++            valid(listener, notification)
++            ioctl(listener, ADDFD, AddFD(notification.id, 2, fd, 0, flags & os.O_CLOEXEC))
++        finally:
++            os.close(fd)
++    else:
++        # Resolve self anew even when the caller inherited its proc anchor.
++        with process_identity(notification.pid) as (process, _):
++            fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=process)
++            try:
++                valid(listener, notification)
++                ioctl(listener, ADDFD, AddFD(notification.id, 2, fd, 0, flags & os.O_CLOEXEC))
++            finally:
++                os.close(fd)
++
++
++def relative_proc_directory(notification, path):
++    openat = 257 if platform.machine() == 'x86_64' else 56
++    if notification.data.nr not in (openat, 437) or path not in (b'.', b'self/fd', b'self/fd/'):
++        return False
++    number = C.c_int(notification.data.args[0]).value
++    if number < 0:
++        return False
++    try:
++        fd = os.open(f'/proc/{notification.pid}/fd/{number}', os.O_PATH | os.O_CLOEXEC)
++        try:
++            s = os.stat('/proc')
++            return namespace_identity(fd) == (s.st_dev, s.st_ino)
++        finally:
++            os.close(fd)
++    except OSError:
++        return False
++
++
+ def serve_one(listener):
+     notification = Notification()
++    path = None
+     ioctl(listener, RECV, notification)
+     try:
+         valid(listener, notification)
++        if notification.data.nr == write_syscall():
++            mapping_write(notification, listener)
++            return
+         _, _, opens, _ = abi()
+         path_index, _ = opens[notification.data.nr]
+         try:
+             path = pathname(notification.pid, notification.data.args[path_index])
+-        except (OSError, OverflowError):
++        except (OSError, OverflowError) as exc:
++            diagnostic(f'pid={notification.pid} syscall={notification.data.nr} pathname unavailable: {exc}')
+             # Nondumpable descendants cannot receive the exception, but their
+             # ordinary opens must still be evaluated by Landlock in the kernel.
+             ioctl(listener, SEND, Response(notification.id, 0, 0, 1))
+             return
+         if path == b'/proc/self/stat':
+             self_stat(notification, listener)
++        elif path == b'/proc/self/maps':
++            self_stat(notification, listener, 'maps')
++        elif path in (b'/proc/self/setgroups', b'/proc/self/uid_map', b'/proc/self/gid_map'):
++            open_mapping(notification, listener, path.rsplit(b'/', 1)[1].decode())
++        elif path in (b'/proc', b'/proc/'):
++            diagnostic(f'pid={notification.pid} root directory anchor')
++            proc_directory(notification, listener)
++        elif path == b'.' and relative_proc_directory(notification, path):
++            proc_directory(notification, listener)
++        elif path in (b'/proc/self/fd', b'/proc/self/fd/') or relative_proc_directory(notification, path):
++            diagnostic(f'pid={notification.pid} self fd directory')
++            proc_directory(notification, listener, 'fd')
+         else:
++            if path.startswith(b'/proc'):
++                diagnostic(f'pid={notification.pid} unbrokered proc open {path!r}')
+             # No broker authority is used for unrelated paths, even if the task
+             # mutates them between this copy and the kernel's eventual open.
+             ioctl(listener, SEND, Response(notification.id, 0, 0, 1))
+     except OSError as exc:
++        diagnostic(f'pid={notification.pid} path={path!r} syscall={notification.data.nr} error={exc}')
+         if exc.errno in (errno.ENOENT, errno.ESRCH):
+             # An expired notification needs no reply, but a live vanished path does.
+             try:
+@@ -208,9 +483,10 @@
+                 # Reap any adopted descendants after the filter has no live users.
+                 while True:
+                     try:
+-                        reaped, _ = os.waitpid(-1, os.WNOHANG)
++                        reaped, reaped_status = os.waitpid(-1, os.WNOHANG)
+                         if not reaped:
+                             break
++                        diagnostic(f'adopted pid={reaped} exit={os.waitstatus_to_exitcode(reaped_status)}')
+                     except ChildProcessError:
+                         break
+                 result = os.waitstatus_to_exitcode(status)
+@@ -274,6 +550,10 @@
+             pass
+         return 126
+     finally:
++        for placeholder, process, ns, *_ in MAPPING_HANDLES.values():
++            for fd in (placeholder, process, ns):
++                os.close(fd)
++        MAPPING_HANDLES.clear()
+         if listener is not None:
+             os.close(listener)
+         parent.close()
+--- a/coding_tools_mcp/server.py
++++ b/coding_tools_mcp/server.py
+@@ -4162,7 +4162,14 @@
+         raise
+     global _LAST_LANDLOCK_POLICY
+     policy = {"abi_version": version, "handled_access_mask": handled, "rules": installed,
+-              "proc_stat_broker": "seccomp-notify-atomic-addfd-v1"}
++              "proc_stat_broker": "seccomp-notify-atomic-addfd-v2",
++              "proc_broker_scope": {
++                  "readonly_self": ["stat", "maps"],
++                  "readonly_directories": ["/proc/ entries only", "self/fd/ entries only"],
++                  "relative_directory_scope": "dot and self/fd/ against verified proc root descriptor",
++                  "namespace_setup": ["setgroups=deny", "uid_map=existing-id existing-id 1", "gid_map=existing-id existing-id 1"],
++                  "mapping_handles": "sealed-placeholders; validated-write; owned-descendant-userns-only",
++                  "max_mapping_handles": 128}}
+     policy["fingerprint"] = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
+     _LAST_LANDLOCK_POLICY = policy
+     return ruleset_fd
+--- /dev/null
++++ b/tests/compliance/test_chromium_proc_broker.py
+@@ -0,0 +1,191 @@
++import os
++import shlex
++import sys
++import unittest
++
++from tests.compliance import test_proc_stat_broker as baseline
++
++
++class ChromiumProcTests(unittest.TestCase):
++    run_command = baseline.ProcBrokerTests.run_command
++    def python(self, code):
++        result = self.run_command(f'{shlex.quote(sys.executable)} -c {shlex.quote(code)}')
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++
++    def test_maps_direct_and_child(self):
++        self.python('''import os,subprocess,sys
++assert b"python" in open('/proc/self/maps','rb').read()
++subprocess.run([sys.executable,'-c',"assert b'python' in open('/proc/self/maps','rb').read()"],check=True)
++for p in ['/proc/1/maps','/proc/self/mem','/proc/self/environ']:
++ try: open(p,'rb'); raise AssertionError(p)
++ except PermissionError: pass
++try: open('/proc/self/maps','wb'); raise AssertionError('maps write')
++except PermissionError: pass
++''')
++
++    def test_identity_mapping_and_invalid_contents(self):
++        self.python('''import ctypes,os
++uid,gid=os.getuid(),os.getgid()
++assert ctypes.CDLL(None).unshare(0x10000000)==0
++for leaf,value in [('setgroups',b'deny'),('uid_map',f'{uid} {uid} 1'.encode()),('gid_map',f'{gid} {gid} 1'.encode())]:
++ fd=os.open('/proc/self/'+leaf,os.O_WRONLY|os.O_CLOEXEC)
++ for wrong in [b'allow',b'0 0 4294967295',b'0 1001 1',b'1000 1000 2']:
++  try: os.write(fd,wrong); raise AssertionError((leaf,wrong))
++  except PermissionError: pass
++ assert os.write(fd,value)==len(value)
++ os.close(fd)
++assert os.getuid()==uid and os.getgid()==gid
++''')
++
++    def test_mapping_original_namespace_denied(self):
++        self.python('''import os
++for leaf in ['setgroups','uid_map','gid_map']:
++ try: os.open('/proc/self/'+leaf,os.O_WRONLY); raise AssertionError(leaf)
++ except PermissionError: pass
++''')
++
++    def test_nested_user_namespaces_preserve_identity(self):
++        self.python('''import ctypes,os
++c=ctypes.CDLL(None)
++u,g=os.getuid(),os.getgid()
++for depth in range(2):
++ assert c.unshare(0x10000000)==0
++ for leaf,value in [('setgroups',b'deny'),('gid_map',f'{g} {g} 1'.encode()),('uid_map',f'{u} {u} 1'.encode())]:
++  fd=os.open('/proc/self/'+leaf,os.O_WRONLY)
++  assert os.write(fd,value)==len(value)
++  os.close(fd)
++ assert os.getuid()==u and os.getgid()==g
++''')
++
++    def test_mapping_handles_sealed_and_bound_to_requesting_process(self):
++        self.python('''import ctypes,os
++assert ctypes.CDLL(None).unshare(0x10000000)==0
++fd=os.open('/proc/self/setgroups',os.O_WRONLY)
++for attempt in [lambda:os.pwrite(fd,b'deny',0), lambda:os.writev(fd,[b'deny']),lambda:os.ftruncate(fd,20)]:
++ try: attempt(); raise AssertionError('unbrokered write allowed')
++ except PermissionError: pass
++child=os.fork()
++if child==0:
++ try: os.write(fd,b'deny')
++ except PermissionError: os._exit(0)
++ os._exit(1)
++assert os.waitpid(child,0)[1]==0
++assert os.write(fd,b'deny')==4
++try: os.write(fd,b'deny'); raise AssertionError('repeated write')
++except PermissionError: pass
++os.close(fd)
++''')
++
++    def test_maps_mutating_flags_and_aliases_denied(self):
++        self.python('''import os
++for flags in [os.O_WRONLY,os.O_RDWR,os.O_RDONLY|os.O_TRUNC,os.O_RDONLY|os.O_CREAT,os.O_PATH]:
++ try: os.open('/proc/self/maps',flags); raise AssertionError(flags)
++ except PermissionError: pass
++for p in ['/proc/self/../1/maps',f'/proc/{os.getpid()}/maps','/proc/thread-self/maps']:
++ try: os.open(p,os.O_RDONLY); raise AssertionError(p)
++ except PermissionError: pass
++''')
++
++    def test_proc_directory_anchor_and_self_fd_listing(self):
++        self.python('''import os,fcntl,ctypes
++anchor=os.open('/proc/',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
++assert fcntl.fcntl(anchor,fcntl.F_GETFD)&fcntl.FD_CLOEXEC
++assert 'self' in os.listdir(anchor)
++assert os.stat('self/task/',dir_fd=anchor).st_nlink>=3
++fds=ctypes.CDLL(None).openat(anchor,b'self/fd/',os.O_RDONLY|os.O_DIRECTORY)
++assert fds>=0
++assert not fcntl.fcntl(fds,fcntl.F_GETFD)&fcntl.FD_CLOEXEC
++assert str(anchor) in os.listdir(fds)
++os.close(fds)
++for p in ['self/environ','self/mem','1/stat','1/maps',f'self/fd/{anchor}','self/fdinfo/0']:
++ try: os.open(p,os.O_RDONLY,dir_fd=anchor); raise AssertionError(p)
++ except PermissionError: pass
++os.close(anchor)
++''')
++
++    def test_inherited_anchor_resolves_child_fd_directory(self):
++        self.python('''import os
++anchor=os.open('/proc/',os.O_RDONLY|os.O_DIRECTORY)
++child=os.fork()
++if child==0:
++ r,w=os.pipe()
++ fds=os.open('self/fd/',os.O_RDONLY|os.O_DIRECTORY,dir_fd=anchor)
++ assert str(w) in os.listdir(fds)
++ assert os.fstat(fds).st_ino==os.stat('/proc/self/fd').st_ino
++ os._exit(0)
++assert os.waitpid(child,0)[1]==0
++os.close(anchor)
++''')
++
++    def test_proc_anchor_can_be_reopened_without_proc_subtree_access(self):
++        self.python('''import os
++anchor=os.open('/proc/',os.O_RDONLY|os.O_DIRECTORY)
++copy=os.open('.',os.O_RDONLY|os.O_DIRECTORY,dir_fd=anchor)
++assert os.fstat(copy).st_ino==os.fstat(anchor).st_ino
++assert os.stat('self/task/',dir_fd=copy).st_nlink==3
++try: os.open('self/environ',os.O_RDONLY,dir_fd=copy); raise AssertionError('subtree access')
++except PermissionError: pass
++os.close(copy);os.close(anchor)
++''')
++
++    def test_proc_directories_mutations_and_unverified_anchors_denied(self):
++        self.python('''import os
++for p in ['/proc/','/proc/self/fd/']:
++ for f in [os.O_WRONLY|os.O_DIRECTORY,os.O_RDWR|os.O_DIRECTORY,os.O_RDONLY|os.O_DIRECTORY|os.O_CREAT,os.O_RDONLY|os.O_DIRECTORY|os.O_TRUNC]:
++  try: os.open(p,f); raise AssertionError((p,f))
++  except PermissionError: pass
++anchor=os.open('/',os.O_PATH|os.O_DIRECTORY)
++try: os.open('self/fd/',os.O_RDONLY|os.O_DIRECTORY,dir_fd=anchor); raise AssertionError('wrong anchor')
++except FileNotFoundError: pass
++os.close(anchor)
++for p in ['/proc/1/fd/','/proc/self/','/proc/self/fdinfo/','/proc/self/task/']:
++ try: os.open(p,os.O_RDONLY|os.O_DIRECTORY); raise AssertionError(p)
++ except PermissionError: pass
++''')
++
++    def test_namespace_changed_after_open_is_denied(self):
++        self.python('''import ctypes,os
++c=ctypes.CDLL(None)
++uid,gid=os.getuid(),os.getgid()
++assert c.unshare(0x10000000)==0
++fd=os.open('/proc/self/setgroups',os.O_WRONLY)
++for leaf,value in [('setgroups',b'deny'),('uid_map',f'{uid} {uid} 1'.encode()),('gid_map',f'{gid} {gid} 1'.encode())]:
++ other=os.open('/proc/self/'+leaf,os.O_WRONLY)
++ os.write(other,value);os.close(other)
++assert c.unshare(0x10000000)==0
++try: os.write(fd,b'deny'); raise AssertionError('stale namespace write')
++except PermissionError: pass
++os.close(fd)
++''')
++
++
++class MappingSecurityTests(unittest.TestCase):
++    def test_expired_notification_cannot_open_mapping(self):
++        from unittest.mock import patch
++        from coding_tools_mcp import proc_stat_broker as b
++        with patch.object(b, 'read_flags', return_value=os.O_WRONLY), patch.object(b, 'valid', side_effect=OSError(2, 'expired')), patch.object(b.os, 'open') as opened:
++            with self.assertRaises(OSError):
++                b.open_mapping(b.Notification(), 1, 'uid_map')
++            opened.assert_not_called()
++
++    def test_mapping_handle_limit_fails_before_open(self):
++        from unittest.mock import patch
++        from coding_tools_mcp import proc_stat_broker as b
++        with patch.object(b, 'read_flags', return_value=os.O_WRONLY), patch.object(b, 'MAPPING_HANDLES', dict.fromkeys(range(b.MAX_MAPPING_HANDLES))), patch.object(b.os, 'open') as opened:
++            with self.assertRaises(OSError) as caught:
++                b.open_mapping(b.Notification(), 1, 'uid_map')
++            self.assertEqual(caught.exception.errno, 24)
++            opened.assert_not_called()
++
++    def test_mapping_unsafe_flags_never_open_proc(self):
++        from unittest.mock import patch
++        from coding_tools_mcp import proc_stat_broker as b
++        for flags in [os.O_RDONLY, os.O_RDWR, os.O_WRONLY | os.O_CREAT, os.O_WRONLY | os.O_TRUNC, os.O_WRONLY | os.O_APPEND, os.O_PATH]:
++            with self.subTest(flags=flags), patch.object(b, 'read_flags', return_value=flags), patch.object(b.os, 'open') as opened:
++                with self.assertRaises(PermissionError):
++                    b.open_mapping(b.Notification(), 1, 'uid_map')
++                opened.assert_not_called()
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/proc-broker-contract.md
+@@ -0,0 +1,34 @@
++# Self-process proc broker contract
++
++Authority: user-approved bounded Chromium namespace broker expansion, 2026-10-30.
++
++The per-command supervisor must preserve Landlock and native Chromium sandboxing.
++It may inject read-only descriptors for the requesting process's `stat` and `maps`.
++It must resolve identity per notification, including inherited child filters.
++
++User approval on 2026-10-30 additionally permits a read-only proc-root directory
++anchor and read-only enumeration of the requesting process's fd directory.
++The latter may be absolute or relative self/fd/ against a verified proc-root FD.
++Reopening the same verified proc-root anchor with openat dot is equivalent.
++This exposes root directory entries/PIDs and self FD numbers, but grants no proc
++subtree rule, FD-content reopening, sensitive proc file access or write authority.
++
++Namespace setup may affect only a new descendant user namespace owned by the
++supervisor's unprivileged UID, within its namespace ancestry, and the requesting
++process. The original namespace and namespaces owned by others are excluded.
++Only `deny` for setgroups and a single identity-preserving UID/GID mapping are
++permitted. Mapping descriptors exposed to the command must be sealed placeholders,
++never writable proc descriptors. The supervisor copies and validates bounded write
++contents, pins process/namespace identity, validates the live notification, and
++performs the fixed operation. Kernel write-once and namespace mapping checks remain.
++Unsupported operations, identities, ABI, flags and mapping contents fail closed.
++For nested namespaces Linux requires mapping writes from the immediate parent
++user namespace. A short-lived fixed-operation helper may enter only the pinned,
++verified owned parent namespace, preserve its original numeric UID/GID, perform
++the already validated write, and exit. The supervisor must remain in its original
++namespace. Helper operations must be bounded, reaped, and fail closed.
++No blanket proc rule, namespace policy relaxation, or browser-cache write is allowed.
++
++Qualification requires real-kernel denial and race regressions plus actual MCP
++Playwright navigation, JavaScript, screenshot and process/profile cleanup. Direct
++and child native Node memoryUsage must remain working.

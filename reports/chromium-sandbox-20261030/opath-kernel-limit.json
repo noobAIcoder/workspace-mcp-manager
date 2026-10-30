@@ -1,0 +1,9 @@
+{
+  "operation": "SECCOMP_IOCTL_NOTIF_ADDFD with O_PATH /proc descriptor",
+  "errno": [
+    9
+  ],
+  "command_exit": 126,
+  "expected_denied_errno": 9,
+  "untrusted_callback_executed": false
+}

@@ -1,0 +1,7 @@
+{
+  "service_processes": "a(sus) 1 \"/user.slice/user-1000.slice/user@1000.service/app.slice/coding-tools-mcp-podolskyestates.service\" 583243 \"/home/cloudtoor/.local/share/uv/tools/coding-tools-mcp/bin/python /home/cloudtoor/.local/state/workspace-mcp-manager/instances/podolskyestates/patched-runtime/coding-tools-mcp --workspace /home/cloudtoor/repos/podolskyestates --host 127.0.0.1 --port 11114 --permission-mode trusted --shell-env-inherit all\"",
+  "browser_pid": 583297,
+  "browser_pid_absent": true,
+  "profile_root": "/tmp/coding-tools-mcp/0498a0a92c497beb/TkmfVuFTmroLl3gi/tmp/chromium-acceptance-YK5p5N",
+  "profile_removed": true
+}

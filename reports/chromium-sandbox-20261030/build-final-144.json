@@ -1,0 +1,44 @@
+{
+  "id": 144,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running\nstderr:\n<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: Unable to snapshot resolve dependencies\nFailed to compile.\n\nsrc/app/(frontend)/layout.tsx\nAn error occurred in `next/font`.\n\nTypeError: Cannot read properties of null (reading '1')\n    at /home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/compiled/@next/font/dist/google/loader.js:122:78\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Promise.all (index 2)\n    at async nextFontGoogleFontLoader (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/compiled/@next/font/dist/google/loader.js:104:33)\n    at async Span.traceAsyncFn (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/trace/trace.js:157:20)\n    at async /home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/build/webpack/loaders/next-font-loader/index.js:84:87\n    at async Span.traceAsyncFn (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/trace/trace.js:157:20)\n\n\n> Build failed because of webpack errors\n\nCommand still running; poll with write_stdin(command_id=\"Nzz44-3REzBVxmEHU-GQbx4C\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "Nzz44-3REzBVxmEHU-GQbx4C",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: Unable to snapshot resolve dependencies\nFailed to compile.\n\nsrc/app/(frontend)/layout.tsx\nAn error occurred in `next/font`.\n\nTypeError: Cannot read properties of null (reading '1')\n    at /home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/compiled/@next/font/dist/google/loader.js:122:78\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Promise.all (index 2)\n    at async nextFontGoogleFontLoader (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/compiled/@next/font/dist/google/loader.js:104:33)\n    at async Span.traceAsyncFn (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/trace/trace.js:157:20)\n    at async /home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/build/webpack/loaders/next-font-loader/index.js:84:87\n    at async Span.traceAsyncFn (/home/cloudtoor/repos/podolskyestates/node_modules/.pnpm/next@15.4.11_@babel+core@7.29.7_@playwright+test@1.59.1_react-dom@19.2.1_react@19.2.1__react@19.2.1_sass@1.77.4/node_modules/next/dist/trace/trace.js:157:20)\n\n\n> Build failed because of webpack errors\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 1698,
+      "stderr_output_lines": 18,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

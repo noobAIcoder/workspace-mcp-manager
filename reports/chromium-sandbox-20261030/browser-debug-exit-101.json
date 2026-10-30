@@ -1,0 +1,45 @@
+{
+  "id": 101,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: running | 1012 ms\nstderr:\nproc-broker: pid=577800 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=577800 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=577800 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=577800 unbrokered proc open b'/proc/stat'\nproc-broker: pid=577800 unbrokered proc open b'/proc/self/cgroup'\n\nCommand still running; poll with write_stdin(command_id=\"NEK8qPd8XJilC-M2-HF8a0WM\", chars=\"\", yield_time_ms=10000).",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "NEK8qPd8XJilC-M2-HF8a0WM",
+      "elapsed_ms": 1012,
+      "exit_code": null,
+      "next_action": {
+        "arguments": {
+          "chars": "",
+          "command_id": "NEK8qPd8XJilC-M2-HF8a0WM",
+          "yield_time_ms": 10000
+        },
+        "tool": "write_stdin"
+      },
+      "ok": true,
+      "signal": null,
+      "status": "running",
+      "stderr": "proc-broker: pid=577800 unbrokered proc open b'/proc/version_signature'\nproc-broker: pid=577800 unbrokered proc open b'/proc/self/cgroup'\nproc-broker: pid=577800 unbrokered proc open b'/proc/meminfo'\nproc-broker: pid=577800 unbrokered proc open b'/proc/stat'\nproc-broker: pid=577800 unbrokered proc open b'/proc/self/cgroup'\n",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 325,
+      "stderr_output_lines": 6,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 0,
+      "stdout_output_lines": 1,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": 101,
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "text": "Status: exited | exit code 0 | 508 ms\nmockedFontResponsesConfigured false\nfont-response {\"family\":\"Cormorant Garamond\",\"url\":\"https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&display=swap\",\"cssBytes\":8996,\"fontCount\":5,\"malformedCount\":5,\"examples\":[\"https://fonts.gstatic.com/l/font?kit=co3hmX5slCNuHLi8bLeY9MK7whWMhyjypVO7abI26QOD_v86eHjmeyOkkv20ULzTxhhaP9yI5uY2&skey=a863d1376a24bd7a&v=v21\",\"https://fonts.gstatic.com/l/font?kit=co3hmX5slCNuHLi8bLeY9MK7whWMhyjypVO7abI26QOD_v86eHjmeyOkkv20ULzTxhhTP9yI5uY2&skey=a863d1376a24bd7a&v=v21\"]}\nfont-response {\"family\":\"Noto Sans\",\"url\":\"https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&display=swap\",\"cssBytes\":15830,\"fontCount\":8,\"malformedCount\":0,\"examples\":[]}\nfont-response {\"family\":\"Hanken Grotesk\",\"url\":\"https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700;800&display=swap\",\"cssBytes\":9936,\"fontCount\":4,\"malformedCount\":0,\"examples\":[]}\nfont-response {\"family\":\"Noto Serif Hebrew\",\"url\":\"https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wght@400;500;600;700&display=swap\",\"cssBytes\":5476,\"fontCount\":3,\"malformedCount\":0,\"examples\":[]}\n",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "command_id": "L4neMYji8r90gmyUwzuRYkkI",
+      "elapsed_ms": 508,
+      "exit_code": 0,
+      "ok": true,
+      "signal": null,
+      "status": "exited",
+      "stderr": "",
+      "stderr_dropped_bytes": 0,
+      "stderr_omitted_bytes": 0,
+      "stderr_output_bytes": 0,
+      "stderr_output_lines": 1,
+      "stderr_truncated": false,
+      "stderr_truncated_by": null,
+      "stdout": "mockedFontResponsesConfigured false\nfont-response {\"family\":\"Cormorant Garamond\",\"url\":\"https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&display=swap\",\"cssBytes\":8996,\"fontCount\":5,\"malformedCount\":5,\"examples\":[\"https://fonts.gstatic.com/l/font?kit=co3hmX5slCNuHLi8bLeY9MK7whWMhyjypVO7abI26QOD_v86eHjmeyOkkv20ULzTxhhaP9yI5uY2&skey=a863d1376a24bd7a&v=v21\",\"https://fonts.gstatic.com/l/font?kit=co3hmX5slCNuHLi8bLeY9MK7whWMhyjypVO7abI26QOD_v86eHjmeyOkkv20ULzTxhhTP9yI5uY2&skey=a863d1376a24bd7a&v=v21\"]}\nfont-response {\"family\":\"Noto Sans\",\"url\":\"https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&display=swap\",\"cssBytes\":15830,\"fontCount\":8,\"malformedCount\":0,\"examples\":[]}\nfont-response {\"family\":\"Hanken Grotesk\",\"url\":\"https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700;800&display=swap\",\"cssBytes\":9936,\"fontCount\":4,\"malformedCount\":0,\"examples\":[]}\nfont-response {\"family\":\"Noto Serif Hebrew\",\"url\":\"https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wght@400;500;600;700&display=swap\",\"cssBytes\":5476,\"fontCount\":3,\"malformedCount\":0,\"examples\":[]}\n",
+      "stdout_dropped_bytes": 0,
+      "stdout_omitted_bytes": 0,
+      "stdout_output_bytes": 1152,
+      "stdout_output_lines": 6,
+      "stdout_truncated": false,
+      "stdout_truncated_by": null,
+      "timed_out": false,
+      "truncated": false
+    }
+  }
+}
