@@ -476,3 +476,14 @@ Manager-only installs the complete pinned distribution without changing instance
 deployments. Update-all additionally uses the installed target's reviewed,
 sequential all-instance upgrade, including when the distribution is already
 current. Separately installed developer tools and OS packages remain excluded.
+
+## Installer result and diagnostic handling
+
+Machine-readable checks MUST emit one JSON document on stdout; source and
+progress diagnostics belong on stderr. Result presentation MUST reject missing
+or non-boolean `ok` fields and return failure for an explicit unsuccessful result.
+An unchanged release MUST be described as already current. Local checks MUST
+report pending maintenance transactions as requiring recovery. Direct install
+requests without acquisition provenance MUST fail before acquiring the mutation
+lock and identify the remote and local setup entry points. Acquisition frontends
+MUST terminate on interrupt or termination signals after temporary cleanup.

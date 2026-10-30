@@ -65,7 +65,7 @@ esac
 
     def test_root_uses_state_specific_tasks_and_hides_release_ids(self):
         for state, label in [('absent', 'Install manager'), ('recognized_existing', 'Upgrade manager installation'),
-                             ('standalone_distribution', 'Check for manager updates')]:
+                             ('standalone_distribution', 'Review manager update')]:
             with self.subTest(state=state):
                 output = self.run_menu(ownership=state)
                 self.assertIn('1. ' + label, output)
@@ -280,7 +280,7 @@ fi
         result = self.run_menu('1\n1\ny\n2\n0\n')
         self.assertTrue(self.marker.exists())
         self.assertFalse(self.tui_marker.exists())
-        self.assertIn('1. Check for manager updates', result.stdout)
+        self.assertIn('1. Review manager update', result.stdout)
 
     def test_eof_during_review_cancels_installation(self):
         result = self.run_menu('1\n1\n')

@@ -1431,7 +1431,7 @@ PY
 run_check() {
   local classification recovery_required=false candidate_known=false candidate_id="" installed_id="" install_required=false upgrade_required=unknown receipt_ok=unknown target release
   local installed_product_version="" candidate_product_version=""
-  if [[ -f "$STATE_ROOT/distribution-transaction.json" || -e "$STATE_ROOT/instance-upgrade.json" || -L "$STATE_ROOT/instance-upgrade.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
+  if [[ -e "$STATE_ROOT/maintenance-transaction.json" || -L "$STATE_ROOT/maintenance-transaction.json" || -e "$STATE_ROOT/distribution-transaction.json" || -L "$STATE_ROOT/distribution-transaction.json" || -e "$STATE_ROOT/instance-upgrade.json" || -L "$STATE_ROOT/instance-upgrade.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
   classification=$(classify_ownership_for_check)
   if [[ "$classification" == standalone_distribution ]]; then
     target=$(current_target); release="$TOOLKIT_ROOT/$target"
@@ -1447,7 +1447,7 @@ run_check() {
     INSTANCE_COUNT=0; INSTANCES_VALID=false
   fi
 
-  if [[ -f "${INSTALL_LOCK:-$REPO/install-versions.lock}" && -f "$REPO/pyproject.toml" && -d "$REPO/src/workspace_mcp_manager" ]]; then
+  if [[ -n "$RELEASE_COMMIT" && -f "${INSTALL_LOCK:-$REPO/install-versions.lock}" && -f "$REPO/pyproject.toml" && -d "$REPO/src/workspace_mcp_manager" ]]; then
     validate_candidate_source
     strict_lock_validate "${INSTALL_LOCK:-$REPO/install-versions.lock}"
     validate_checkout_provenance
@@ -1552,12 +1552,23 @@ RECOVERING=false
 RECOVERY_RESULT="none"
 MAINTENANCE_RECOVERY_RESULT=""
 
+# Validate option values before dispatch can inspect or mutate the target.
+validation_args=("$@")
+for ((validation_index=0; validation_index<${#validation_args[@]}; validation_index++)); do
+  validation_option=${validation_args[validation_index]}
+  case "$validation_option" in
+    --local-repo|--review-result-file|--account-home|--prefix|--repository|--ref|--release-ref|--release-commit|--repo|--qualification-artifact-dir|--qualification-failpoint|--expected-setup-fingerprint|--maintenance-preview|--maintenance-target|--confirmation)
+      validation_value=${validation_args[validation_index+1]-}
+      [[ -n "$validation_value" && "$validation_value" != --* ]] || die "$validation_option requires a value"
+      ((validation_index+=1)) ;;
+  esac
+done
 while (($#)); do
   case "$1" in
     --expected-setup-fingerprint) (($#>=2)) || die "expected preview fingerprint is required"; EXPECTED_SETUP_FINGERPRINT=$2; shift 2 ;;
-    --maintenance-status) MAINTENANCE=status; shift ;;
-    --maintenance-preview) (($#>=2)) || die "--maintenance-preview requires an action"; MAINTENANCE=preview; MAINTENANCE_OPERATION=$2; shift 2 ;;
-    --maintenance-apply) MAINTENANCE=apply; shift ;;
+    --maintenance-status) [[ -z "$MAINTENANCE" ]] || die "maintenance modes are mutually exclusive"; MAINTENANCE=status; shift ;;
+    --maintenance-preview) (($#>=2)) || die "--maintenance-preview requires an action"; [[ -z "$MAINTENANCE" ]] || die "maintenance modes are mutually exclusive"; MAINTENANCE=preview; MAINTENANCE_OPERATION=$2; shift 2 ;;
+    --maintenance-apply) [[ -z "$MAINTENANCE" ]] || die "maintenance modes are mutually exclusive"; MAINTENANCE=apply; shift ;;
     --maintenance-target) (($#>=2)) || die "--maintenance-target requires an ID"; MAINTENANCE_TARGET=$2; shift 2 ;;
     --confirmation) (($#>=2)) || die "--confirmation requires text"; CONFIRMATION=$2; shift 2 ;;
     --repo) (($#>=2)) || die "--repo requires a path"; REPO=$2; shift 2 ;;
@@ -1579,6 +1590,8 @@ while (($#)); do
 done
 
 [[ -n "$ACCOUNT_HOME" ]] || die "account home is unavailable"
+if $RECOVER_ONLY && $UPGRADE; then die "--recover-only cannot be combined with --upgrade"; fi
+if [[ -n "$MAINTENANCE" ]] && { $CHECK || $RECOVER_ONLY || $CONFIGURE || $UPGRADE; }; then die "maintenance modes cannot be combined with installation modes"; fi
 if $CHECK && $RECOVER_ONLY; then die "--check and --recover-only are mutually exclusive"; fi
 if $CHECK && $CONFIGURE; then die "--check cannot be combined with --configure"; fi
 if $RECOVER_ONLY && $CONFIGURE; then die "--recover-only cannot be combined with --configure"; fi
@@ -1682,6 +1695,9 @@ if $CHECK; then
   exit $?
 fi
 
+if ! $RECOVER_ONLY && [[ -z "$RELEASE_COMMIT" ]]; then
+  die "installation requires acquisition provenance. For the remote release run: bash bootstrap.sh. For this clean checkout run: bash scripts/setup-local.sh"
+fi
 for command in flock sha256sum stat find sort grep awk cat cp mv ln readlink chmod dirname date; do require_command "$command"; done
 acquire_mutation_lock
 [[ ! -e "$STATE_ROOT/instance-upgrade.json" && ! -L "$STATE_ROOT/instance-upgrade.json" ]] || die "resume the pending instance upgrade through Setup Maintenance first"

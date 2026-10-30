@@ -152,6 +152,13 @@ validation.
 
 ## Standalone installation and upgrade
 
+Use `bash bootstrap.sh` for the remote release, or
+`bash scripts/setup-local.sh` to install a clean local checkout.
+`scripts/install.sh` is the transaction backend and requires acquisition
+provenance supplied by these entry points. Local checkout installation does not
+fetch manager source; bundled dependencies may still require downloads.
+
+
 The production distribution channel is fixed to the canonical repository and
 `release` branch. The qualified public installation form downloads the bootstrap
 script completely before executing it. In a terminal, it opens a numbered

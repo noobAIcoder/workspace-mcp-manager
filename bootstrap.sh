@@ -41,6 +41,7 @@ ACCOUNT_HOME=${HOME:-}
 PREFIX=""
 CONFIGURE=false
 INTERACTIVE=auto
+INTERACTIVE_SELECTION=""
 CHECK_REMOTE=false
 REVIEW=false
 REVIEW_RESULT_FILE=""
@@ -49,11 +50,22 @@ QUALIFICATION=false
 QUALIFICATION_ARTIFACT_DIR=""
 QUALIFICATION_FAILPOINT=""
 
+# Validate option values before dispatch can inspect or mutate the target.
+validation_args=("$@")
+for ((validation_index=0; validation_index<${#validation_args[@]}; validation_index++)); do
+  validation_option=${validation_args[validation_index]}
+  case "$validation_option" in
+    --local-repo|--review-result-file|--account-home|--prefix|--repository|--ref|--release-ref|--release-commit|--repo|--qualification-artifact-dir|--qualification-failpoint|--expected-setup-fingerprint|--maintenance-preview|--maintenance-target|--confirmation)
+      validation_value=${validation_args[validation_index+1]-}
+      [[ -n "$validation_value" && "$validation_value" != --* ]] || die "$validation_option requires a value"
+      ((validation_index+=1)) ;;
+  esac
+done
 while (($#)); do
   case "$1" in
     --local-repo) (($#>=2)) || die "--local-repo requires a path"; LOCAL_REPO=$2; QUALIFICATION=true; shift 2 ;;
-    --interactive) INTERACTIVE=true; shift ;;
-    --non-interactive) INTERACTIVE=false; shift ;;
+    --interactive) [[ "$INTERACTIVE_SELECTION" != false ]] || die "interactive modes are mutually exclusive"; INTERACTIVE_SELECTION=true; INTERACTIVE=true; shift ;;
+    --non-interactive) [[ "$INTERACTIVE_SELECTION" != true ]] || die "interactive modes are mutually exclusive"; INTERACTIVE_SELECTION=false; INTERACTIVE=false; shift ;;
     --check) CHECK_REMOTE=true; shift ;;
     --review) REVIEW=true; shift ;;
     --review-result-file) (($#>=2)) || die "--review-result-file requires a path"; REVIEW_RESULT_FILE=$2; shift 2 ;;
@@ -71,6 +83,7 @@ while (($#)); do
 done
 
 [[ -n "$ACCOUNT_HOME" ]] || die "account home is unavailable"
+! $CHECK_REMOTE || { ! $REVIEW && ! $CONFIGURE; } || die "--check cannot be combined with --review or --configure"
 if [[ -n "$REVIEW_RESULT_FILE" ]]; then
   $REVIEW && ! $CHECK_REMOTE || die "review result output requires --review"
   [[ -f "$REVIEW_RESULT_FILE" && ! -L "$REVIEW_RESULT_FILE" ]] || die "review result output must be an existing regular file"
@@ -144,13 +157,19 @@ try:
 except (ValueError,TypeError):
  print("Blocked: the operation returned an unreadable result. Review Installation details.")
  raise SystemExit(1)
-if not p.get("ok",True):
+if not isinstance(p.get("ok"),bool):
+ print("Blocked: the operation returned an incomplete result. Review Installation details.")
+ raise SystemExit(1)
+if p["ok"] and not (isinstance(p.get("action"),str) and p["action"] or "completed" in p):
+ print("Blocked: the operation returned an incomplete result. Review Installation details.")
+ raise SystemExit(1)
+if not p["ok"]:
  error=p.get("error", "operation failed")
  if isinstance(error,dict): error=error.get("message", str(error))
  print("Blocked or interrupted: "+str(error))
 else:
  action=p.get("action") or ("legacy instances imported" if "completed" in p else "operation")
- print("Completed: "+{"install":"manager installed", "upgrade":"manager updated", "instance-upgrade":"instance runtimes refreshed", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled"}.get(action, str(action).replace("_", " "))+".")
+ print("Completed: "+{"noop":"manager already current", "install":"manager installed", "upgrade":"manager updated", "instance-upgrade":"instance runtimes refreshed", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled"}.get(action, str(action).replace("_", " "))+".")
 if p.get("backup"): print("Preserved data: "+p["backup"])
 if p.get("product_version"): print("Manager version: "+p["product_version"])
 if p.get("completed_instances"): print("Removed deployments: "+", ".join(p["completed_instances"]))
@@ -159,6 +178,7 @@ if p.get("completed"): print(("Upgraded instances: " if p.get("action")=="instan
 if p.get("remaining"): print("Instances remaining: "+", ".join(p["remaining"]))
 if p.get("failed"): print("Needs attention: "+p["failed"])
 if p.get("unattempted"): print("Instances not attempted: "+", ".join(p["unattempted"]))
+if not p["ok"]: raise SystemExit(1)
 '
 }
 
@@ -301,7 +321,7 @@ setup_render_menu() {
   local primary='Install manager' open='Open instance manager'
   case "$ownership" in
     recognized_existing) primary='Upgrade manager installation' ;;
-    standalone_distribution) primary='Check for manager updates' ;;
+    standalone_distribution) primary='Review manager update' ;;
     absent) open+=' (unavailable: install the manager first)' ;;
     *) primary='Install or update manager (unavailable: verify installation status first)'; open+=' (unavailable: verify installation status first)' ;;
   esac
@@ -381,8 +401,14 @@ setup_install_task() {
   fi
   if [[ "$ownership" == recognized_existing ]]; then printf 'Upgrading this older manager installation preserves instance settings and running services. This does not import legacy toolkit instances.\n'; fi
   printf '\n1. Inspect candidate and review change\n0. Back\n\nChoice [0]: '
-  setup_read choice || return 0
-  [[ "$choice" == 1 ]] || { printf 'Cancelled: no installation changes.\n'; return 0; }
+  while true; do
+    setup_read choice || return 0
+    case "$choice" in
+      1) break ;;
+      0|'') return 0 ;;
+      *) printf 'Choose 1 or 0.\nChoice [0]: ' ;;
+    esac
+  done
   setup_readiness
   if ! $host_ready; then printf 'Blocked: installation prerequisites need attention.\n%s\n' "$readiness"; return 0; fi
   outcome_file=$(mktemp)
@@ -674,7 +700,7 @@ setup_menu() {
   local choice SETUP_EXIT=false install_ready=false install_outcome=""
   if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
     printf 'Blocked: setup inspection requires Python >=3.10. Install Python, then reopen setup.\n'
-    return 0
+    return 2
   fi
   self=$(realpath -- "${BASH_SOURCE[0]}")
   local remote_args=(--non-interactive --account-home "$ACCOUNT_HOME" --prefix "$PREFIX")
@@ -716,7 +742,9 @@ for command in bash git mktemp rm mkdir; do require_command "$command"; done
 
 TMP_ROOT=$(mktemp -d)
 cleanup() { rm -rf -- "$TMP_ROOT"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 CHECKOUT="$TMP_ROOT/checkout"
 GIT_HOME="$TMP_ROOT/git-home"
 GIT_XDG="$TMP_ROOT/git-xdg"
@@ -742,7 +770,7 @@ $dirty"
   REPOSITORY=$(git -C "$CHECKOUT" config --get remote.origin.url || true)
   [[ -n "$REPOSITORY" ]] || REPOSITORY="file://$CHECKOUT"
   RELEASE_REF=$(git -C "$CHECKOUT" symbolic-ref -q HEAD || printf '%s' "$COMMIT")
-  printf 'Local checkout: %s\nCommit: %s\nSource: %s\n' "$CHECKOUT" "$COMMIT" "$REPOSITORY"
+  printf 'Local checkout: %s\nCommit: %s\nSource: %s\n' "$CHECKOUT" "$COMMIT" "$REPOSITORY" >&2
 else
 git_isolated -C "$CHECKOUT" init -q
 git_isolated -C "$CHECKOUT" remote add origin "$REPOSITORY"

@@ -46,6 +46,17 @@ QUALIFICATION=false
 QUALIFICATION_ARTIFACT_DIR=""
 QUALIFICATION_FAILPOINT=""
 
+# Validate option values before dispatch can inspect or mutate the target.
+validation_args=("$@")
+for ((validation_index=0; validation_index<${#validation_args[@]}; validation_index++)); do
+  validation_option=${validation_args[validation_index]}
+  case "$validation_option" in
+    --local-repo|--review-result-file|--account-home|--prefix|--repository|--ref|--release-ref|--release-commit|--repo|--qualification-artifact-dir|--qualification-failpoint|--expected-setup-fingerprint|--maintenance-preview|--maintenance-target|--confirmation)
+      validation_value=${validation_args[validation_index+1]-}
+      [[ -n "$validation_value" && "$validation_value" != --* ]] || die "$validation_option requires a value"
+      ((validation_index+=1)) ;;
+  esac
+done
 while (($#)); do
   case "$1" in
     --check) CHECK=true; shift ;;
@@ -63,6 +74,7 @@ while (($#)); do
 done
 
 [[ -n "$ACCOUNT_HOME" ]] || die "account home is unavailable"
+! $CHECK || ! $CONFIGURE || die "--check cannot be combined with --configure"
 if ! $QUALIFICATION; then
   [[ "$REPOSITORY" == "$PRODUCTION_REPOSITORY" ]] || die "production repository is fixed"
   [[ "$RELEASE_REF" == "$PRODUCTION_REF" ]] || die "production ref is fixed"
@@ -86,7 +98,9 @@ fi
 for command in bash git mktemp rm mkdir python3 realpath; do require_command "$command"; done
 TMP_ROOT=$(mktemp -d)
 cleanup() { rm -rf -- "$TMP_ROOT"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 CHECKOUT="$TMP_ROOT/checkout"
 GIT_HOME="$TMP_ROOT/git-home"
 GIT_XDG="$TMP_ROOT/git-xdg"
