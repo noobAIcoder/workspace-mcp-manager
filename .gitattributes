@@ -1,0 +1,20 @@
+# Auto detect text files and perform LF normalization
+* text=lf
+scripts/** text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.webp binary
+*.engine binary
+*.gitignore eol=lf
+*.jinja2 text eol=lf
