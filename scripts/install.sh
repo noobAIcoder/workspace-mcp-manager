@@ -1405,7 +1405,7 @@ check_active_authority() {
 
 check_report() {
   local classification=$1 recovery_required=$2 candidate_known=$3 candidate_id=$4 installed_id=$5 install_required=$6 upgrade_required=$7 receipt_ok=$8 instances_valid=$9
-  "$BOOTSTRAP_PYTHON" - "$classification" "$recovery_required" "$candidate_known" "$candidate_id" "$installed_id" "$install_required" "$upgrade_required" "$receipt_ok" "$INSTANCE_COUNT" "$instances_valid" "${10:-}" "${11:-}" <<'PY'
+  "$BOOTSTRAP_PYTHON" - "$classification" "$recovery_required" "$candidate_known" "$candidate_id" "$installed_id" "$install_required" "$upgrade_required" "$receipt_ok" "$INSTANCE_COUNT" "$instances_valid" "${10:-}" "${11:-}" "${12:-}" "${13:-}" <<'PY'
 import json,sys
 classification,recovery,candidate_known,candidate_id,installed_id,install_required,upgrade_required,receipt_ok,count,instances_valid=sys.argv[1:11]
 def b(v): return v=="true"
@@ -1418,6 +1418,8 @@ payload={
  "installed_distribution_id":installed_id or None,
  "installed_product_version":sys.argv[11] or None,
  "candidate_product_version":sys.argv[12] or None,
+ "installed_component_versions":json.loads(sys.argv[13]) if sys.argv[13] else None,
+ "candidate_component_versions":json.loads(sys.argv[14]) if sys.argv[14] else None,
  "install_required":b(install_required),
  "upgrade_required": None if upgrade_required=="unknown" else b(upgrade_required),
  "receipt_consistent": None if receipt_ok=="unknown" else b(receipt_ok),
@@ -1430,13 +1432,14 @@ PY
 
 run_check() {
   local classification recovery_required=false candidate_known=false candidate_id="" installed_id="" install_required=false upgrade_required=unknown receipt_ok=unknown target release
-  local installed_product_version="" candidate_product_version=""
+  local installed_product_version="" candidate_product_version="" installed_components="" candidate_components=""
   if [[ -e "$STATE_ROOT/maintenance-transaction.json" || -L "$STATE_ROOT/maintenance-transaction.json" || -e "$STATE_ROOT/distribution-transaction.json" || -L "$STATE_ROOT/distribution-transaction.json" || -e "$STATE_ROOT/instance-upgrade.json" || -L "$STATE_ROOT/instance-upgrade.json" ]] || compgen -G "$STATE_ROOT/imports/*.json" >/dev/null; then recovery_required=true; fi
   classification=$(classify_ownership_for_check)
   if [[ "$classification" == standalone_distribution ]]; then
     target=$(current_target); release="$TOOLKIT_ROOT/$target"
     installed_id=${target#releases/}
     installed_product_version=$("$BOOTSTRAP_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["product_version"])' "$release/install.json")
+    installed_components=$("$BOOTSTRAP_PYTHON" -c 'import json,sys; print(json.dumps({k:v["version"] for k,v in json.load(open(sys.argv[1]))["components"].items()}))' "$release/install.json")
     if receipt_consistent_with_release "$release"; then receipt_ok=true; else receipt_ok=false; fi
     validate_declarations_release "$release" || true
   elif [[ "$classification" == recognized_existing ]]; then
@@ -1454,6 +1457,7 @@ run_check() {
     candidate_known=true
     candidate_id="dist-$RELEASE_COMMIT"
     candidate_product_version=$(product_version)
+    candidate_components=$("$BOOTSTRAP_PYTHON" -c 'import json,sys; print(json.dumps({k:v["version"] for k,v in json.load(open(sys.argv[1]))["components"].items()}))' "${INSTALL_LOCK:-$REPO/install-versions.lock}")
     case "$classification" in
       absent|recognized_existing) install_required=true; upgrade_required=false ;;
       standalone_distribution)
@@ -1463,7 +1467,7 @@ run_check() {
       *) install_required=false; upgrade_required=unknown ;;
     esac
   fi
-  check_report "$classification" "$recovery_required" "$candidate_known" "$candidate_id" "$installed_id" "$install_required" "$upgrade_required" "$receipt_ok" "$INSTANCES_VALID" "$installed_product_version" "$candidate_product_version"
+  check_report "$classification" "$recovery_required" "$candidate_known" "$candidate_id" "$installed_id" "$install_required" "$upgrade_required" "$receipt_ok" "$INSTANCES_VALID" "$installed_product_version" "$candidate_product_version" "$installed_components" "$candidate_components"
   [[ "$classification" != foreign_or_ambiguous && "$INSTANCES_VALID" == true ]]
 }
 
