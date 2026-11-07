@@ -152,8 +152,8 @@ validation.
 
 ## Standalone installation and upgrade
 
-Use `bash bootstrap.sh` for the remote release, or
-`bash scripts/setup-local.sh` to install a clean local checkout.
+Interactive `bash bootstrap.sh` in a checkout installs its working-tree snapshot. Downloaded bootstrap uses the production release. You may also use
+`bash scripts/setup-local.sh` to install a local working-tree snapshot.
 `scripts/install.sh` is the transaction backend and requires acquisition
 provenance supplied by these entry points. Local checkout installation does not
 fetch manager source; bundled dependencies may still require downloads.
@@ -200,6 +200,30 @@ it found, and recommends a next step. Its main choices are:
 6. **Upgrade manager and all instances** to update the manager and then refresh
    every configured instance against its bundled MCP server and tunnel client.
    The instance stage has its own preview and requires typing `UPGRADE`.
+7. **Install and configure everything** prepares Ubuntu prerequisites, checks
+   user systemd, reviews and installs the complete distribution, and opens the
+   instance wizard. Run this as your regular account, without sudo. Package
+   installation and changes to `/etc/wsl.conf` have separate default-cancel
+   confirmations. If a WSL restart is needed, save your work, run
+   `wsl.exe --shutdown` from Windows, reopen Ubuntu and choose option 7 again.
+   Native Ubuntu may need a new login session for user systemd. Setup rechecks
+   readiness before installing and offers existing instances for continuation.
+
+The guided path reports completion only after required services, MCP discovery
+and initialization, and tunnel health and readiness pass. It polls for up to
+120 seconds, then offers retry or return with setup incomplete. Later cancellation
+leaves the manager installed. An optional reviewed addition to `~/.profile` makes
+the installation available on PATH in future login shells. Immediate setup uses
+absolute executable paths. Codex and GitHub CLI are provisioned separately;
+credentials continue to use the existing interactive provider flows.
+
+Download prerequisites are Bash, curl and CA certificates. A fresh Ubuntu host
+can open the menu without Python, but needs Python >=3.10 and Git before source
+acquisition and strict lock validation. When package validation needs a newer
+interpreter, bootstrap downloads the architecture-specific locked CPython to a
+temporary directory and checks its digest. System Python and runtime pins are
+unchanged. Installed setup/upgrade prefer their own runtime; offline local checks
+never download Python.
 
 Use **0** or blank input to go back or cancel; at the main menu, either exits.
 EOF also exits safely. Unavailable actions explain the prerequisite. Recovery
@@ -260,8 +284,8 @@ Existing `workspace-mcp-manager-upgrade` automation remains noninteractive.
 Use `--interactive` to select the menu explicitly; `--configure` can open the
 manager after a successful installation/update.
 
-Supported installation profiles are **WSL2 Ubuntu 24.04 x86_64** and **native Ubuntu 22.04 ARM64 (aarch64)**. Live migration qualification remains a separate gate. Bootstrap
-prerequisites are Bash, Git, curl, Python >= 3.11, `sha256sum`, `realpath`,
+Supported installation profiles are **WSL2 Ubuntu 24.04 x86_64** and **native Ubuntu 22.04/24.04 ARM64 (aarch64)**. Live migration qualification remains a separate gate. Bootstrap
+prerequisites are Bash, Git, curl, Python >= 3.10, `sha256sum`, `realpath`,
 `mktemp`, `flock`, GNU coreutils, `tar`, `unzip`, and an available user-systemd
 manager. The installer does not invoke `sudo`, require system `pip`, or require
 system `uv`.
@@ -374,7 +398,7 @@ version tags are immutable.
 
 ## Install or update a local checkout
 
-Commit your changes, then run:
+To install your current working tree, run:
 
 ```sh
 bash scripts/setup-local.sh
@@ -388,7 +412,7 @@ current; running instances restart. Codex CLI, GitHub CLI, Node, and OS packages
 are excluded. No newer upstream versions are selected automatically.
 
 The launcher detects SSH/HTTPS origins and the current commit automatically.
-Uncommitted and untracked files must be committed first. It also supports
+Local installation inputs, including edits and new package files, are captured in an isolated immutable snapshot. It also supports
 `--account-home PATH` and `--prefix PATH`. The existing installed setup command
 continues to use the published release channel.
 
@@ -531,7 +555,7 @@ structured semantic failures are preserved across the host boundary.
 
 ### Import and replace an existing workspace-mcp toolkit
 
-Run the updated setup frontend and choose **7. Import and replace legacy toolkit**.
+Run the updated setup frontend and choose **5. Import legacy toolkit instances**.
 The wizard guides installation/update of the manager if necessary, lists legacy
 instances, and lets you select IDs or `all`. Review settings and the upgrade to
 coding-tools-mcp **0.5.0** and tunnel-client **0.0.15**, then type `MIGRATE` to

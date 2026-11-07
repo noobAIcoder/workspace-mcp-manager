@@ -158,8 +158,12 @@ def _error_message(payload: Mapping[str, Any], fallback: str) -> str:
 
 
 def _release_root() -> Path:
-    # release/src/workspace_mcp_manager/tui.py -> release
-    return Path(__file__).resolve().parents[2]
+    from .distribution_runtime import DistributionRuntimeError, executing_distribution_root
+
+    try:
+        return executing_distribution_root(module_file=Path(__file__)) or Path(__file__).resolve().parents[2]
+    except DistributionRuntimeError as exc:
+        raise TuiError(str(exc)) from exc
 
 
 def default_manager_executable(explicit: str | None = None) -> str:
@@ -893,6 +897,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         client = ManagerClient(args.manager, registry_dir=args.registry_dir)
+        guided_path = os.environ.get('WORKSPACE_MCP_GUIDED_RESULT')
+        if guided_path:
+            from .guided_setup import GuidedResult
+            try:
+                client.guided_result = GuidedResult(Path(guided_path))
+                client.guided_instance = os.environ.get('WORKSPACE_MCP_GUIDED_INSTANCE') or None
+                client.guided_result.write('incomplete', client.guided_instance)
+            except (OSError, ValueError) as exc:
+                raise TuiError(str(exc)) from exc
         if args.snapshot:
             sys.stdout.write(dashboard_snapshot(client, instance_id=args.instance))
             return 0

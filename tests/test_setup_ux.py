@@ -16,6 +16,9 @@ PREVIOUS = 'dist-' + 'b' * 40
 
 
 class GuidedSetupTests(unittest.TestCase):
+    def test_guided_task_is_available_without_changing_existing_numbers(self):
+        self.assertIn('7. Install and configure everything', self.run_menu())
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -181,7 +184,11 @@ class GuidedInstallTests(unittest.TestCase):
         self.home.mkdir()
         self.remote = self.root / 'remote'
         (self.remote / 'scripts').mkdir(parents=True)
+        for name in ('bootstrap-python.sh', 'lock_validate.py'):
+            shutil.copy2(ROOT / 'scripts' / name, self.remote / 'scripts' / name)
+        shutil.copy2(ROOT / 'requirements-coding-tools.lock', self.remote / 'requirements-coding-tools.lock')
         (self.remote / 'install-versions.lock').write_text((ROOT / 'install-versions.lock').read_text())
+        shutil.copy2(ROOT / 'install-versions.aarch64.lock', self.remote / 'install-versions.aarch64.lock')
         (self.remote / 'scripts/install.sh').write_text('''#!/bin/bash
 set -eu
 for arg in "$@"; do

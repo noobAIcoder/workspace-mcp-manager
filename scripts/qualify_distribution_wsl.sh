@@ -90,10 +90,11 @@ done
   || fail "setup maintenance anchor mismatch"
 printf '0\n' | "$PREFIX/bin/workspace-mcp-manager-setup" --interactive \
   >"$TMP_ROOT/setup-menu.txt" || fail "offline setup menu exit failed"
-grep -q 'Uninstall' "$TMP_ROOT/setup-menu.txt" || fail "setup menu actions missing"
+grep -q '7. Install and configure everything' "$TMP_ROOT/setup-menu.txt" || fail "setup menu actions missing"
 
 [ "$($RELEASE/runtimes/python/bin/python3 --version)" = "Python 3.12.13" ] || fail "distribution Python mismatch"
-[ "$($RELEASE/tools/uv/uv --version)" = "uv 0.12.3 (x86_64-unknown-linux-gnu)" ] || fail "distribution uv mismatch"
+UV_IDENTITY=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["components"]["uv"]["expected_observable_identity"])' "$RELEASE/distribution/install-versions.lock")
+[ "$($RELEASE/tools/uv/uv --version)" = "$UV_IDENTITY" ] || fail "distribution uv mismatch"
 [ "$($RELEASE/runtimes/tunnel-client/tunnel-client --version)" = \
   "0.0.15+a390c168ff1b2d14e73a95991c186c6aba3ff5a0 (git sha: a390c168ff1b2d14e73a95991c186c6aba3ff5a0)" ] \
   || fail "distribution tunnel-client mismatch"
@@ -165,4 +166,4 @@ printf 'DISTRIBUTION_DEPENDENCY_INTEGRITY=PASS\n'
 printf 'DISTRIBUTION_RECEIPT=PASS\n'
 printf 'DISTRIBUTION_ACQUISITION_PROVENANCE=PASS\n'
 printf 'DISTRIBUTION_LOCAL_UPGRADE_NOOP=PASS\n'
-printf 'DISTRIBUTION_WSL_QUALIFICATION=PASS\n'
+printf 'DISTRIBUTION_HOST_QUALIFICATION=PASS\n'

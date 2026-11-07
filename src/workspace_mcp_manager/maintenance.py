@@ -470,7 +470,8 @@ class Maintenance:
         if destination.is_symlink():
             raise MaintenanceError('foreign recovery capsule')
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for source, name in [(installer, 'install.sh'), (bootstrap, 'setup.sh'), (Path(__file__).resolve(), 'maintenance.py'), (directory / 'upgrade_state.py', 'upgrade_state.py')]:
+        helpers = [(installer.parent / name, name) for name in ('bootstrap-python.sh', 'lock_validate.py')]
+        for source, name in [(installer, 'install.sh'), (bootstrap, 'setup.sh'), (Path(__file__).resolve(), 'maintenance.py'), (directory / 'upgrade_state.py', 'upgrade_state.py')] + helpers:
             if not source.is_file():
                 raise MaintenanceError('cannot prepare offline recovery capsule')
             target = destination / name

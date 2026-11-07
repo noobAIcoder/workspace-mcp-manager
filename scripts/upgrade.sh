@@ -33,6 +33,9 @@ require_command() {
 }
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$SCRIPT_DIR/bootstrap-python.sh"
+select_bootstrap_python 10 || die "Python >=3.10 is required for local recovery"
+python3() { "$WORKSPACE_MCP_BOOTSTRAP_PYTHON" "$@"; }
 LOCAL_INSTALLER="$SCRIPT_DIR/install.sh"
 [[ -f "$LOCAL_INSTALLER" && ! -L "$LOCAL_INSTALLER" ]] || die "immutable local recovery installer is unavailable"
 
@@ -95,7 +98,7 @@ else
     || die "local distribution recovery failed"
 fi
 
-for command in bash git mktemp rm mkdir python3 realpath; do require_command "$command"; done
+for command in bash git mktemp rm mkdir realpath; do require_command "$command"; done
 TMP_ROOT=$(mktemp -d)
 cleanup() { rm -rf -- "$TMP_ROOT"; }
 trap cleanup EXIT
@@ -155,6 +158,8 @@ print(json.dumps({
 PY
   exit 0
 fi
+
+acquire_bootstrap_python "$CHECKOUT" "$TMP_ROOT"
 
 args=(
   --upgrade

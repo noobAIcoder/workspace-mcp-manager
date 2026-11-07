@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -488,6 +489,9 @@ class BootstrapReviewTests(unittest.TestCase):
         root = Path(directory)
         repo = root / 'remote'
         (repo / 'scripts').mkdir(parents=True)
+        for name in ('bootstrap-python.sh', 'lock_validate.py'):
+            shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
+        shutil.copy2(ROOT / 'requirements-coding-tools.lock', repo / 'requirements-coding-tools.lock')
         (repo / 'scripts/install.sh').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 for arg in "$@"; do
@@ -500,6 +504,7 @@ touch "$REVIEW_MARKER"
 printf '%s\\n' '{"ok":true,"action":"install"}'
 ''')
         (repo / 'install-versions.lock').write_text((ROOT / 'install-versions.lock').read_text())
+        shutil.copy2(ROOT / 'install-versions.aarch64.lock', repo / 'install-versions.aarch64.lock')
         for cmd in [['git', 'init', '-q', '-b', 'main'], ['git', 'add', '.'], ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture']]:
             subprocess.run(cmd, cwd=repo, check=True)
         home = root / 'home'

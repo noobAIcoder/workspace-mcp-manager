@@ -8,7 +8,7 @@ while (($#)); do
       (($# >= 2)) || { printf '%s requires a path\n' "$1" >&2; exit 2; }
       args+=("$1" "$2"); shift 2 ;;
     -h|--help)
-      printf 'Usage: bash scripts/setup-local.sh [--account-home PATH] [--prefix PATH]\nInstall/update the clean local commit using a numbered menu.\n'
+      printf 'Usage: bash scripts/setup-local.sh [--account-home PATH] [--prefix PATH]\nInstall/update the local working-tree snapshot using a numbered menu.\n'
       exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac

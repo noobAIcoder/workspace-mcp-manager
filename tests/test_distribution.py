@@ -136,8 +136,9 @@ def make_tunnel_archive(path: Path, arch="amd64") -> None:
 
 
 class DistributionFixture:
-    def __init__(self, root: Path, *, commit: str = A_COMMIT, arch="x86_64") -> None:
+    def __init__(self, root: Path, *, commit: str = A_COMMIT, arch="x86_64", os_version=None) -> None:
         self.arch = arch
+        self.os_version = os_version or ("22.04" if arch == "aarch64" else "24.04")
         self.root = root
         self.repo = root / "repo"
         self.artifacts = root / "artifacts"
@@ -150,7 +151,7 @@ class DistributionFixture:
         self.host_bin = self.root / 'host-bin'
         self.host_bin.mkdir()
         write_executable(self.host_bin / 'uname', '#!/bin/sh\ncase "$1" in -m) echo ' + self.arch + ';; -r) echo ' + ('6.6-native' if self.arch == 'aarch64' else '6.6-microsoft-standard-WSL2') + ';; *) exec /usr/bin/uname "$@";; esac\n')
-        write_executable(self.host_bin / 'grep', '#!/bin/sh\ncase "$*" in *"^ID="*"/etc/os-release") echo ID=ubuntu;; *"^VERSION_ID="*"/etc/os-release") echo VERSION_ID=' + ('22.04' if self.arch == 'aarch64' else '24.04') + ';; *) exec /usr/bin/grep "$@";; esac\n')
+        write_executable(self.host_bin / 'grep', '#!/bin/sh\ncase "$*" in *"^ID="*"/etc/os-release") echo ID=ubuntu;; *"^VERSION_ID="*"/etc/os-release") echo VERSION_ID=' + self.os_version + ';; *) exec /usr/bin/grep "$@";; esac\n')
         write_executable(self.host_bin / 'systemctl', '#!/bin/sh\nif [ "$*" = "--user show-environment" ]; then printf "HOME=%s\\n" "$HOME"; else echo "fixture rejects service operations" >&2; exit 91; fi\n')
 
     def _build_artifacts(self) -> None:
@@ -172,7 +173,7 @@ class DistributionFixture:
         shutil.copy2(ROOT / "requirements-tui.lock", self.repo / "requirements-tui.lock")
         shutil.copy2(ROOT / "bootstrap.sh", self.repo / "bootstrap.sh")
         (self.repo / "scripts").mkdir()
-        for name in ("install.sh", "install_toolkit.sh", "upgrade.sh"):
+        for name in ("install.sh", "install_toolkit.sh", "upgrade.sh", "bootstrap-python.sh", "lock_validate.py"):
             shutil.copy2(ROOT / "scripts" / name, self.repo / "scripts" / name)
 
         coding_lock = (
@@ -383,13 +384,21 @@ class DistributionInputTests(unittest.TestCase):
             staged = json.loads((fixture.prefix / "lib/workspace-mcp-manager/current/distribution/install-versions.lock").read_text())
             self.assertEqual(staged['architecture'], 'aarch64')
 
+    def test_native_noble_arm_distribution_installs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(Path(directory), arch="aarch64", os_version="24.04")
+            result = fixture.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = json.loads((fixture.prefix / "lib/workspace-mcp-manager/current/distribution/install-versions.lock").read_text())
+            self.assertEqual(staged['architecture'], 'aarch64')
+
     def test_repository_runtime_lock_is_consistent(self) -> None:
         script = INSTALLER.read_text()
         function = script[script.index("strict_lock_validate() {"):script.index("lock_get() {")]
         harness = "set -euo pipefail\ndie() { echo \"$*\" >&2; exit 1; }\n" + function + '\nstrict_lock_validate "$REPO/install-versions.lock"\n'
         result = subprocess.run(
             ["bash", "-c", harness],
-            env={**os.environ, "BOOTSTRAP_PYTHON": sys.executable, "REPO": str(ROOT)},
+            env={**os.environ, "BOOTSTRAP_PYTHON": sys.executable, "REPO": str(ROOT), "SCRIPT_DIR": str(ROOT / 'scripts')},
             text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -490,6 +499,27 @@ die() { echo "$*" >&2; exit 1; }
 
 
 class DistributionTransactionTests(unittest.TestCase):
+    def test_installed_setup_and_recovery_do_not_require_acquisition_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(Path(directory))
+            installed = fixture.run()
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            shutil.rmtree(fixture.repo)
+            env = {**os.environ, 'HOME': str(fixture.home),
+                   'PATH': str(fixture.host_bin) + os.pathsep + os.environ['PATH']}
+            setup = subprocess.run([str(fixture.prefix / 'bin/workspace-mcp-manager-setup'), '--interactive'],
+                                   input='0\n', text=True, capture_output=True, env=env, timeout=30)
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            self.assertIn('is installed', setup.stdout)
+            capsule = fixture.home / '.local/state/workspace-mcp-manager/setup-recovery'
+            for name in ('bootstrap-python.sh', 'lock_validate.py'):
+                self.assertTrue((capsule / name).is_file())
+            recovery = subprocess.run(['bash', str(capsule / 'install.sh'), '--recover-only',
+                                       '--account-home', str(fixture.home), '--prefix', str(fixture.prefix)],
+                                      text=True, capture_output=True, env=env, timeout=30)
+            self.assertEqual(recovery.returncode, 0, recovery.stderr)
+            self.assertTrue(json.loads(recovery.stdout)['ok'])
+
     def test_clean_install_builds_complete_release_and_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fixture = DistributionFixture(Path(directory))
@@ -512,6 +542,8 @@ class DistributionTransactionTests(unittest.TestCase):
                 "tools/uv/uv",
                 "distribution/install.sh",
                 "distribution/upgrade.sh",
+                "distribution/bootstrap-python.sh",
+                "distribution/lock_validate.py",
                 "distribution/install-versions.lock",
                 "install.json",
             ):

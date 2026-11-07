@@ -255,9 +255,11 @@ x86_64
 systemd --user available
 ```
 
-No installer invokes `sudo`. Host Python >= 3.11 MAY be a bounded bootstrap
-prerequisite before candidate Python exists; installed product execution uses the
-pinned distribution Python. System `pip` and system `uv` are not prerequisites.
+Distribution installation never invokes `sudo`. Guided host preparation is a
+separate reviewed stage that MAY invoke sudo for packages and WSL configuration.
+Host Python >=3.10 validates acquisition locks; a temporary digest-checked locked
+Python supplies package validation when needed. Installed product execution uses
+the pinned distribution Python. System `pip` and system `uv` are not prerequisites.
 
 ## Qualification authority
 
@@ -410,8 +412,10 @@ OS packages, legacy import, release pruning and whole-fleet rollback are exclude
 
 Read-only setup inspection uses the standalone standard-library backend and
 supports Python 3.10. Installation and package operations require Python 3.11
-or newer; the installer tries `python3`, `python3.12`, then `python3.11` without
-changing the account's PATH or default Python. Inspection failures must display
+or newer; acquisition selects the immutable distribution runtime, a suitable host
+interpreter, or a temporary locked runtime, without changing the account's PATH
+or default Python. Offline recovery remains compatible with Python 3.10.
+Inspection failures must display
 the underlying diagnostic. A detected legacy `workspace-mcp` toolkit is reported
 separately from the manager installation and does not establish manager ownership
 or authorize changes to existing services.
@@ -448,7 +452,7 @@ or remaining service references block retirement. Credentials, backups, and
 unselected instances MUST remain intact. Failed installation MUST restore any
 verified legacy command collision it displaced.
 
-Native Ubuntu 22.04 aarch64 and WSL Ubuntu 24.04 x86_64 are supported installation
+Native Ubuntu 22.04/24.04 aarch64 and WSL Ubuntu 24.04 x86_64 are supported installation
 profiles. Each uses a strict architecture-specific artifact lock staged as
 install-versions.lock; artifact versions and declaration schemas remain shared.
 Archive validation MUST reject missing, duplicate, unexpected and unsafe members.
@@ -467,8 +471,7 @@ into the program directory block retirement.
 `bash scripts/setup-local.sh` MUST open the existing numbered setup menu using
 the launcher's checkout as the candidate, without fetching manager source.
 It MUST detect exact HEAD, raw origin, and symbolic branch (or detached commit);
-a missing origin uses a canonical file URL. Dirty tracked or untracked content
-MUST block installation with actionable diagnostics. Existing installer
+a missing origin uses a canonical file URL. Local installation inputs MUST be captured in an isolated deterministic snapshot without modifying the original Git state. Existing installer
 provenance, integrity, reviewed-state, locking, and recovery checks remain
 authoritative. Account-home and prefix overrides MUST be preserved.
 
@@ -487,3 +490,40 @@ report pending maintenance transactions as requiring recovery. Direct install
 requests without acquisition provenance MUST fail before acquiring the mutation
 lock and identify the remote and local setup entry points. Acquisition frontends
 MUST terminate on interrupt or termination signals after temporary cleanup.
+# Guided fresh-system setup
+
+The numbered setup menu MUST retain existing numbers and add “7. Install and
+configure everything”, without a new bootstrap flag. Host preparation,
+distribution installation and instance configuration are separate stages.
+Configuration MUST run as the regular account, with account home and prefix
+matching the installed manager. Installation-only target overrides remain valid.
+
+The menu MUST remain reachable without Python and report unknown installation
+state when inspection is unavailable. Prerequisite package installation and WSL
+systemd edits require a displayed review and default-cancel confirmation. Only
+host preparation uses sudo. Unrelated WSL settings MUST survive edits. A required
+restart or renewed login stops installation; rerunning checks actual user-systemd
+connectivity.
+
+After checkout provenance verification, acquisition MUST select the architecture
+lock and validate it strictly with Python 3.10 standard-library code before
+downloading a temporary digest-checked locked CPython when needed. All child
+operations and JSON helpers use the selected interpreter. Installed setup and
+upgrade prefer their own immutable runtime. Local checks never download runtimes.
+Shared release helpers MUST be manifested and available offline in recovery.
+
+Guided setup reuses candidate review and install.sh as the sole distribution
+mutation authority, recovering pending transactions first. It launches the existing
+instance wizard directly, offers continuation of existing instances on rerun,
+and preserves a successful installation after later cancellation or failure.
+Existing candidate validation, authentication and reviewed-plan application apply.
+Completion requires observed required services, MCP discovery and initialization,
+and tunnel health and readiness. Unknown or failed evidence is incomplete. Poll
+for at most 120 seconds, then offer Retry or return incomplete.
+
+A private mode-0600 result file carries schema version 1, outcome (verified,
+incomplete or cancelled), and selected instance ID. Missing/invalid results and
+normal TUI exit alone never establish success. Offer a reviewed idempotent shell
+profile PATH addition; immediate commands use absolute paths. External workstation
+tools and credentials retain existing interactive provisioning flows. Full platform
+success requires separate fresh-environment qualification on all three supported profiles.

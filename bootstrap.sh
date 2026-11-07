@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+bootstrap_source=${BASH_SOURCE[0]}
+[[ "$bootstrap_source" == */* ]] || bootstrap_source="./$bootstrap_source"
+BOOTSTRAP_BASE=$(cd -- "${bootstrap_source%/*}" && pwd -P)
+if [[ -f "$BOOTSTRAP_BASE/bootstrap-python.sh" ]]; then
+  source "$BOOTSTRAP_BASE/bootstrap-python.sh"
+elif [[ -f "$BOOTSTRAP_BASE/scripts/bootstrap-python.sh" ]]; then
+  source "$BOOTSTRAP_BASE/scripts/bootstrap-python.sh"
+fi
+# Python invocations, including child JSON helpers, share the selected runtime.
+if [[ -z "${WORKSPACE_MCP_BOOTSTRAP_PYTHON:-}" ]] && ! declare -F select_bootstrap_python >/dev/null; then
+  for candidate in python3 python3.12 python3.11 python3.10; do
+    candidate=$(type -P -- "$candidate") || continue
+    if "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3,10))' >/dev/null 2>&1; then
+      export WORKSPACE_MCP_BOOTSTRAP_PYTHON="$candidate"
+      break
+    fi
+  done
+fi
+python3() { "${WORKSPACE_MCP_BOOTSTRAP_PYTHON:-/usr/bin/python3}" "$@"; }
+
 PRODUCTION_REPOSITORY="https://github.com/noobAIcoder/workspace-mcp-manager.git"
 PRODUCTION_REF="refs/heads/release"
 
@@ -82,6 +102,11 @@ while (($#)); do
   esac
 done
 
+if [[ -n "$LOCAL_REPO" ]]; then
+  for supplied in "${validation_args[@]}"; do
+    [[ "$supplied" != --repository && "$supplied" != --ref ]] || die '--local-repo cannot be combined with --repository or --ref'
+  done
+fi
 [[ -n "$ACCOUNT_HOME" ]] || die "account home is unavailable"
 ! $CHECK_REMOTE || { ! $REVIEW && ! $CONFIGURE; } || die "--check cannot be combined with --review or --configure"
 if [[ -n "$REVIEW_RESULT_FILE" ]]; then
@@ -237,6 +262,155 @@ setup_read() {
   return 1
 }
 
+setup_supported_host() {
+  local os_id=unknown os_version=unknown arch kernel
+  if [[ -r /etc/os-release ]]; then
+    os_id=$( . /etc/os-release; printf '%s' "${ID:-unknown}")
+    os_version=$( . /etc/os-release; printf '%s' "${VERSION_ID:-unknown}")
+  fi
+  arch=$(uname -m); kernel=$(uname -r)
+  [[ "$os_id:$os_version:$arch" == ubuntu:@(22.04|24.04):aarch64 && "${kernel,,}" != *microsoft* && "${kernel,,}" != *wsl* ]] ||
+    [[ "$os_id:$os_version:$arch" == ubuntu:24.04:x86_64 && ( "${kernel,,}" == *microsoft* || "${kernel,,}" == *wsl* ) ]]
+}
+
+setup_prepare_host() {
+  local package confirmation kernel
+  local packages=()
+  for package in python3 git curl ca-certificates coreutils util-linux tar unzip systemd systemd-sysv dbus-user-session; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | command grep -qx 'install ok installed'; then packages+=("$package"); fi
+  done
+  if ((${#packages[@]})); then
+    printf 'Missing Ubuntu packages: %s\n' "${packages[*]}"
+    printf 'Review: sudo apt-get update\n        sudo apt-get install -- %s\nInstall these prerequisites? [y/N]: ' "${packages[*]}"
+    setup_read confirmation || return 1
+    [[ "$confirmation" == y || "$confirmation" == Y ]] || { printf 'Cancelled: prerequisites unchanged.\n'; return 1; }
+    if ! sudo apt-get update || ! sudo apt-get install -- "${packages[@]}"; then
+      printf 'Prerequisite installation failed. Rerun option 7 after resolving the package error.\n'; return 1
+    fi
+  fi
+  if declare -F select_bootstrap_python >/dev/null; then select_bootstrap_python 10 || return 1; fi
+  python3 -c 'import sys; raise SystemExit(sys.version_info < (3,10))' >/dev/null 2>&1 || { printf 'Python >=3.10 is still unavailable.\n'; return 1; }
+  if ! systemctl --user show-environment >/dev/null 2>&1; then
+    kernel=$(uname -r)
+    if [[ "${kernel,,}" == *microsoft* || "${kernel,,}" == *wsl* ]]; then
+      printf 'User systemd is unavailable. Review: set systemd=true in [boot] in /etc/wsl.conf, preserving other settings.\nApply this host change? [y/N]: '
+      setup_read confirmation || return 1
+      if [[ "$confirmation" == y || "$confirmation" == Y ]]; then
+        sudo "${WORKSPACE_MCP_BOOTSTRAP_PYTHON:-/usr/bin/python3}" - <<'PYWSL' || return 1
+import configparser,os,pathlib,tempfile
+p=pathlib.Path('/etc/wsl.conf')
+if p.is_symlink(): raise SystemExit('Refusing symlinked /etc/wsl.conf')
+c=configparser.ConfigParser(interpolation=None)
+if p.exists(): c.read_string(p.read_text())
+if not c.has_section('boot'): c.add_section('boot')
+c.set('boot','systemd','true')
+fd,name=tempfile.mkstemp(prefix='.wsl.conf.',dir='/etc')
+try:
+ with os.fdopen(fd,'w') as out:
+  c.write(out); out.flush(); os.fsync(out.fileno())
+ os.chmod(name,0o644)
+ os.replace(name,p)
+finally:
+ if os.path.exists(name): os.unlink(name)
+PYWSL
+      fi
+      printf 'Save your work, run wsl.exe --shutdown from Windows, reopen Ubuntu, and rerun option 7.\n'
+    else
+      printf 'User systemd is unavailable. Log out and back into a regular user login session, then rerun option 7.\n'
+    fi
+    return 1
+  fi
+}
+
+setup_guided_task() {
+  printf '\nInstall and configure everything\nHost: '
+  if [[ -r /etc/os-release ]]; then
+    ( . /etc/os-release; printf '%s ' "${PRETTY_NAME:-unknown}" )
+  fi
+  uname -m
+  setup_guided_run
+  if [[ -t 0 && -t 1 ]] && ! $SETUP_EXIT; then
+    printf 'Press Enter to return to setup: '
+    local acknowledgment
+    setup_read acknowledgment || return 0
+  fi
+}
+
+setup_guided_run() {
+  local installed_root actual_home identity result_file outcome selected='' confirmation item
+  local account_record account_name account_pass account_uid account_gid account_gecos account_shell
+  if [[ "$EUID" == 0 || -n "${SUDO_USER:-}" ]]; then
+    printf 'Configuration must run as the regular target account. Reopen setup without sudo.\n'; return 0
+  fi
+  account_record=$(getent passwd "$UID") || { printf 'Cannot resolve the invoking account.\n'; return 0; }
+  IFS=: read -r account_name account_pass account_uid account_gid account_gecos actual_home account_shell <<<"$account_record"
+  if [[ -z "$actual_home" || "$(cd -- "$ACCOUNT_HOME" && pwd -P)" != "$(cd -- "$actual_home" && pwd -P)" ]]; then
+    printf 'Selected account home does not match the invoking account. Configuration is blocked.\n'; return 0
+  fi
+  setup_supported_host || { printf 'Guided setup requires WSL Ubuntu 24.04 x86_64 or native Ubuntu 22.04/24.04 ARM64.\n'; return 0; }
+  setup_prepare_host || return 0
+  setup_inspect
+  if $pending; then setup_maintenance_task; setup_inspect; fi
+  $pending && { printf 'Setup incomplete: recovery is required.\n'; return 0; }
+  if [[ -x "$PREFIX/bin/workspace-mcp-manager" ]] && "$PREFIX/bin/workspace-mcp-manager" instance import --help >/dev/null 2>&1; then
+    identity=$("$PREFIX/bin/workspace-mcp-manager" instance import list) || { printf 'Cannot verify the installed manager target. Setup incomplete.\n'; return 0; }
+    if ! python3 -c 'import json,pathlib,sys; p=json.load(sys.stdin); assert [pathlib.Path(p[k]).resolve() for k in ("account_home","manager_prefix")]==[pathlib.Path(x).resolve() for x in sys.argv[1:]]' "$ACCOUNT_HOME" "$PREFIX" <<<"$identity"; then
+      printf 'Manager account or prefix does not match the selected target. Configuration is blocked.\n'; return 0
+    fi
+  fi
+  setup_install_task guided
+  $install_ready || { printf 'Setup incomplete: installation was not confirmed.\n'; return 0; }
+  installed_root="$PREFIX/lib/workspace-mcp-manager/releases/$(json_value current <<<"$status")"
+  identity=$("$installed_root/bin/workspace-mcp-manager" instance import list) || { printf 'Setup incomplete: installed target verification failed.\n'; return 0; }
+  if ! python3 -c 'import json,pathlib,sys; p=json.load(sys.stdin); assert [pathlib.Path(p[k]).resolve() for k in ("account_home","manager_prefix")]==[pathlib.Path(x).resolve() for x in sys.argv[1:]]' "$ACCOUNT_HOME" "$PREFIX" <<<"$identity"; then
+    printf 'Manager account or prefix does not match the selected target. Configuration is blocked.\n'; return 0
+  fi
+  local instances=()
+  mapfile -t instances < <(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin).get("instances",{})))' <<<"$status")
+  if ((${#instances[@]})) && [[ -n "${instances[0]}" ]]; then
+    printf 'Continue an existing instance (enter its ID), or type NEW to create another. Blank cancels.\n'
+    printf '  %s\n' "${instances[@]}"
+    setup_read selected || return 0
+    [[ -n "$selected" ]] || return 0
+    if [[ "$selected" == NEW ]]; then selected=''
+    else
+      local found=false
+      for item in "${instances[@]}"; do [[ "$item" != "$selected" ]] || found=true; done
+      $found || { printf 'Unknown instance. Setup incomplete.\n'; return 0; }
+    fi
+  fi
+  case ":$PATH:" in
+    *":$PREFIX/bin:"*) ;;
+    *)
+      local path_line
+      printf -v path_line 'export PATH=%q:"$PATH"' "$PREFIX/bin"
+      printf 'Review: append to %s/.profile:\n%s\nAdd this PATH setting? [y/N]: ' "$ACCOUNT_HOME" "$path_line"
+      setup_read confirmation || return 0
+      if [[ "$confirmation" == y || "$confirmation" == Y ]]; then
+        [[ ! -L "$ACCOUNT_HOME/.profile" ]] || { printf 'Refusing symlinked profile.\n'; return 0; }
+        if ! command grep -Fxq -- "$path_line" "$ACCOUNT_HOME/.profile" 2>/dev/null; then printf '\n%s\n' "$path_line" >>"$ACCOUNT_HOME/.profile"; fi
+      fi ;;
+  esac
+  result_file=$(mktemp)
+  chmod 0600 "$result_file"
+  WORKSPACE_MCP_GUIDED_RESULT="$result_file" WORKSPACE_MCP_GUIDED_INSTANCE="$selected" \
+    "$installed_root/bin/workspace-mcp-manager-tui" || printf 'Instance configuration exited with an error.\n'
+  outcome=$(python3 - "$result_file" <<'PYGUIDED'
+import json,sys
+try:
+ p=json.load(open(sys.argv[1]))
+ assert set(p)=={'schema_version','outcome','instance_id'} and type(p['schema_version']) is int and p['schema_version']==1
+ assert p['outcome'] in {'verified','incomplete','cancelled'}
+ assert p['outcome']!='verified' or isinstance(p['instance_id'],str) and p['instance_id']
+ print(p['outcome'])
+except (ValueError,KeyError,AssertionError,OSError): print('incomplete')
+PYGUIDED
+  )
+  rm -f -- "$result_file"
+  if [[ "$outcome" == verified ]]; then printf 'Setup verified: services, MCP initialization and tunnel readiness passed.\n'
+  else printf 'Setup %s. The manager remains installed; rerun option 7 to continue.\n' "$outcome"; fi
+}
+
 setup_inspect() {
   printf 'Inspecting local installation (no network)…\n'
   if [[ ! -f "$self" && -f "$ACCOUNT_HOME/.local/state/workspace-mcp-manager/setup-recovery/setup.sh" ]]; then
@@ -294,14 +468,14 @@ setup_readiness() {
   fi
   arch=$(uname -m); kernel=$(uname -r)
   readiness="Host: $os_id $os_version $arch"
-  if ! { [[ "$os_id:$os_version:$arch" == ubuntu:22.04:aarch64 && "${kernel,,}" != *microsoft* && "${kernel,,}" != *wsl* ]] || [[ "$os_id:$os_version:$arch" == ubuntu:24.04:x86_64 && ( "${kernel,,}" == *microsoft* || "${kernel,,}" == *wsl* ) ]]; }; then
+  if ! setup_supported_host; then
     host_ready=false
-    readiness+=$'\nInstallation requires native Ubuntu 22.04 aarch64 or WSL Ubuntu 24.04 x86_64.'
+    readiness+=$'\nInstallation requires native Ubuntu 22.04/24.04 aarch64 or WSL Ubuntu 24.04 x86_64.'
   fi
-  for candidate in python3 python3.12 python3.11; do
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then compatible_python=true; break; fi
+  for candidate in python3 python3.12 python3.11 python3.10; do
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then compatible_python=true; break; fi
   done
-  if ! $compatible_python; then host_ready=false; readiness+=$'\nPython >=3.11 is required; checked python3, python3.12, python3.11.'; fi
+  if ! $compatible_python; then host_ready=false; readiness+=$'\nPython >=3.10 is required; prepare prerequisites first.'; fi
   for required in git curl sha256sum realpath mktemp flock tar unzip systemctl; do
     if ! command -v "$required" >/dev/null 2>&1; then host_ready=false; readiness+=$'\nMissing prerequisite: '"$required"; fi
   done
@@ -333,6 +507,7 @@ setup_render_menu() {
   elif [[ "$ownership" == absent ]]; then full+=' (unavailable: install the manager first)'
   elif [[ "$ownership" == unknown ]]; then full+=' (unavailable: verify installation status first)'; fi
   printf '6. %s\n' "$full"
+  printf '7. Install and configure everything\n'
   printf '\nOption 1 updates only the manager; option 6 also refreshes instance runtimes.\n'
   printf '0. Exit\n\nChoice [0]: '
 }
@@ -400,6 +575,7 @@ setup_install_task() {
     printf '\nInstall or update manager\n\nThis task contacts the release server and reviews the candidate before any change.\n'
   fi
   if [[ "$ownership" == recognized_existing ]]; then printf 'Upgrading this older manager installation preserves instance settings and running services. This does not import legacy toolkit instances.\n'; fi
+  if [[ "$mode" != guided ]]; then
   printf '\n1. Inspect candidate and review change\n0. Back\n\nChoice [0]: '
   while true; do
     setup_read choice || return 0
@@ -409,15 +585,16 @@ setup_install_task() {
       *) printf 'Choose 1 or 0.\nChoice [0]: ' ;;
     esac
   done
+  fi
   setup_readiness
   if ! $host_ready; then printf 'Blocked: installation prerequisites need attention.\n%s\n' "$readiness"; return 0; fi
   outcome_file=$(mktemp)
   local args=("${remote_args[@]}" --review --review-result-file "$outcome_file")
-  if $CONFIGURE && [[ "$mode" != all ]]; then args+=(--configure); fi
+  if $CONFIGURE && [[ "$mode" == manager ]]; then args+=(--configure); fi
   if [[ -n "$LOCAL_REPO" ]]; then printf 'Inspecting local checkout…\n'; else printf 'Checking the release server…\n'; fi
   if ! bash "$self" "${args[@]}"; then
     rm -f -- "$outcome_file"
-    printf 'Blocked or interrupted: installation/update did not complete. Review the diagnostic above, then check Maintenance for recovery.\n'; return 0
+    printf 'Blocked or interrupted: installation/update did not complete. Review the diagnostic above. Installation was not completed; inspect local status before retrying.\n'; return 0
   fi
   outcome=$(json_value outcome <"$outcome_file" 2>/dev/null) || outcome=unknown
   target=$(json_value target_release <"$outcome_file" 2>/dev/null) || target=''
@@ -426,7 +603,7 @@ setup_install_task() {
   install_outcome="$outcome"
   if [[ "$outcome" == completed || "$outcome" == already-current ]] && [[ "$ownership" == standalone_distribution && "$(json_value current <<<"$status")" == "$target" ]] && ! $pending; then
     install_ready=true
-    if [[ "$mode" != all && "$outcome" == completed ]] && ! $CONFIGURE; then setup_next_steps; fi
+    if [[ "$mode" == manager && "$outcome" == completed ]] && ! $CONFIGURE; then setup_next_steps; fi
   fi
 }
 
@@ -698,19 +875,26 @@ PYIMPORT
 setup_menu() {
   local backend status ownership pending legacy inspection_error readiness host_ready self
   local choice SETUP_EXIT=false install_ready=false install_outcome=""
-  if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then
-    printf 'Blocked: setup inspection requires Python >=3.10. Install Python, then reopen setup.\n'
-    return 2
-  fi
-  self=$(realpath -- "${BASH_SOURCE[0]}")
+  self="$BOOTSTRAP_BASE/${BASH_SOURCE[0]##*/}"
   local remote_args=(--non-interactive --account-home "$ACCOUNT_HOME" --prefix "$PREFIX")
   [[ -z "$LOCAL_REPO" ]] || remote_args+=(--local-repo "$LOCAL_REPO")
   if $QUALIFICATION; then
-    remote_args+=(--qualification --repository "$REPOSITORY" --ref "$RELEASE_REF")
+    remote_args+=(--qualification)
+    [[ -n "$LOCAL_REPO" ]] || remote_args+=(--repository "$REPOSITORY" --ref "$RELEASE_REF")
     [[ -z "$QUALIFICATION_ARTIFACT_DIR" ]] || remote_args+=(--qualification-artifact-dir "$QUALIFICATION_ARTIFACT_DIR")
     [[ -z "$QUALIFICATION_FAILPOINT" ]] || remote_args+=(--qualification-failpoint "$QUALIFICATION_FAILPOINT")
   fi
   while ! $SETUP_EXIT; do
+    if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3,10))' >/dev/null 2>&1; then
+      printf '\nWorkspace MCP Manager — Setup\nInstallation state: unknown (Python >=3.10 unavailable).\n7. Install and configure everything\n0. Exit\nChoice [0]: '
+      setup_read choice || return 0
+      case "$choice" in
+        0|'') return 0 ;;
+        7) setup_guided_task ;;
+        *) printf 'Prepare prerequisites with option 7 before inspecting the installation.\n' ;;
+      esac
+      continue
+    fi
     setup_inspect
     setup_render_menu
     setup_read choice || return 0
@@ -722,6 +906,7 @@ setup_menu() {
       4) setup_details ;;
       5) setup_import_task ;;
       6) setup_full_upgrade_task ;;
+      7) setup_guided_task ;;
       *) printf 'Choose one of the listed tasks, or 0 to exit.\n' ;;
     esac
   done
@@ -732,6 +917,11 @@ if [[ "$INTERACTIVE" == auto ]]; then
   if [[ -t 0 && -t 1 ]]; then INTERACTIVE=true
   else die "no interactive terminal; use --non-interactive for automation or --interactive for a scripted menu"; fi
 fi
+if $INTERACTIVE && [[ -z "$LOCAL_REPO" ]] && ! $QUALIFICATION && [[ -e "$BOOTSTRAP_BASE/.git" ]]; then
+  LOCAL_REPO="$BOOTSTRAP_BASE"
+  QUALIFICATION=true
+fi
+if declare -F select_bootstrap_python >/dev/null; then select_bootstrap_python 10 || true; fi
 if $INTERACTIVE; then
   ! $CHECK_REMOTE && ! $REVIEW || die "--check/--review require --non-interactive"
   setup_menu
@@ -761,16 +951,18 @@ git_isolated() {
 }
 
 if [[ -n "$LOCAL_REPO" ]]; then
-  CHECKOUT=$(realpath -- "$LOCAL_REPO")
-  git -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "local source must be a Git checkout"
-  dirty=$(git -C "$CHECKOUT" status --porcelain=v1 --untracked-files=all)
-  [[ -z "$dirty" ]] || die "commit local changes before installing:
-$dirty"
-  COMMIT=$(git -C "$CHECKOUT" rev-parse HEAD)
-  REPOSITORY=$(git -C "$CHECKOUT" config --get remote.origin.url || true)
-  [[ -n "$REPOSITORY" ]] || REPOSITORY="file://$CHECKOUT"
-  RELEASE_REF=$(git -C "$CHECKOUT" symbolic-ref -q HEAD || printf '%s' "$COMMIT")
-  printf 'Local checkout: %s\nCommit: %s\nSource: %s\n' "$CHECKOUT" "$COMMIT" "$REPOSITORY" >&2
+  source_root=$(realpath -- "$LOCAL_REPO")
+  if ! declare -F select_bootstrap_python >/dev/null; then
+    [[ -f "$source_root/scripts/bootstrap-python.sh" && ! -L "$source_root/scripts/bootstrap-python.sh" ]] || die 'local interpreter helper is missing/not regular'
+    source "$source_root/scripts/bootstrap-python.sh"
+  fi
+  select_bootstrap_python 10 || die 'Python >=3.10 is required for a local snapshot'
+  [[ -f "$source_root/scripts/source_snapshot.py" && ! -L "$source_root/scripts/source_snapshot.py" ]] || die 'local snapshot helper is missing/not regular'
+  COMMIT=$(python3 "$source_root/scripts/source_snapshot.py" "$source_root" "$CHECKOUT") || die 'local snapshot capture failed'
+  REPOSITORY=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$source_root")
+  RELEASE_REF=refs/heads/local-snapshot
+  printf 'Source: local working-tree snapshot\nCommit: %s\n' "$COMMIT" >&2
+
 else
 git_isolated -C "$CHECKOUT" init -q
 git_isolated -C "$CHECKOUT" remote add origin "$REPOSITORY"
@@ -791,6 +983,18 @@ HEAD=$(git_isolated -C "$CHECKOUT" rev-parse HEAD) || die "cannot resolve detach
   || die "temporary checkout repository provenance changed"
 
 fi
+
+for required_candidate in scripts/bootstrap-python.sh scripts/lock_validate.py scripts/install.sh; do
+  [[ -f "$CHECKOUT/$required_candidate" && ! -L "$CHECKOUT/$required_candidate" ]] || die "candidate $REPOSITORY at $COMMIT is incompatible: missing regular $required_candidate; installation not started"
+done
+unset -f acquire_bootstrap_python 2>/dev/null || true
+if ! declare -F acquire_bootstrap_python >/dev/null; then
+  [[ -f "$CHECKOUT/scripts/bootstrap-python.sh" && ! -L "$CHECKOUT/scripts/bootstrap-python.sh" ]] || die 'bootstrap interpreter helper is missing/not regular'
+  source "$CHECKOUT/scripts/bootstrap-python.sh"
+fi
+bootstrap_allow_download=true
+if $CHECK_REMOTE && [[ -n "$LOCAL_REPO" ]]; then bootstrap_allow_download=false; fi
+acquire_bootstrap_python "$CHECKOUT" "$TMP_ROOT" "$bootstrap_allow_download"
 
 args=(
   --upgrade

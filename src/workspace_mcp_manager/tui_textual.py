@@ -2301,6 +2301,7 @@ class WorkspaceManagerApp(App[None]):
     def __init__(self, client: ManagerClient, *, initial_load: bool = True) -> None:
         super().__init__()
         self.client = client
+        self._guided_closed = False
         self.initial_load = initial_load
         self.busy_instances: set[str] = set()
         self.uncertain_instances: set[str] = set()
@@ -2351,10 +2352,18 @@ class WorkspaceManagerApp(App[None]):
         )
 
     def action_quit(self) -> None:
+        if getattr(self.client, 'guided_result', None):
+            self._guided_closed = True
+            self.client.guided_result.write('cancelled', getattr(self.client, 'guided_instance', None))
         self.exit()
 
     def on_mount(self) -> None:
         self.push_screen(DashboardScreen())
+        if getattr(self.client, 'guided_result', None):
+            selected = getattr(self.client, 'guided_instance', None)
+            self.push_screen(InstanceScreen(selected) if selected else NewInstanceScreen())
+            if selected:
+                self._guided_verify(selected)
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
@@ -2474,6 +2483,8 @@ class WorkspaceManagerApp(App[None]):
         if isinstance(self.screen, SettingsScreen) and label == "Save settings":
             self.pop_screen()
         self.refresh_current()
+        if getattr(self.client, 'guided_result', None):
+            self._guided_verify(instance_id)
 
     def start_create_workflow(
         self,
@@ -2609,6 +2620,36 @@ class WorkspaceManagerApp(App[None]):
         self.busy_instances.discard(instance_id)
         self._screen_status(f"✓ {message}")
         self.push_screen(InstanceScreen(instance_id))
+        if getattr(self.client, 'guided_result', None):
+            self.client.guided_instance = instance_id
+            self.client.guided_result.write('incomplete', instance_id)
+            if message == 'Declaration created and reviewed plan applied':
+                self._guided_verify(instance_id)
+
+    @work(thread=True, exit_on_error=False, exclusive=True, group='guided-verification')
+    def _guided_verify(self, instance_id: str) -> None:
+        from .guided_setup import verify_deployment
+        worker = get_current_worker()
+        if self._guided_closed or worker.is_cancelled:
+            return
+        self.client.guided_instance = instance_id
+        self.client.guided_result.write('incomplete', instance_id)
+        self.call_from_thread(self._screen_status, 'Verifying services, MCP and tunnel readiness (up to 120 seconds)…')
+        verified = verify_deployment(self.client, instance_id, cancelled=lambda: self._guided_closed or worker.is_cancelled)
+        if not self._guided_closed and not worker.is_cancelled:
+            self.call_from_thread(self._guided_verified, instance_id, verified)
+
+    def _guided_verified(self, instance_id: str, verified: bool) -> None:
+        if self._guided_closed:
+            return
+        if verified:
+            self.client.guided_result.write('verified', instance_id)
+            self.exit()
+        else:
+            self.push_screen(
+                ConfirmModal('Setup incomplete', 'Retry deployment verification? Cancel returns with setup incomplete.'),
+                lambda retry: self._guided_verify(instance_id) if retry else self.exit(),
+            )
 
 
 def build_app(client: ManagerClient, *, initial_load: bool = True) -> WorkspaceManagerApp:

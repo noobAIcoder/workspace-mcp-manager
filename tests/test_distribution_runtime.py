@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from workspace_mcp_manager.distribution_runtime import (
     DistributionRuntimeError,
@@ -54,6 +55,23 @@ def fake_release(root: Path, commit: str) -> tuple[Path, Path]:
 
 
 class DistributionRuntimeTests(unittest.TestCase):
+    def test_tui_uses_executing_release_without_path_at_custom_prefix(self) -> None:
+        from workspace_mcp_manager.tui import default_manager_executable
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "custom-prefix"
+            release, module = fake_release(root, "a" * 40)
+            other, _ = fake_release(root, "b" * 40)
+            (root / "lib/workspace-mcp-manager/current").symlink_to(other)
+            manager = release / "bin/workspace-mcp-manager"
+            manager.parent.mkdir()
+            manager.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            manager.chmod(0o755)
+            with patch("workspace_mcp_manager.tui.__file__", str(module.with_name("tui.py"))), patch.dict(
+                os.environ, {"PATH": "", "WORKSPACE_MCP_MANAGER_BIN": ""}
+            ), patch("sys.argv", ["unrelated-tui"]):
+                self.assertEqual(default_manager_executable(), str(manager))
+
     def test_source_run_uses_explicit_host_tool_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "home"
