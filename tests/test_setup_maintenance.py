@@ -562,7 +562,7 @@ class PredecessorInspectionTests(unittest.TestCase):
     def test_menu_offers_migration_and_open_manager(self):
         result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', str(self.home)], input='0\n', text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('1. Upgrade manager installation\n', result.stdout)
+        self.assertIn('4. Upgrade manager installation\n', result.stdout)
         self.assertIn('5. Open instance manager\n', result.stdout)
         self.assertIn('1 configured instance', result.stdout)
         self.assertNotIn('Inspection:', result.stdout)
@@ -651,7 +651,7 @@ class SetupMenuTests(unittest.TestCase):
             result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', directory], input='0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('No manager installation was found.', result.stdout)
-            self.assertIn('5. Import legacy toolkit instances', result.stdout)
+            self.assertIn('8. Import legacy toolkit instances', result.stdout)
             self.assertEqual((toolkit / 'VERSION').read_text(), '0.3.2\n')
 
     def test_status_uses_system_python_without_package_imports(self):
