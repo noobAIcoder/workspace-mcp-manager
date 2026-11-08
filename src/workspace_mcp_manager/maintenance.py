@@ -385,7 +385,7 @@ class Maintenance:
                     result.append(next((line[3:] for line in block.splitlines() if line.startswith('Id=')), 'loaded service'))
         return sorted(set(result))
 
-    def _prune_references(self, status):
+    def _bundled_references(self, status):
         """Collect exact text references to retained release roots, without secrets."""
         sources = {}
         for instance_id, declaration in status['instances'].items():
@@ -412,7 +412,7 @@ class Maintenance:
             text=True, capture_output=True, timeout=20,
         )
         if listing.returncode:
-            raise MaintenanceError('cannot inspect loaded services before pruning old releases')
+            raise MaintenanceError('cannot inspect loaded services before removing bundled components')
         names = [line.split()[0] for line in listing.stdout.splitlines() if line.split()]
         if names:
             shown = subprocess.run(
@@ -421,7 +421,7 @@ class Maintenance:
                 text=True, capture_output=True, timeout=20,
             )
             if shown.returncode:
-                raise MaintenanceError('cannot inspect running service commands before pruning')
+                raise MaintenanceError('cannot inspect running services before removing bundled components')
             sources['loaded services'] = shown.stdout
 
         # Also protect a historical release used by a direct (non-systemd)
@@ -447,17 +447,19 @@ class Maintenance:
                     sources['process:' + process.name] = ','.join(matches)
         return sources
 
-    def preview_prune(self):
+    def preview_bundled_uninstall(self, component):
+        if component not in {'mcp', 'tunnel'}:
+            raise MaintenanceError('unknown bundled component')
         status = self.status()
         if status['recovery_required']:
-            raise MaintenanceError('recover pending work before pruning old releases')
+            raise MaintenanceError('recover pending work before uninstalling bundled components')
         if status['ownership'] != 'standalone_distribution':
-            raise MaintenanceError('pruning requires a complete installed manager')
+            raise MaintenanceError('component cleanup requires a complete installed manager')
         active = self.root / 'releases' / status['current']
         if validate_release(active)['schema_version'] != 4:
-            raise MaintenanceError('install and verify the manager-only release before pruning bundled copies')
+            raise MaintenanceError('install the manager-only release using Install/update manager before removing bundled components')
 
-        references = self._prune_references(status)
+        references = self._bundled_references(status)
         candidates, protected = [], {}
         for item in status['releases']:
             release_id = item['id']
@@ -467,12 +469,13 @@ class Maintenance:
             data = validate_release(path)
             if data['schema_version'] != 3:
                 continue
-            if not (
-                (path / 'runtimes/coding-tools-mcp').is_dir()
-                or (path / 'runtimes/tunnel-client').is_dir()
-            ):
+            runtime_dir = (
+                'runtimes/coding-tools-mcp' if component == 'mcp'
+                else 'runtimes/tunnel-client'
+            )
+            if not (path / runtime_dir).is_dir():
                 continue
-            # Do not prune a release referenced by any declaration or unit.
+            # Do not remove a release referenced by any declaration or unit.
             absolute = str(path)
             references_to_release = [
                 label for label, content in references.items()
@@ -488,11 +491,13 @@ class Maintenance:
         # Nothing under the active release, external ~/.local/opt, or
         # managed instance data is included in this removal preview.
         payload = {
-            'ok': True, 'action': 'prune', 'active': status['current'],
+            'ok': True, 'action': 'uninstall-' + component,
+            'component': component, 'active': status['current'],
             'candidates': candidates, 'protected': protected,
-            'preserved': ['active manager and TUI', 'external runtimes',
+            'preserved': ['active manager and TUI', 'manually installed external runtimes',
                           'instance declarations', 'profiles and credentials',
                           'referenced historical releases'],
+            'notice': 'Bundled components belong to immutable releases. Removing one old release also removes the other bundled component in that release.',
         }
         payload['fingerprint'] = digest({
             'preview': payload,
@@ -502,25 +507,30 @@ class Maintenance:
         })
         return payload
 
-    def apply_prune(self, preview, confirmation):
-        if confirmation != 'PRUNE':
-            raise MaintenanceError('type PRUNE to confirm removal of unused bundled releases')
+    def apply_bundled_uninstall(self, preview, confirmation):
+        action = preview.get('action')
+        component = {'uninstall-mcp': 'mcp', 'uninstall-tunnel': 'tunnel'}.get(action)
+        if component is None:
+            raise MaintenanceError('invalid bundled component removal operation')
+        expected = 'UNINSTALL-MCP' if component == 'mcp' else 'UNINSTALL-TUNNEL'
+        if confirmation != expected:
+            raise MaintenanceError('type ' + expected + ' to confirm release removal')
         with self.locked():
-            fresh = self.preview_prune()
-            if preview.get('action') != 'prune' or preview.get('fingerprint') != fresh['fingerprint']:
-                raise MaintenanceError('prune preview changed; inspect again')
+            fresh = self.preview_bundled_uninstall(component)
+            if preview.get('fingerprint') != fresh['fingerprint']:
+                raise MaintenanceError('uninstall preview changed; inspect again')
             # Check every destination before removing any candidate, so a
             # preexisting quarantine cannot cause avoidable partial cleanup.
             for release_id in fresh['candidates']:
-                quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + release_id)
+                quarantine = self.root.parent / ('.workspace-mcp-manager-uninstall-bundle-' + release_id)
                 if quarantine.exists() or quarantine.is_symlink():
-                    raise MaintenanceError('old prune quarantine needs manual inspection: ' + str(quarantine))
+                    raise MaintenanceError('old component-removal quarantine needs manual inspection: ' + str(quarantine))
             removed = []
             for release_id in fresh['candidates']:
                 path = self.root / 'releases' / release_id
                 # Always validate before moving, and never follow symlinked roots.
                 validate_release(path)
-                quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + release_id)
+                quarantine = self.root.parent / ('.workspace-mcp-manager-uninstall-bundle-' + release_id)
                 os.rename(path, quarantine)
                 sync_dir(self.root / 'releases')
                 # The rename is the removal commit point. An interruption
@@ -535,15 +545,15 @@ class Maintenance:
                     ) from exc
                 removed.append(release_id)
             return {
-                'ok': True, 'action': 'prune', 'removed': removed,
+                'ok': True, 'action': action, 'removed': removed,
                 'protected': fresh['protected'], 'active': fresh['active'],
             }
 
     def preview(self, action, target=None):
         if list((self.state / 'imports').glob('*.json')):
             raise MaintenanceError('recover pending legacy imports before distribution maintenance')
-        if action == 'prune':
-            return self.preview_prune()
+        if action in {'uninstall-mcp', 'uninstall-tunnel'}:
+            return self.preview_bundled_uninstall(action.removeprefix('uninstall-'))
         if action not in {'rollback', 'uninstall'}:
             raise MaintenanceError('unsupported maintenance action')
         status = self.status()
@@ -684,8 +694,8 @@ class Maintenance:
         sync_dir(backup.parent)
 
     def apply(self, preview, confirmation):
-        if preview.get('action') == 'prune':
-            return self.apply_prune(preview, confirmation)
+        if preview.get('action') in {'uninstall-mcp', 'uninstall-tunnel'}:
+            return self.apply_bundled_uninstall(preview, confirmation)
         action = preview.get('action')
         expected = 'UNINSTALL' if action == 'uninstall' else 'yes'
         if confirmation != expected:
@@ -871,7 +881,7 @@ def main():
     parser.add_argument('--prefix', required=True)
     parser.add_argument('--lock-held', action='store_true')
     parser.add_argument('--action', choices=['status', 'preview', 'apply', 'recover'], required=True)
-    parser.add_argument('--operation', choices=['rollback', 'uninstall', 'prune'])
+    parser.add_argument('--operation', choices=['rollback', 'uninstall', 'uninstall-mcp', 'uninstall-tunnel'])
     parser.add_argument('--target')
     parser.add_argument('--confirmation')
     args = parser.parse_args()

@@ -16,9 +16,12 @@ PREVIOUS = 'dist-' + 'b' * 40
 
 
 class GuidedSetupTests(unittest.TestCase):
-    def test_setup_offers_manager_only_installation(self):
+    def test_root_exposes_three_uninstall_actions(self):
         output = self.run_menu()
-        self.assertIn('manager and Textual only', output)
+        self.assertIn('1. Uninstall manager', output)
+        self.assertIn('2. Uninstall MCP', output)
+        self.assertIn('3. Uninstall tunnel', output)
+        self.assertIn('4. Review manager update', output)
         self.assertNotIn('Install and configure everything', output)
 
     def setUp(self):
@@ -73,17 +76,27 @@ esac
                              ('standalone_distribution', 'Review manager update')]:
             with self.subTest(state=state):
                 output = self.run_menu(ownership=state)
-                self.assertIn('1. ' + label, output)
-                self.assertIn('2. Open instance manager', output)
-                self.assertIn('3. Maintenance', output)
-                self.assertIn('4. Installation details', output)
+                self.assertIn('4. ' + label, output)
+                self.assertIn('5. Open instance manager', output)
+                self.assertIn('6. Maintenance', output)
+                self.assertIn('7. Installation details', output)
                 self.assertNotIn(CURRENT, output)
-                self.assertNotIn('5. Import legacy toolkit instances', output)
+                self.assertNotIn('8. Import legacy toolkit instances', output)
                 self.assertNotIn('--check', self.calls.read_text())
 
     def test_legacy_import_is_conditional(self):
         output = self.run_menu(legacy=True)
-        self.assertIn('5. Import legacy toolkit instances', output)
+        self.assertIn('8. Import legacy toolkit instances', output)
+
+    def test_component_uninstall_calls_preview_without_installing(self):
+        for option, component in [('2', 'mcp'), ('3', 'tunnel')]:
+            with self.subTest(component=component):
+                self.calls.unlink(missing_ok=True)
+                output = self.run_menu(option + '\n0\n')
+                self.assertIn('No unused bootstrap-bundled ' + component + ' releases to remove', output)
+                calls = self.calls.read_text()
+                self.assertIn('--maintenance-preview uninstall-' + component, calls)
+                self.assertNotIn('--maintenance-apply', calls)
 
     def test_inspection_failure_does_not_claim_absence_or_zero_instances(self):
         output = self.run_menu(error='fixture inspection failure')
@@ -93,14 +106,14 @@ esac
         self.assertIn('fixture inspection failure', output)
 
     def test_details_show_target_and_release_identity(self):
-        output = self.run_menu('4\n0\n0\n')
+        output = self.run_menu('7\n0\n0\n')
         self.assertIn(CURRENT, output)
         self.assertIn(str(self.home), output)
         self.assertIn(str(self.prefix), output)
         self.assertNotIn('--maintenance-apply', self.calls.read_text())
 
     def test_blank_and_eof_exit_without_mutation(self):
-        for input in ('\n', '', '3\n\n\n', '1\n'):
+        for input in ('\n', '', '6\n\n\n', '4\n'):
             with self.subTest(input=input):
                 self.run_menu(input)
                 self.assertNotIn('--maintenance-apply', self.calls.read_text())
@@ -110,43 +123,43 @@ esac
         for confirmation in ('', 'yes', 'UNINSTALL'):
             with self.subTest(confirmation=confirmation):
                 self.calls.unlink(missing_ok=True)
-                output = self.run_menu('3\n3\n' + confirmation + '\n0\n')
+                output = self.run_menu('1\n' + confirmation + '\n0\n')
                 self.assertIn('Type UNINSTALL', output)
                 self.assertIn('bash /offline/setup.sh --interactive', output)
                 self.assertEqual('--maintenance-apply' in self.calls.read_text(), confirmation == 'UNINSTALL')
 
     def test_recovery_has_priority_and_requires_confirmation(self):
-        output = self.run_menu('1\n3\n1\ny\n0\n', pending=True)
+        output = self.run_menu('4\n6\n1\ny\n0\n', pending=True)
         self.assertIn('Recommended: recover', output)
         self.assertIn('--recover-only', self.calls.read_text())
         self.assertNotIn('--check', self.calls.read_text())
 
     def test_rollback_selection_excludes_active_release(self):
-        output = self.run_menu('3\n2\n1\n\n0\n')
+        output = self.run_menu('6\n2\n1\n\n0\n')
         self.assertIn('1. Manager 0.1.0', output)
         self.assertNotIn('2. Manager 0.2.0', output)
         self.assertIn('--maintenance-target ' + PREVIOUS, self.calls.read_text())
         self.assertNotIn('--maintenance-apply', self.calls.read_text())
 
     def test_predecessor_cannot_uninstall_or_rollback(self):
-        output = self.run_menu('3\n2\n3\n0\n0\n', ownership='recognized_existing')
+        output = self.run_menu('6\n2\n3\n0\n0\n', ownership='recognized_existing')
         self.assertIn('Upgrade the manager installation first', output)
         self.assertNotIn('--maintenance-preview', self.calls.read_text())
 
     def test_partial_uninstall_explains_remaining_work_and_recovery(self):
-        output = self.run_menu('3\n3\nUNINSTALL\n0\n', apply_error=True)
+        output = self.run_menu('1\nUNINSTALL\n0\n', apply_error=True)
         self.assertIn('Removed deployments: one', output)
         self.assertIn('Deployments still requiring removal: two', output)
         self.assertIn('Recover interrupted operation before retrying', output)
         self.assertIn('bash /offline/setup.sh --interactive', output)
 
     def test_recovery_cancels_by_default(self):
-        output = self.run_menu('3\n1\n\n0\n', pending=True)
+        output = self.run_menu('6\n1\n\n0\n', pending=True)
         self.assertIn('Cancelled: recovery was not started', output)
         self.assertNotIn('--recover-only', self.calls.read_text())
 
     def test_unknown_installation_cannot_start_installation(self):
-        output = self.run_menu('1\n0\n', error='foreign installation')
+        output = self.run_menu('4\n0\n', error='foreign installation')
         self.assertIn('Blocked: verify installation status', output)
         self.assertNotIn('Checking the release server', output)
 
@@ -167,7 +180,7 @@ case "$1" in
 esac
 ''')
         result = subprocess.run(['bash', str(program / 'setup.sh'), '--interactive', '--account-home', str(self.home)],
-                                input='3\n3\nUNINSTALL\n0\n', text=True, capture_output=True, timeout=15,
+                                input='1\nUNINSTALL\n0\n', text=True, capture_output=True, timeout=15,
                                 env={**os.environ, 'TEST_PROGRAM': str(program.parent), 'TEST_QUARANTINE': str(self.root / 'quarantine')})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
@@ -239,7 +252,7 @@ fi
         return result
 
     def test_success_offers_next_steps_and_opens_manager_only_when_selected(self):
-        result = self.run_menu('1\n1\ny\n1\n0\n')
+        result = self.run_menu('4\n1\ny\n1\n0\n')
         self.assertTrue(self.marker.exists())
         self.assertTrue(self.tui_marker.exists())
         self.assertIn('Candidate manager version: 0.3.0', result.stdout)
@@ -248,55 +261,51 @@ fi
         self.assertLess(result.stdout.index('Completed:'), result.stdout.index('Next steps'))
 
     def test_cancelled_review_does_not_offer_success_next_steps(self):
-        result = self.run_menu('1\n1\n\n0\n')
+        result = self.run_menu('4\n1\n\n0\n')
         self.assertFalse(self.marker.exists())
         self.assertIn('Cancelled: no installation changes', result.stdout)
         self.assertNotIn('Next steps', result.stdout)
 
     def test_prerequisite_failure_blocks_before_acquisition(self):
-        result = self.run_menu('1\n1\n0\n', ready=False)
+        result = self.run_menu('4\n1\n0\n', ready=False)
         self.assertFalse(self.marker.exists())
         self.assertIn('prerequisites need attention', result.stdout)
         self.assertNotIn('Checking the release server', result.stdout)
 
     def test_release_server_failure_has_actionable_result(self):
-        result = self.run_menu('1\n1\n0\n', ref='refs/heads/missing')
+        result = self.run_menu('4\n1\n0\n', ref='refs/heads/missing')
         self.assertFalse(self.marker.exists())
         self.assertIn('installation/update did not complete', result.stdout)
         self.assertIn('Maintenance', result.stdout)
 
     def test_configure_opens_manager_without_a_second_next_steps_prompt(self):
-        result = self.run_menu('1\n1\ny\n0\n', configure=True)
+        result = self.run_menu('4\n1\ny\n0\n', configure=True)
         self.assertTrue(self.marker.exists())
         self.assertTrue(self.tui_marker.exists())
         self.assertIn('Instance manager opened', result.stdout)
         self.assertNotIn('Next steps', result.stdout)
 
     def test_already_current_does_not_mutate_or_offer_success_next_steps(self):
-        result = self.run_menu('1\n1\n0\n', current=True)
+        result = self.run_menu('4\n1\n0\n', current=True)
         self.assertIn('Already current', result.stdout)
         self.assertFalse(self.marker.exists())
         self.assertFalse(self.tui_marker.exists())
         self.assertNotIn('Next steps', result.stdout)
 
     def test_success_exit_does_not_open_manager(self):
-        result = self.run_menu('1\n1\ny\n0\n')
+        result = self.run_menu('4\n1\ny\n0\n')
         self.assertTrue(self.marker.exists())
         self.assertFalse(self.tui_marker.exists())
         self.assertIn('Next steps', result.stdout)
 
-    def test_prune_action_is_listed_under_maintenance(self):
-        result = self.run_menu('3\n0\n0\n')
-        self.assertIn('4. Remove unused old bundled releases', result.stdout)
-
     def test_success_return_refreshes_setup(self):
-        result = self.run_menu('1\n1\ny\n3\n0\n')
+        result = self.run_menu('4\n1\ny\n2\n0\n')
         self.assertTrue(self.marker.exists())
         self.assertFalse(self.tui_marker.exists())
-        self.assertIn('1. Review manager update', result.stdout)
+        self.assertIn('4. Review manager update', result.stdout)
 
     def test_eof_during_review_cancels_installation(self):
-        result = self.run_menu('1\n1\n')
+        result = self.run_menu('4\n1\n')
         self.assertFalse(self.marker.exists())
         self.assertIn('Cancelled: no installation changes', result.stdout)
 
@@ -318,13 +327,13 @@ fi
         result = self.run_menu('0\n')
         self.assertNotIn('Update all bundled components and instances', result.stdout)
         self.assertNotIn('Install and configure everything', result.stdout)
-        self.assertIn('manager and Textual only', result.stdout)
+        self.assertIn('Component removal targets only unused bootstrap-bundled releases', result.stdout)
 
     def test_retired_bundled_setup_action_cannot_change_instances(self):
         self.prepare_full_upgrade()
-        result = self.run_menu('6\n0\n')
+        result = self.run_menu('2\n0\n')
         self.assertFalse(self.fleet_marker.exists())
-        self.assertIn('bundled-runtime setup workflow is retired', result.stdout)
+        self.assertIn('No unused bootstrap-bundled mcp releases to remove', result.stdout)
 
     def test_maintenance_resumes_recorded_instance_upgrade(self):
         self.prepare_full_upgrade()
@@ -334,14 +343,14 @@ fi
         status = {'ok':True,'ownership':'standalone_distribution','current':CURRENT,'instances':{},'releases':[],
                   'recovery_required':True,'instance_upgrade':{'target_release':CURRENT}}
         (self.root / 'install.sh').write_text("#!/bin/bash\nprintf '%s\\n' " + shlex.quote(json.dumps(status)) + '\n')
-        result = self.run_menu('3\n1\ny\n0\n')
+        result = self.run_menu('6\n1\ny\n0\n')
         self.assertTrue(self.fleet_marker.exists())
         self.assertIn('Completed: instance runtimes refreshed', result.stdout)
 
     def test_malformed_pending_upgrade_never_dispatches_unverified_recovery(self):
         self.prepare_full_upgrade()
         (self.marker.parent / 'instance-upgrade.json').write_text('{}')
-        result = self.run_menu('3\n1\ny\n0\n')
+        result = self.run_menu('6\n1\ny\n0\n')
         self.assertFalse(self.fleet_marker.exists())
         self.assertIn('recovery target could not be verified', result.stdout)
 

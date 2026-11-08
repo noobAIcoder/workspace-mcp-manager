@@ -71,7 +71,7 @@ def manager_only_release(root: Path, char: str) -> Path:
 
 
 def add_bundled_runtimes(path: Path) -> None:
-    """Upgrade a historical release fixture to include the former bundles."""
+    """Make a historical release fixture contain both old runtime bundles."""
     for relative in (
         'runtimes/coding-tools-mcp/bin/coding-tools-mcp',
         'runtimes/tunnel-client/tunnel-client',
@@ -82,15 +82,13 @@ def add_bundled_runtimes(path: Path) -> None:
         binary.chmod(0o755)
     data = json.loads((path / 'install.json').read_text(encoding='utf-8'))
     data['components'] = {
-        'python': {'version': '3.12'},
-        'uv': {'version': '0.12'},
+        'python': {'version': '3.12'}, 'uv': {'version': '0.12'},
         'coding_tools_mcp': {'version': '0.5.0'},
         'tunnel_client': {'version': '0.0.15'},
     }
     data['content_manifest'] = [
         {
-            'path': file.relative_to(path).as_posix(),
-            'type': 'file',
+            'path': file.relative_to(path).as_posix(), 'type': 'file',
             'mode': f'{file.stat().st_mode & 0o7777:04o}',
             'sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
         }
@@ -98,7 +96,6 @@ def add_bundled_runtimes(path: Path) -> None:
         if file.is_file() and file.name != 'install.json'
     ]
     (path / 'install.json').write_text(json.dumps(data), encoding='utf-8')
-
 
 
 
@@ -151,7 +148,7 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaises(MaintenanceError):
             validate_release(candidate)
 
-    def _setup_prune_fixture(self):
+    def _bundled_fixture(self):
         current = self.root / 'current'
         current.unlink()
         active = manager_only_release(self.root, 'c')
@@ -160,112 +157,95 @@ class MaintenanceTests(unittest.TestCase):
         add_bundled_runtimes(self.b)
         return active
 
-    def test_prune_removes_only_unused_old_bundled_releases(self):
-        active = self._setup_prune_fixture()
+    def test_uninstall_mcp_removes_only_unused_historical_bundles(self):
+        active = self._bundled_fixture()
         manual = self.home / '.local/opt/coding-tools-mcp/bin/coding-tools-mcp'
         manual.parent.mkdir(parents=True)
-        manual.write_text('manual runtime')
-        with mock.patch.object(self.service, '_prune_references', return_value={}):
-            before = {p.name for p in (self.root / 'releases').iterdir()}
-            preview = self.service.preview('prune')
+        manual.write_text('keep manual')
+        with mock.patch.object(self.service, '_bundled_references', return_value={}):
+            preview = self.service.preview('uninstall-mcp')
             self.assertEqual(set(preview['candidates']), {self.a.name, self.b.name})
-            self.assertEqual({p.name for p in (self.root / 'releases').iterdir()}, before)
-            with self.assertRaisesRegex(MaintenanceError, 'PRUNE'):
+            self.assertEqual(preview['notice'].count('immutable releases'), 1)
+            with self.assertRaisesRegex(MaintenanceError, 'UNINSTALL-MCP'):
                 self.service.apply(preview, 'yes')
-            result = self.service.apply(preview, 'PRUNE')
+            result = self.service.apply(preview, 'UNINSTALL-MCP')
+        self.assertEqual(result['action'], 'uninstall-mcp')
         self.assertEqual(set(result['removed']), {self.a.name, self.b.name})
+        self.assertEqual(self.service.status()['current'], active.name)
         self.assertFalse(self.a.exists())
         self.assertFalse(self.b.exists())
-        self.assertEqual(self.service.status()['current'], active.name)
         self.assertTrue((active / 'bin/workspace-mcp-manager-tui').exists())
-        self.assertEqual(manual.read_text(), 'manual runtime')
+        self.assertEqual(manual.read_text(), 'keep manual')
 
-    def test_prune_protects_historical_release_referenced_by_instance(self):
-        active = self._setup_prune_fixture()
+    def test_uninstall_tunnel_protects_referenced_historical_release(self):
+        active = self._bundled_fixture()
         registry = self.home / '.config/workspace-mcp-manager/instances'
         registry.mkdir(parents=True)
         (registry / 'one.json').write_text(json.dumps({
-            'instance_id': 'one', 'mcp': {'binary': str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp')}
-        }), encoding='utf-8')
-        with mock.patch.object(self.service, '_prune_references',
-                               wraps=self.service._prune_references) as scan, mock.patch(
-                                   'subprocess.run'
-                               ) as cmd:
-            cmd.return_value.returncode = 0
-            cmd.return_value.stdout = ''
-            preview = self.service.preview('prune')
-            self.assertEqual(preview['candidates'], [self.b.name])
-            self.assertIn('instance:one', preview['protected'][self.a.name])
-            self.service.apply(preview, 'PRUNE')
-            scan.assert_called()
+            'instance_id': 'one', 'tunnel': {
+                'binary': str(self.a / 'runtimes/tunnel-client/tunnel-client')
+            }
+        }))
+        with mock.patch.object(self.service, '_bundled_references', wraps=self.service._bundled_references):
+            with mock.patch('subprocess.run') as call:
+                call.return_value.returncode = 0
+                call.return_value.stdout = ''
+                preview = self.service.preview('uninstall-tunnel')
+                self.assertEqual(preview['candidates'], [self.b.name])
+                self.assertIn('instance:one', preview['protected'][self.a.name])
+                result = self.service.apply(preview, 'UNINSTALL-TUNNEL')
+        self.assertEqual(result['removed'], [self.b.name])
         self.assertTrue(self.a.exists())
-        self.assertFalse(self.b.exists())
         self.assertTrue(active.exists())
 
-    def test_prune_protects_loaded_services_and_direct_processes(self):
-        self._setup_prune_fixture()
-        references = {
-            'loaded services': 'ExecStart=' + str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp'),
-            'process:1234': str(self.b / 'runtimes/tunnel-client/tunnel-client'),
-        }
-        with mock.patch.object(self.service, '_prune_references', return_value=references):
-            preview = self.service.preview('prune')
+    def test_uninstall_requires_new_manager_only_active_release(self):
+        add_bundled_runtimes(self.a)
+        with self.assertRaisesRegex(MaintenanceError, 'manager-only'):
+            self.service.preview('uninstall-mcp')
+        self.assertTrue(self.a.exists())
+
+    def test_component_uninstall_stale_preview_blocks_removal(self):
+        self._bundled_fixture()
+        with mock.patch.object(self.service, '_bundled_references', return_value={}):
+            preview = self.service.preview('uninstall-mcp')
+            registry = self.home / '.config/workspace-mcp-manager/instances'
+            registry.mkdir(parents=True)
+            (registry / 'one.json').write_text(json.dumps({
+                'instance_id': 'one', 'mcp': {
+                    'binary': str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp')
+                }
+            }))
+            with self.assertRaisesRegex(MaintenanceError, 'preview changed'):
+                self.service.apply(preview, 'UNINSTALL-MCP')
+        self.assertTrue(self.a.exists())
+        self.assertTrue(self.b.exists())
+
+    def test_component_uninstall_protects_active_and_loaded_processes(self):
+        self._bundled_fixture()
+        with mock.patch.object(self.service, '_bundled_references', return_value={
+            'loaded services': str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp'),
+            'process:123': str(self.b / 'runtimes/tunnel-client/tunnel-client')
+        }):
+            preview = self.service.preview('uninstall-mcp')
             self.assertEqual(preview['candidates'], [])
             self.assertIn('loaded services', preview['protected'][self.a.name])
-            self.assertIn('process:1234', preview['protected'][self.b.name])
-            result = self.service.apply(preview, 'PRUNE')
-        self.assertEqual(result['removed'], [])
+            self.assertIn('process:123', preview['protected'][self.b.name])
+            self.assertEqual(self.service.apply(preview, 'UNINSTALL-MCP')['removed'], [])
         self.assertTrue(self.a.is_dir())
         self.assertTrue(self.b.is_dir())
 
-    def test_interrupted_prune_preserves_active_manager(self):
-        active = self._setup_prune_fixture()
-        quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + self.a.name)
-        with (
-            mock.patch.object(self.service, '_prune_references', return_value={}),
-            mock.patch('workspace_mcp_manager.maintenance.shutil.rmtree',
-                       side_effect=OSError('simulated power interruption')),
-        ):
-            preview = self.service.preview('prune')
-            with self.assertRaisesRegex(MaintenanceError, 'quarantined'):
-                self.service.apply(preview, 'PRUNE')
-        self.assertTrue(quarantine.is_dir())
-        self.assertTrue((active / 'bin/workspace-mcp-manager-tui').exists())
-        self.assertEqual(self.service.status()['current'], active.name)
-
-    def test_prune_blocks_when_legacy_release_is_current(self):
-        add_bundled_runtimes(self.a)
-        with self.assertRaisesRegex(MaintenanceError, 'manager-only'):
-            self.service.preview('prune')
-        self.assertTrue(self.a.exists())
-
-    def test_prune_rejects_stale_preview_and_preserves_bundles(self):
-        self._setup_prune_fixture()
-        with mock.patch.object(self.service, '_prune_references', return_value={}):
-            preview = self.service.preview('prune')
-            source = self.home / '.config/workspace-mcp-manager/instances'
-            source.mkdir(parents=True)
-            (source / 'one.json').write_text(json.dumps({
-                'instance_id': 'one', 'tunnel': {'binary': str(self.a / 'runtimes/tunnel-client/tunnel-client')}
-            }), encoding='utf-8')
-            with self.assertRaisesRegex(MaintenanceError, 'preview changed'):
-                self.service.apply(preview, 'PRUNE')
-        self.assertTrue(self.a.exists())
-        self.assertTrue(self.b.exists())
-
-    def test_prune_never_overwrites_quarantine(self):
-        self._setup_prune_fixture()
-        # Colliding with the *second* release must not remove the first.
-        quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + self.b.name)
+    def test_component_uninstall_quarantine_collision_is_atomic(self):
+        self._bundled_fixture()
+        quarantine = self.root.parent / ('.workspace-mcp-manager-uninstall-bundle-' + self.b.name)
         quarantine.mkdir(parents=True)
-        (quarantine / 'marker').write_text('keep', encoding='utf-8')
-        with mock.patch.object(self.service, '_prune_references', return_value={}):
-            preview = self.service.preview('prune')
+        (quarantine / 'marker').write_text('preserve')
+        with mock.patch.object(self.service, '_bundled_references', return_value={}):
+            preview = self.service.preview('uninstall-tunnel')
             with self.assertRaisesRegex(MaintenanceError, 'quarantine'):
-                self.service.apply(preview, 'PRUNE')
+                self.service.apply(preview, 'UNINSTALL-TUNNEL')
         self.assertTrue(self.a.exists())
         self.assertTrue(self.b.exists())
-        self.assertEqual((quarantine / 'marker').read_text(), 'keep')
+        self.assertEqual((quarantine / 'marker').read_text(), 'preserve')
 
     def test_preview_is_read_only_and_releases_are_local(self):
         before = sorted(str(p) for p in self.home.rglob('*'))
@@ -583,7 +563,7 @@ class PredecessorInspectionTests(unittest.TestCase):
         result = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', str(self.home)], input='0\n', text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('1. Upgrade manager installation\n', result.stdout)
-        self.assertIn('2. Open instance manager\n', result.stdout)
+        self.assertIn('5. Open instance manager\n', result.stdout)
         self.assertIn('1 configured instance', result.stdout)
         self.assertNotIn('Inspection:', result.stdout)
 
@@ -648,7 +628,7 @@ class SetupMenuTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             completed = subprocess.run(['bash', str(ROOT / 'bootstrap.sh'), '--interactive', '--account-home', directory], input='0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn('3. Maintenance', completed.stdout)
+            self.assertIn('6. Maintenance', completed.stdout)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_inspection_errors_are_visible(self):
@@ -765,7 +745,7 @@ case "$1" in
  *) exit 2 ;;
 esac
 ''')
-                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(root / 'home')], input='3\n3\n' + confirmation + '\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'MENU_MARKER': str(marker)})
+                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(root / 'home')], input='1\n' + confirmation + '\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'MENU_MARKER': str(marker)})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(marker.exists(), applies)
                 self.assertIn('Type UNINSTALL', result.stdout)
@@ -796,7 +776,7 @@ class SetupPackagingTests(unittest.TestCase):
             harness = code + '\nBOOTSTRAP_PYTHON=' + shlex.quote(sys.executable) + '\nACCOUNT_HOME=' + shlex.quote(str(home)) + '\nPREFIX=' + shlex.quote(str(prefix)) + '\nwrite_setup_wrapper ' + shlex.quote(str(stage)) + ' ' + shlex.quote(str(final))
             result = subprocess.run(['bash', '-c', harness], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            result = subprocess.run(['bash', str(stage / 'bin/workspace-mcp-manager-setup'), '--interactive'], input='4\n0\n0\n', text=True, capture_output=True, timeout=10)
+            result = subprocess.run(['bash', str(stage / 'bin/workspace-mcp-manager-setup'), '--interactive'], input='7\n0\n0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(str(prefix), result.stdout)
 
@@ -876,7 +856,7 @@ elif args[:3]==['instance','import','apply']:
 else: raise SystemExit(2)
 ''')
                 manager.chmod(0o755)
-                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(home)], input='5\nall\n'+confirmation+'\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'IMPORT_FAIL': '1' if fail else '0'})
+                result = subprocess.run(['bash', str(root / 'setup.sh'), '--interactive', '--account-home', str(home)], input='8\nall\n'+confirmation+'\n0\n', text=True, capture_output=True, timeout=10, env={**os.environ, 'IMPORT_FAIL': '1' if fail else '0'})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(marker.exists(), expected)
                 self.assertIn('Import legacy toolkit instances', result.stdout)
@@ -902,7 +882,7 @@ class ImportAccountBoundaryTests(unittest.TestCase):
             marker = root / 'preview-called'
             manager.write_text('#!' + sys.executable + '\n' + "import sys,json,pathlib\nif '--help' in sys.argv: raise SystemExit(0)\nif 'list' in sys.argv: print(json.dumps({'ok':True,'account_home':'/different-account','manager_prefix':'/different-prefix','candidates':[{'instance_id':'one','state':'ready'}]})); raise SystemExit(0)\npathlib.Path(" + repr(str(marker)) + ").touch()\nraise SystemExit(1)\n")
             manager.chmod(0o755)
-            result = subprocess.run(['bash',str(root / 'setup.sh'),'--interactive','--account-home',str(home)], input='5\none\n\n0\n', text=True, capture_output=True, timeout=10)
+            result = subprocess.run(['bash',str(root / 'setup.sh'),'--interactive','--account-home',str(home)], input='8\none\n\n0\n', text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(marker.exists())
             self.assertIn('account or prefix differs', result.stdout)

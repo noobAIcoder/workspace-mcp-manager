@@ -181,14 +181,29 @@ After installation, open the same menu with:
 workspace-mcp-manager-setup
 ```
 
-Setup inspects local status without contacting the release server. The setup
-menu offers a reviewed manager-only install/update, the existing TUI, maintenance
-and recovery, installation details, and legacy toolkit import (when applicable).
+Setup inspects local status without contacting the release server. Its top menu
+is:
 
-The previous bundled-runtime bulk-upgrade and "install and configure everything"
-menu actions are retired. New instance deployments continue through the existing
-TUI. The operator installs Coding Tools MCP and Tunnel Client manually, then
-selects the external executable paths in the instance wizard.
+1. **Uninstall manager** — use the existing reviewed manager uninstall.
+2. **Uninstall MCP** — remove unused historical bootstrap-bundled MCP releases.
+3. **Uninstall tunnel** — remove unused historical bootstrap-bundled tunnel releases.
+4. **Install/update manager** — review and install manager-only distributions.
+5. **Open instance manager** — launch the Textual TUI.
+6. **Maintenance** — recovery, rollback, and manager uninstall.
+7. **Installation details**.
+8. **Import legacy toolkit instances** — shown only when applicable.
+
+The two component-uninstall actions do not remove independently installed
+binaries under `~/.local/opt`. Old MCP and tunnel binaries were packaged
+together inside immutable releases. Therefore, uninstalling either bundled
+component retires the entire unused historical distribution, which removes its
+other bundled component too. The active manager/TUI and any referenced historical
+releases are protected. The operator MUST first install the manager-only release
+and MUST explicitly confirm removal (`UNINSTALL-MCP` or `UNINSTALL-TUNNEL`).
+
+The previous bulk-upgrade and "install and configure everything" menu actions
+are retired. New instance deployments use the existing TUI and external,
+manually installed runtime executables.
 
 The installer does not automatically launch the TUI. Use
 `workspace-mcp-manager-tui` from any working directory after installation.
@@ -209,21 +224,9 @@ Manager-only updates and restoring a previous manager version preserve existing 
 declarations, runtime paths, and services. Restoring a version keeps a
 maintenance-capable release available through the setup command.
 
-The full upgrade always refreshes deployments, including when the manager release
-is already current. Running instances restart one at a time and briefly lose
-connections; configured stopped instances remain stopped and absent instances
-receive updated runtime references without deployment. The preview identifies
-all runtime-path replacements, including custom binary paths. Other settings,
-credentials, identities, ports and workspaces are retained. Separately installed
-Codex CLI, GitHub CLI and OS packages are excluded.
-
-Original declarations are backed up privately under
-`~/.local/state/workspace-mcp-manager/backups/instance-upgrade-<id>/` before the
-instance stage changes anything. A failure stops subsequent upgrades. Use
-**Maintenance → Recover interrupted operation** to validate and resume the pinned
-target; completed instances are checked and skipped rather than restarted again.
-Previous releases and backups stay available. Cancelling the instance review
-leaves instance runtimes unchanged even if the manager stage already completed.
+Existing instance declarations, runtime paths, credentials, ports, and
+service states are preserved during manager-only updates. A pending historical
+instance upgrade, if present, remains recoverable via the Maintenance menu.
 
 The public manager also exposes `instance upgrade preview --all`,
 `instance upgrade apply --preview PATH --expected-preview-fingerprint VALUE`, and
@@ -343,14 +346,12 @@ bundled paths. New or explicitly reconfigured candidates use externally installe
 Coding Tools MCP and Tunnel Client binaries. Streamable HTTP remains the
 per-instance transport.
 
-No automatic release pruning is performed. Historical distributions remain
-available for rollback until an operator explicitly selects **Maintenance →
-Remove unused old bundled releases** (also offered after a manager-only update).
-The operation previews which old bundled releases can be removed, protects
-releases referenced by instance declarations or systemd units, and requires
-typing `PRUNE`. It removes entire unused historical releases, not individual
-runtime files, and therefore discards rollback to the removed versions.
-The active manager/TUI and manually installed runtime paths are preserved.
+No automatic release deletion occurs during manager installation or upgrades.
+The reviewed **Uninstall MCP** and **Uninstall tunnel** menu actions can retire
+unreferenced historical distributions containing bundled runtimes once the
+active manager is a manager-only release. Removal discards rollback to the
+deleted releases. Manual external installations are never removed by these
+actions.
 
 New manager-only release manifests use schema version 4 and declare only
 their internal Python and uv dependencies. Historical schema version 3
