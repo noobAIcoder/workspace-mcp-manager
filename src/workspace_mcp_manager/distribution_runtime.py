@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,31 +69,67 @@ def executing_distribution_root(*, module_file: Path | None = None) -> Path | No
         raise DistributionRuntimeError(f"cannot validate executing distribution manifest: {install_json}") from exc
 
     commit = release.name.removeprefix("dist-")
+    schema = data.get("schema_version")
     if (
-        data.get("schema_version") != 3
+        schema not in (3, 4)
         or data.get("distribution_id") != release.name
         or data.get("release_commit") != commit
     ):
         raise DistributionRuntimeError("executing distribution identity disagrees with install.json")
 
-    required = (
-        release / "runtimes/coding-tools-mcp/bin/coding-tools-mcp",
-        release / "runtimes/tunnel-client/tunnel-client",
-        release / "runtimes/python/bin/python3",
-    )
+    if schema == 4:
+        if data.get("distribution_profile") != "manager-only":
+            raise DistributionRuntimeError("unsupported manager distribution profile")
+        if not isinstance(data.get("components"), dict) or set(data["components"]) != {"python", "uv"}:
+            raise DistributionRuntimeError("manager-only distribution declares unexpected components")
+        required = (
+            release / "runtimes/python/bin/python3",
+            release / "tools/uv/uv",
+        )
+    else:
+        required = (
+            release / "runtimes/coding-tools-mcp/bin/coding-tools-mcp",
+            release / "runtimes/tunnel-client/tunnel-client",
+            release / "runtimes/python/bin/python3",
+        )
     if any(not path.is_file() for path in required):
-        raise DistributionRuntimeError("executing distribution is missing a required bundled runtime")
+        raise DistributionRuntimeError("executing distribution is missing a required internal runtime")
     return release
+
+
+def _external_executable(paths: ManagerPaths, name: str, *, installed: bool) -> Path:
+    home = paths.account_home
+    stable = (
+        home / ".local/opt/coding-tools-mcp/bin/coding-tools-mcp"
+        if name == "coding-tools-mcp"
+        else home / ".local/opt/tunnel-client/tunnel-client"
+    )
+    candidates = [stable, home / ".local/bin" / name]
+    discovered = shutil.which(name)
+    if discovered:
+        candidates.append(Path(discovered))
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate.resolve(strict=True)
+    # Source development retains the old path fallback. Installed manager-only
+    # releases guide the operator to stable, manually managed paths.
+    return (stable if installed else candidates[1]).resolve(strict=False)
 
 
 def runtime_defaults(paths: ManagerPaths, *, module_file: Path | None = None) -> RuntimeDefaults:
     release = executing_distribution_root(module_file=module_file)
     if release is None:
-        home = paths.account_home
         return RuntimeDefaults(
             distribution_root=None,
-            coding_tools_mcp=(home / ".local/bin/coding-tools-mcp").resolve(strict=False),
-            tunnel_client=(home / ".local/bin/tunnel-client").resolve(strict=False),
+            coding_tools_mcp=_external_executable(paths, "coding-tools-mcp", installed=False),
+            tunnel_client=_external_executable(paths, "tunnel-client", installed=False),
+        )
+    manifest = json.loads((release / "install.json").read_text(encoding="utf-8"))
+    if manifest["schema_version"] == 4:
+        return RuntimeDefaults(
+            distribution_root=release,
+            coding_tools_mcp=_external_executable(paths, "coding-tools-mcp", installed=True),
+            tunnel_client=_external_executable(paths, "tunnel-client", installed=True),
         )
     return RuntimeDefaults(
         distribution_root=release,

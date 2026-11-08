@@ -155,8 +155,9 @@ validation.
 Interactive `bash bootstrap.sh` in a checkout installs its working-tree snapshot. Downloaded bootstrap uses the production release. You may also use
 `bash scripts/setup-local.sh` to install a local working-tree snapshot.
 `scripts/install.sh` is the transaction backend and requires acquisition
-provenance supplied by these entry points. Local checkout installation does not
-fetch manager source; bundled dependencies may still require downloads.
+provenance supplied by these entry points. Local checkout installation does not fetch manager source; the pinned Python,
+uv, and Textual dependencies may still require downloads. External MCP and
+tunnel runtimes are never provisioned by the new manager-only installer.
 
 
 The production distribution channel is fixed to the canonical repository and
@@ -180,42 +181,17 @@ After installation, open the same menu with:
 workspace-mcp-manager-setup
 ```
 
-Setup inspects local status without contacting the release server, explains what
-it found, and recommends a next step. Its main choices are:
+Setup inspects local status without contacting the release server. The setup
+menu offers a reviewed manager-only install/update, the existing TUI, maintenance
+and recovery, installation details, and legacy toolkit import (when applicable).
 
-1. **Install manager**, **Upgrade manager installation**, or **Check for manager
-   updates**, depending on the detected installation. This opens a task page;
-   checking the release server is a separate choice, followed by review and
-   confirmation before any change. This updates the manager only; existing
-   instance runtime paths and services are preserved.
-2. **Open instance manager** to manage workspaces and instance settings.
-3. **Maintenance** for interrupted-operation recovery, restoring a previous
-   manager version, or uninstalling.
-4. **Installation details** for the selected account and installation path, full
-   release IDs, runtime versions, prerequisites, and diagnostics.
-5. **Import legacy toolkit instances**, shown only when an old toolkit is
-   detected. Importing transfers instances into manager control; upgrading an
-   older manager installation preserves its existing instance settings and
-   running services and does not import toolkit instances.
-6. **Upgrade manager and all instances** to update the manager and then refresh
-   every configured instance against its bundled MCP server and tunnel client.
-   The instance stage has its own preview and requires typing `UPGRADE`.
-7. **Install and configure everything** prepares Ubuntu prerequisites, checks
-   user systemd, reviews and installs the complete distribution, and opens the
-   instance wizard. Run this as your regular account, without sudo. Package
-   installation and changes to `/etc/wsl.conf` have separate default-cancel
-   confirmations. If a WSL restart is needed, save your work, run
-   `wsl.exe --shutdown` from Windows, reopen Ubuntu and choose option 7 again.
-   Native Ubuntu may need a new login session for user systemd. Setup rechecks
-   readiness before installing and offers existing instances for continuation.
+The previous bundled-runtime bulk-upgrade and "install and configure everything"
+menu actions are retired. New instance deployments continue through the existing
+TUI. The operator installs Coding Tools MCP and Tunnel Client manually, then
+selects the external executable paths in the instance wizard.
 
-The guided path reports completion only after required services, MCP discovery
-and initialization, and tunnel health and readiness pass. It polls for up to
-120 seconds, then offers retry or return with setup incomplete. Later cancellation
-leaves the manager installed. An optional reviewed addition to `~/.profile` makes
-the installation available on PATH in future login shells. Immediate setup uses
-absolute executable paths. Codex and GitHub CLI are provisioned separately;
-credentials continue to use the existing interactive provider flows.
+The installer does not automatically launch the TUI. Use
+`workspace-mcp-manager-tui` from any working directory after installation.
 
 Download prerequisites are Bash, curl and CA certificates. A fresh Ubuntu host
 can open the menu without Python, but needs Python >=3.10 and Git before source
@@ -299,8 +275,6 @@ commit:
 │   ├── bin/
 │   ├── manager/
 │   ├── runtimes/python/
-│   ├── runtimes/coding-tools-mcp/
-│   ├── runtimes/tunnel-client/
 │   ├── tools/uv/
 │   ├── distribution/
 │   └── install.json
@@ -316,11 +290,11 @@ workspace-mcp-reboot
 workspace-mcp-manager-upgrade
 ```
 
-Each stable command resolves through `current`. Bundled Python, uv,
-`coding-tools-mcp`, and `tunnel-client` remain private to the immutable release;
-the distribution does not replace equivalent host-level commands. Installed
-manager/TUI execution uses the pinned distribution Python rather than mutable
-host Python.
+Each stable command resolves through `current`. Only the manager's Python,
+uv, and hash-locked Textual environment are installed inside a new immutable
+release. Coding Tools MCP and Tunnel Client remain operator-managed external
+installations. Historical releases retain their original bundled runtimes to
+preserve instance references and rollback capability.
 
 `scripts/install.sh` is the sole distribution mutation authority. It stages and
 verifies the complete candidate, validates all existing declarations with the
@@ -364,25 +338,20 @@ committed release.
 A recognized historical P15 installation can be migrated transactionally.
 Foreign, malformed, partial, or mixed ownership fails closed. Distribution
 installation/upgrade does not rewrite declarations, generated systemd units,
-tunnel profiles, GitHub metadata, credentials, or service state. Existing
-instances keep their release-specific runtime paths. New or explicitly
-reconfigured candidates use bundled runtime paths from the immutable manager
-release that is actually executing, even if `current` moves concurrently.
+tunnel profiles, GitHub metadata, credentials, or service state. Existing instance declarations keep their executable paths, including historical
+bundled paths. New or explicitly reconfigured candidates use externally installed
+Coding Tools MCP and Tunnel Client binaries. Streamable HTTP remains the
+per-instance transport.
 
 No automatic release pruning is performed. At minimum this preserves the
 immediately previous release and every release still referenced by a declaration.
 
-The bundled runtime lock selects coding-tools-mcp **0.5.0** with PyJWT **2.10.1**
-and the full Linux amd64 tunnel-client **0.0.15** artifact. The tunnel archive
-includes its NOTICE, dependency licenses, and SPDX SBOM. Managed GitHub
-verification supports coding-tools-mcp 0.2.2, 0.3.0, and 0.5.0, including
-sessionless verification with explicit command timeouts. Python, uv, Textual,
-and the manager package version are unchanged. No experimental runtime flags
-are enabled by this update.
-
-Repository validation and the remaining live WSL qualification gate are recorded
-in [the runtime update report](reports/runtime-update-0.5.0-status.md). Earlier
-qualification reports remain historical evidence for their original runtimes.
+New manager-only release manifests use schema version 4 and declare only
+their internal Python and uv dependencies. Historical schema version 3
+bundled releases remain valid for inspection and rollback. Textual remains
+hash-locked to the manager release. The **Manage Components** TUI provides
+read-only discovery and manual instructions; upstream version checking occurs
+only when requested.
 
 Version/release inspection:
 
@@ -404,12 +373,10 @@ To install your current working tree, run:
 bash scripts/setup-local.sh
 ```
 
-The numbered menu offers manager-only installation/update and **Update all
-bundled components and instances** (option 6). Both install the checkout's pinned
-Python, uv, MCP server, tunnel client, and UI dependencies. Option 6 additionally
-reviews and refreshes all instance deployments, even if the manager is already
-current; running instances restart. Codex CLI, GitHub CLI, Node, and OS packages
-are excluded. No newer upstream versions are selected automatically.
+The numbered menu installs or updates only the manager, pinned Python, uv,
+and Textual. It preserves existing instance declarations, service configuration,
+and runtime paths. MCP and tunnel runtime installation and updates are manual,
+outside the TUI. Codex CLI, GitHub CLI, Node, and OS packages are excluded.
 
 The launcher detects SSH/HTTPS origins and the current commit automatically.
 Local installation inputs, including edits and new package files, are captured in an isolated immutable snapshot. It also supports

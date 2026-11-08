@@ -39,6 +39,8 @@ class InstanceUpgradeService:
         prefix = root.parents[3]
         try:
             data = validate_release(root)
+            if data.get('schema_version') == 4:
+                self.blocked('manager-only distributions do not bundle MCP or tunnel runtimes; use reviewed per-instance configuration')
             status = Maintenance(self.paths.account_home, prefix).status()
             if status['ownership'] != 'standalone_distribution' or status['current'] != root.name:
                 self.blocked('the executing instance-upgrade release is no longer current')

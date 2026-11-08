@@ -178,19 +178,6 @@ print(value)
 PY
 }
 
-lock_dependencies() {
-  local component=$1
-  "$BOOTSTRAP_PYTHON" - "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$component" <<'PY'
-import json, sys
-data=json.load(open(sys.argv[1], encoding="utf-8"))
-for dependency in data["components"][sys.argv[2]]["dependencies"]:
-    values=[dependency[k] for k in ("name","version","source_identity","acquisition_location","sha256")]
-    if any("\t" in v or "\n" in v for v in values):
-        raise SystemExit("unsafe dependency scalar")
-    print("\t".join(values))
-PY
-}
-
 product_version() {
   "$BOOTSTRAP_PYTHON" - "$REPO/pyproject.toml" <<'PY'
 import sys, tomllib
@@ -208,7 +195,6 @@ validate_candidate_source() {
   for required in \
     pyproject.toml \
     requirements-tui.lock \
-    requirements-coding-tools.lock \
     install-versions.lock \
     scripts/install.sh \
     scripts/upgrade.sh \
@@ -406,7 +392,25 @@ required={
     "distribution_id","manager_source_digest","locked_inputs","components",
     "manifest_scope","content_manifest",
 }
-if set(data) != required or data["schema_version"] != 3:
+schema=data.get("schema_version")
+if schema == 3:
+    if set(data) != required:
+        raise SystemExit(1)
+elif schema == 4:
+    if set(data) != required | {"distribution_profile"}:
+        raise SystemExit(1)
+    if data["distribution_profile"] != "manager-only":
+        raise SystemExit(1)
+    if not isinstance(data["components"], dict) or set(data["components"]) != {"python", "uv"}:
+        raise SystemExit(1)
+    if not isinstance(data["locked_inputs"], dict) or set(data["locked_inputs"]) != {"install_versions_sha256", "requirements_tui_sha256"}:
+        raise SystemExit(1)
+    if not (root/"runtimes/python/bin/python3").is_file() or not (root/"tools/uv/uv").is_file():
+        raise SystemExit(1)
+    if any(isinstance(item, dict) and str(item.get("path", "")).startswith(("runtimes/coding-tools-mcp/", "runtimes/tunnel-client/"))
+           for item in data["content_manifest"]):
+        raise SystemExit(1)
+else:
     raise SystemExit(1)
 if not isinstance(data["release_commit"], str) or not __import__("re").fullmatch(r"[0-9a-f]{40}", data["release_commit"]):
     raise SystemExit(1)
@@ -767,68 +771,6 @@ provision_manager() {
   write_setup_wrapper "$stage" "$final"
 }
 
-provision_coding_tools() {
-  local stage=$1 artifact_dir=$2 final=$3
-  local python="$stage/runtimes/python/bin/python3" uv="$stage/tools/uv/uv"
-  local wheel_dir="$artifact_dir/coding-tools-wheels" artifact url sha expected output
-  local dep_name dep_version dep_identity dep_url dep_sha
-  mkdir -p -- "$wheel_dir" "$stage/runtimes/coding-tools-mcp/site-packages" "$stage/runtimes/coding-tools-mcp/bin"
-  url=$(lock_get coding_tools_mcp acquisition_location)
-  sha=$(lock_get coding_tools_mcp sha256)
-  expected=$(lock_get coding_tools_mcp expected_observable_identity)
-  artifact=$(acquire_artifact "$url" "$sha" "$wheel_dir")
-  while IFS=$'\t' read -r dep_name dep_version dep_identity dep_url dep_sha; do
-    [[ -n "$dep_name" ]] || continue
-    acquire_artifact "$dep_url" "$dep_sha" "$wheel_dir" >/dev/null
-  done < <(lock_dependencies coding_tools_mcp)
-  cp -- "$REPO/requirements-coding-tools.lock" "$stage/runtimes/coding-tools-mcp/requirements.lock"
-  UV_CACHE_DIR="$artifact_dir/uv-cache" "$uv" pip install \
-    --python "$python" --target "$stage/runtimes/coding-tools-mcp/site-packages" \
-    --no-cache --no-index --find-links "$wheel_dir" --require-hashes \
-    --only-binary=:all: -r "$stage/runtimes/coding-tools-mcp/requirements.lock" \
-    >/dev/null || die "cannot provision coding-tools-mcp from locked local wheels"
-  output=$(CODING_SITE="$stage/runtimes/coding-tools-mcp/site-packages" "$python" -I -S -c \
-    'import importlib.metadata,os,sys; sys.path.insert(0,os.environ["CODING_SITE"]); print(importlib.metadata.version("coding-tools-mcp"))' 2>&1) \
-    || die "coding-tools-mcp package identity validation failed"
-  [[ "$output" == "$expected" ]] || die "coding-tools-mcp identity mismatch: $output"
-  cat <<EOF | atomic_file_from_stdin "$stage/runtimes/coding-tools-mcp/bin/coding-tools-mcp" 0755
-#!/usr/bin/env bash
-set -euo pipefail
-PYTHON=$(printf '%q' "$final/runtimes/python/bin/python3")
-SITE=$(printf '%q' "$final/runtimes/coding-tools-mcp/site-packages")
-export WORKSPACE_MCP_CODING_TOOLS_SITE="\$SITE"
-exec "\$PYTHON" -B -I -S -c 'import os,sys; sys.path.insert(0,os.environ["WORKSPACE_MCP_CODING_TOOLS_SITE"]); from coding_tools_mcp.server import main; raise SystemExit(main())' "\$@"
-EOF
-}
-
-provision_tunnel_client() {
-  local stage=$1 artifact_dir=$2 artifact url sha expected output
-  url=$(lock_get tunnel_client acquisition_location)
-  sha=$(lock_get tunnel_client sha256)
-  expected=$(lock_get tunnel_client expected_observable_identity)
-  artifact=$(acquire_artifact "$url" "$sha" "$artifact_dir")
-  local entries tunnel_arch=amd64
-  [[ "$(lock_get tunnel_client architecture)" != aarch64 ]] || tunnel_arch=arm64
-  entries=$(unzip -Z1 "$artifact" | LC_ALL=C sort)
-  local expected_entries
-  expected_entries=$(printf '%s\n' LICENSE NOTICE cloudflared cloudflared-manifest.json tunnel-client \
-    "tunnel-client-v0.0.15-linux-$tunnel_arch-licenses.txt" "tunnel-client-v0.0.15-linux-$tunnel_arch.spdx.json")
-  [[ "$entries" == "$expected_entries" ]] || die "tunnel-client archive layout is unexpected"
-  "${BOOTSTRAP_PYTHON:-python3}" - "$artifact" <<'PYZIP' || die "unsafe tunnel-client archive entry"
-import stat,sys,zipfile
-with zipfile.ZipFile(sys.argv[1]) as z:
- for info in z.infolist():
-  mode=info.external_attr >> 16
-  if stat.S_IFMT(mode) not in {0,stat.S_IFREG} or info.is_dir():
-   raise SystemExit(1)
-PYZIP
-  mkdir -p -- "$stage/runtimes/tunnel-client"
-  unzip -q "$artifact" -d "$stage/runtimes/tunnel-client"
-  chmod 0755 "$stage/runtimes/tunnel-client/tunnel-client" "$stage/runtimes/tunnel-client/cloudflared"
-  output=$("$stage/runtimes/tunnel-client/tunnel-client" --version 2>&1) || die "tunnel-client validation failed"
-  [[ "$output" == "$expected" ]] || die "tunnel-client identity mismatch: $output"
-}
-
 stage_distribution_frontends() {
   local stage=$1
   mkdir -p -- "$stage/distribution"
@@ -847,13 +789,12 @@ stage_distribution_frontends() {
 
 write_install_json() {
   local stage=$1 source_digest=$2 product=$3
-  local lock_sha tui_sha coding_sha
+  local lock_sha tui_sha
   lock_sha=$(sha256sum -- "${INSTALL_LOCK:-$REPO/install-versions.lock}" | awk '{print $1}')
   tui_sha=$(sha256sum -- "$REPO/requirements-tui.lock" | awk '{print $1}')
-  coding_sha=$(sha256sum -- "$REPO/requirements-coding-tools.lock" | awk '{print $1}')
   "$stage/runtimes/python/bin/python3" - \
     "$stage" "$source_digest" "$product" "$REPOSITORY" "$RELEASE_REF" "$RELEASE_COMMIT" "$DIST_ID" \
-    "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$lock_sha" "$tui_sha" "$coding_sha" <<'PY'
+    "${INSTALL_LOCK:-$REPO/install-versions.lock}" "$lock_sha" "$tui_sha" <<'PY'
 import hashlib
 import json
 import os
@@ -864,7 +805,7 @@ import sys
 stage=pathlib.Path(sys.argv[1])
 source_digest, product, repository, release_ref, release_commit, distribution_id=sys.argv[2:8]
 lock_path=pathlib.Path(sys.argv[8])
-lock_sha,tui_sha,coding_sha=sys.argv[9:12]
+lock_sha,tui_sha=sys.argv[9:11]
 lock=json.loads(lock_path.read_text(encoding="utf-8"))
 manifest=[]
 for base, dirs, files in os.walk(stage, topdown=True, followlinks=False):
@@ -885,7 +826,8 @@ for base, dirs, files in os.walk(stage, topdown=True, followlinks=False):
             raise SystemExit(f"unsupported immutable content type: {rel}")
 manifest.sort(key=lambda item:item["path"])
 payload={
-    "schema_version":3,
+    "schema_version":4,
+    "distribution_profile":"manager-only",
     "product_version":product,
     "repository":repository,
     "release_ref":release_ref,
@@ -895,9 +837,8 @@ payload={
     "locked_inputs":{
         "install_versions_sha256":lock_sha,
         "requirements_tui_sha256":tui_sha,
-        "requirements_coding_tools_sha256":coding_sha,
     },
-    "components":lock["components"],
+    "components":{name:lock["components"][name] for name in ("python", "uv")},
     "manifest_scope":"all-immutable-files-except-install.json; install.json-sha256-is-anchored-by-receipt",
     "content_manifest":manifest,
 }
@@ -917,15 +858,6 @@ validate_release_runtime() {
   expected=$(lock_get uv expected_observable_identity)
   output=$("$release/tools/uv/uv" --version 2>&1) || die "candidate uv cannot execute"
   [[ "$output" == "$expected" ]] || die "candidate uv identity changed after finalization"
-  expected=$(lock_get tunnel_client expected_observable_identity)
-  output=$("$release/runtimes/tunnel-client/tunnel-client" --version 2>&1) || die "candidate tunnel-client cannot execute"
-  [[ "$output" == "$expected" ]] || die "candidate tunnel-client identity changed after finalization"
-  site="$release/runtimes/coding-tools-mcp/site-packages"
-  expected=$(lock_get coding_tools_mcp expected_observable_identity)
-  output=$(CODING_SITE="$site" "$python" -I -S -c \
-    'import importlib.metadata,os,sys; sys.path.insert(0,os.environ["CODING_SITE"]); print(importlib.metadata.version("coding-tools-mcp"))' 2>&1) \
-    || die "candidate coding-tools package cannot be inspected"
-  [[ "$output" == "$expected" ]] || die "candidate coding-tools identity changed after finalization"
   "$release/bin/workspace-mcp-manager" --help >/dev/null || die "candidate manager wrapper validation failed"
   "$release/bin/workspace-mcp-manager-tui" --help >/dev/null || die "candidate TUI wrapper validation failed"
   set +e
@@ -934,8 +866,6 @@ validate_release_runtime() {
   set -e
   [[ "$reboot_status" == 2 ]] || die "candidate reboot wrapper validation failed"
   "$release/bin/workspace-mcp-manager-upgrade" --help >/dev/null || die "candidate upgrade wrapper validation failed"
-  "$release/runtimes/coding-tools-mcp/bin/coding-tools-mcp" --help >/dev/null \
-    || die "candidate coding-tools wrapper validation failed"
 }
 
 INSTANCE_COUNT=0
@@ -1258,8 +1188,6 @@ construct_candidate() {
   maybe_failpoint during_candidate_construction
   provision_uv "$STAGE_PATH" "$artifact_dir"
   provision_manager "$STAGE_PATH" "$FINAL_RELEASE"
-  provision_coding_tools "$STAGE_PATH" "$artifact_dir" "$FINAL_RELEASE"
-  provision_tunnel_client "$STAGE_PATH" "$artifact_dir"
   stage_distribution_frontends "$STAGE_PATH"
   rm -rf -- "$artifact_dir"
   source_digest=$(manager_source_digest)

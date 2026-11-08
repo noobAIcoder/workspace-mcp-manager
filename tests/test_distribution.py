@@ -342,11 +342,16 @@ class DistributionFixture:
         return release
 
     def write_release_a_declaration(self) -> tuple[Path, bytes]:
-        release = self.prefix / f"lib/workspace-mcp-manager/releases/dist-{A_COMMIT}"
+        # External runtimes are deliberately outside the immutable manager
+        # distribution. Existing instance declarations must retain these paths.
+        mcp = self.home / ".local/opt/coding-tools-mcp/bin/coding-tools-mcp"
+        tunnel = self.home / ".local/opt/tunnel-client/tunnel-client"
+        write_executable(mcp, "#!/bin/sh\nexit 0\n")
+        write_executable(tunnel, "#!/bin/sh\nexit 0\n")
         data = json.loads((ROOT / "examples/manager.json").read_text(encoding="utf-8"))
         data["workspace_path"] = str(self.repo)
-        data["mcp"]["binary"] = str(release / "runtimes/coding-tools-mcp/bin/coding-tools-mcp")
-        data["tunnel"]["binary"] = str(release / "runtimes/tunnel-client/tunnel-client")
+        data["mcp"]["binary"] = str(mcp)
+        data["tunnel"]["binary"] = str(tunnel)
         registry = self.home / ".config/workspace-mcp-manager/instances"
         registry.mkdir(parents=True, exist_ok=True)
         declaration = registry / "manager.json"
@@ -392,6 +397,12 @@ class DistributionInputTests(unittest.TestCase):
             staged = json.loads((fixture.prefix / "lib/workspace-mcp-manager/current/distribution/install-versions.lock").read_text())
             self.assertEqual(staged['architecture'], 'aarch64')
 
+    def test_manager_only_locks_pin_no_external_runtime_versions(self) -> None:
+        for name in ("install-versions.lock", "install-versions.aarch64.lock"):
+            with self.subTest(name=name):
+                lock = json.loads((ROOT / name).read_text(encoding="utf-8"))
+                self.assertEqual(set(lock["components"]), {"python", "uv"})
+
     def test_repository_runtime_lock_is_consistent(self) -> None:
         script = INSTALLER.read_text()
         function = script[script.index("strict_lock_validate() {"):script.index("lock_get() {")]
@@ -403,40 +414,17 @@ class DistributionInputTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_tunnel_archive_layout_is_exact(self) -> None:
-        script = INSTALLER.read_text()
-        function = script[script.index("provision_tunnel_client() {"):script.index("stage_distribution_frontends() {")]
+    def test_manager_only_installer_does_not_use_external_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            original = root / "original.zip"
-            make_tunnel_archive(original)
-            with zipfile.ZipFile(original) as archive:
-                entries = [(info, archive.read(info)) for info in archive.infolist()]
-            for case in ("valid", "missing", "unexpected", "duplicate", "unsafe"):
-                with self.subTest(case=case):
-                    candidate = root / f"{case}.zip"
-                    selected = entries[:-1] if case == "missing" else list(entries)
-                    if case == "unexpected":
-                        selected.append((zipfile.ZipInfo("extra"), b"extra"))
-                    if case == "duplicate":
-                        selected.append(entries[0])
-                    if case == "unsafe":
-                        selected.append((zipfile.ZipInfo("../escape"), b"unsafe"))
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore", UserWarning)
-                        with zipfile.ZipFile(candidate, "w") as archive:
-                            for info, body in selected:
-                                archive.writestr(info, body)
-                    harness = """set -euo pipefail
-lock_get() { if [[ "$2" == expected_observable_identity ]]; then printf '%s' "$IDENTITY"; else printf fixture; fi; }
-acquire_artifact() { printf '%s' "$ARTIFACT"; }
-die() { echo "$*" >&2; exit 1; }
-""" + function + '\nprovision_tunnel_client "$STAGE" unused\n'
-                    result = subprocess.run(["bash", "-c", harness], env={**os.environ, "ARTIFACT": str(candidate), "STAGE": str(root / case), "IDENTITY": TUNNEL_IDENTITY}, text=True, capture_output=True)
-                    self.assertEqual(result.returncode == 0, case == "valid", result.stderr)
-                    if case != "valid":
-                        self.assertIn("archive layout is unexpected", result.stderr)
+            fixture = DistributionFixture(Path(directory))
+            fixture.coding_wheel.unlink()
+            fixture.pyjwt_wheel.unlink()
+            fixture.tunnel_archive.unlink()
+            result = fixture.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            release = fixture.prefix / f"lib/workspace-mcp-manager/releases/dist-{A_COMMIT}"
+            self.assertFalse((release / "runtimes/coding-tools-mcp").exists())
+            self.assertFalse((release / "runtimes/tunnel-client").exists())
 
     def test_valid_strict_lock_is_accepted_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -537,8 +525,6 @@ class DistributionTransactionTests(unittest.TestCase):
                 "manager/src/workspace_mcp_manager/cli.py",
                 "manager/tui-runtime/site-packages/textual/__init__.py",
                 "runtimes/python/bin/python3",
-                "runtimes/coding-tools-mcp/bin/coding-tools-mcp",
-                "runtimes/tunnel-client/tunnel-client",
                 "tools/uv/uv",
                 "distribution/install.sh",
                 "distribution/upgrade.sh",
@@ -548,6 +534,12 @@ class DistributionTransactionTests(unittest.TestCase):
                 "install.json",
             ):
                 self.assertTrue((release / relative).exists(), relative)
+            data = json.loads((release / "install.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["schema_version"], 4)
+            self.assertEqual(data["distribution_profile"], "manager-only")
+            self.assertEqual(set(data["components"]), {"python", "uv"})
+            self.assertFalse((release / "runtimes/coding-tools-mcp").exists())
+            self.assertFalse((release / "runtimes/tunnel-client").exists())
             receipt = fixture.home / ".local/state/workspace-mcp-manager/distribution.json"
             self.assertTrue(receipt.is_file())
             evidence = json.loads(receipt.read_text(encoding="utf-8"))
@@ -627,7 +619,7 @@ class DistributionTransactionTests(unittest.TestCase):
             self.assertTrue((releases / f"dist-{A_COMMIT}").is_dir())
             self.assertTrue((releases / f"dist-{B_COMMIT}").is_dir())
 
-    def test_upgrade_preserves_existing_declaration_and_release_a_runtime_paths(self) -> None:
+    def test_upgrade_preserves_existing_declaration_and_external_runtime_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fixture = DistributionFixture(Path(directory))
             first = fixture.run()

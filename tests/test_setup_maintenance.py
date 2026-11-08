@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from workspace_mcp_manager.maintenance import Maintenance, MaintenanceError
+from workspace_mcp_manager.maintenance import Maintenance, MaintenanceError, validate_release
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +34,40 @@ def release(root: Path, char: str) -> Path:
             'content_manifest': manifest}
     (path / 'install.json').write_text(json.dumps(data))
     return path
+
+
+
+def manager_only_release(root: Path, char: str) -> Path:
+    path = release(root, char)
+    for relative in ('runtimes/python/bin/python3', 'tools/uv/uv'):
+        file = path / relative
+        file.parent.mkdir(parents=True)
+        file.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+        file.chmod(0o755)
+    data = json.loads((path / 'install.json').read_text(encoding='utf-8'))
+    data['schema_version'] = 4
+    data['distribution_profile'] = 'manager-only'
+    data['locked_inputs'] = {
+        'install_versions_sha256': 'a' * 64,
+        'requirements_tui_sha256': 'b' * 64,
+    }
+    data['components'] = {
+        'python': {'version': '3.12', 'expected_observable_identity': 'Python 3.12'},
+        'uv': {'version': '0.12', 'expected_observable_identity': 'uv 0.12'},
+    }
+    data['content_manifest'] = [
+        {
+            'path': file.relative_to(path).as_posix(),
+            'type': 'file',
+            'mode': f'{file.stat().st_mode & 0o7777:04o}',
+            'sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
+        }
+        for file in sorted(path.rglob('*'))
+        if file.is_file() and file.name != 'install.json'
+    ]
+    (path / 'install.json').write_text(json.dumps(data), encoding='utf-8')
+    return path
+
 
 
 class MaintenanceTests(unittest.TestCase):
@@ -63,6 +97,27 @@ class MaintenanceTests(unittest.TestCase):
         self.removal.start()
         self.addCleanup(self.removal.stop)
         self.addCleanup(self.units.stop)
+
+    def test_manager_only_release_coexists_with_historical_bundles(self):
+        candidate = manager_only_release(self.root, 'c')
+        validated = validate_release(candidate)
+        self.assertEqual(validated['schema_version'], 4)
+        self.assertEqual(set(validated['components']), {'python', 'uv'})
+        status = self.service.status()
+        self.assertEqual({row['id'] for row in status['releases']}, {
+            self.a.name, self.b.name, candidate.name,
+        })
+        preview = self.service.preview('rollback', candidate.name)
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['target'], candidate.name)
+
+    def test_manager_only_release_rejects_bundled_runtime_injection(self):
+        candidate = manager_only_release(self.root, 'c')
+        bad = candidate / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp'
+        bad.parent.mkdir(parents=True)
+        bad.write_text('foreign', encoding='utf-8')
+        with self.assertRaises(MaintenanceError):
+            validate_release(candidate)
 
     def test_preview_is_read_only_and_releases_are_local(self):
         before = sorted(str(p) for p in self.home.rglob('*'))

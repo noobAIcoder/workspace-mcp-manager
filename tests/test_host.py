@@ -73,7 +73,7 @@ class HostInspectorTests(unittest.TestCase):
         self.assertEqual(result["source"], "loginctl-list-users")
 
     @patch("workspace_mcp_manager.host.shutil.which")
-    def test_doctor_fails_missing_required_component(self, which) -> None:
+    def test_doctor_allows_missing_optional_component(self, which) -> None:
         mapping = {
             "python3": "/usr/bin/python3",
             "systemctl": "/usr/bin/systemctl",
@@ -91,10 +91,10 @@ class HostInspectorTests(unittest.TestCase):
                 return_value=CommandObservation(("x",), 0, "running\n", ""),
             ):
                 doctor = inspector.doctor()
-        self.assertFalse(doctor["ok"])
+        self.assertTrue(doctor["ok"])
         self.assertEqual(
             next(item for item in doctor["checks"] if item["name"] == "tunnel-client")["status"],
-            "FAIL",
+            "OPTIONAL",
         )
 
 

@@ -261,18 +261,20 @@ class HostInspector:
             },
             {
                 "name": "coding-tools-mcp",
-                "status": "PASS" if components["coding-tools-mcp"]["present"] else "FAIL",
+                "status": "PASS" if components["coding-tools-mcp"]["present"] else "OPTIONAL",
                 "detail": components["coding-tools-mcp"]["path"],
+                "required": False,
             },
             {
                 "name": "tunnel-client",
-                "status": "PASS" if components["tunnel-client"]["present"] else "FAIL",
+                "status": "PASS" if components["tunnel-client"]["present"] else "OPTIONAL",
                 "detail": components["tunnel-client"]["path"],
+                "required": False,
             },
         ]
         return {
             "schema_version": 1,
-            "ok": all(item["status"] == "PASS" for item in checks),
+            "ok": all(item["status"] == "PASS" for item in checks if item.get("required", True)),
             "checks": checks,
         }
 

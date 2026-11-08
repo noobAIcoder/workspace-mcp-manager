@@ -105,8 +105,26 @@ def inventory(root):
 def validate_release(path):
     data = read_json(path / 'install.json')
     required = {'schema_version', 'product_version', 'repository', 'release_ref', 'release_commit', 'distribution_id', 'manager_source_digest', 'locked_inputs', 'components', 'manifest_scope', 'content_manifest'}
-    if set(data) != required or data['schema_version'] != 3 or not RELEASE.fullmatch(path.name):
+    schema = data.get('schema_version')
+    if schema == 3:
+        fields_valid = set(data) == required
+    elif schema == 4:
+        fields_valid = set(data) == required | {'distribution_profile'}
+        fields_valid = fields_valid and data.get('distribution_profile') == 'manager-only'
+        fields_valid = fields_valid and isinstance(data.get('components'), dict) and set(data['components']) == {'python', 'uv'}
+        fields_valid = fields_valid and isinstance(data.get('locked_inputs'), dict) and set(data['locked_inputs']) == {'install_versions_sha256', 'requirements_tui_sha256'}
+    else:
+        fields_valid = False
+    if not fields_valid or not RELEASE.fullmatch(path.name):
         raise MaintenanceError(f'unsupported release: {path.name}; migrate historical installations before maintenance')
+    if schema == 4:
+        if not (path / 'runtimes/python/bin/python3').is_file() or not (path / 'tools/uv/uv').is_file():
+            raise MaintenanceError('manager-only release is missing internal runtime')
+        if any(
+            isinstance(item, dict) and str(item.get('path', '')).startswith(('runtimes/coding-tools-mcp/', 'runtimes/tunnel-client/'))
+            for item in data.get('content_manifest', [])
+        ):
+            raise MaintenanceError('manager-only release incorrectly bundles external runtimes')
     if data['distribution_id'] != path.name or path.name != 'dist-' + data['release_commit']:
         raise MaintenanceError('release identity mismatch')
     if data['manifest_scope'] != 'all-immutable-files-except-install.json; install.json-sha256-is-anchored-by-receipt':
@@ -408,16 +426,18 @@ class Maintenance:
     def validate_runtime(self, release):
         data = read_json(release / 'install.json')
         commands = {'python': [str(release / 'runtimes/python/bin/python3'), '--version'],
-                    'uv': [str(release / 'tools/uv/uv'), '--version'],
-                    'tunnel_client': [str(release / 'runtimes/tunnel-client/tunnel-client'), '--version']}
+                    'uv': [str(release / 'tools/uv/uv'), '--version']}
+        if data['schema_version'] == 3:
+            commands['tunnel_client'] = [str(release / 'runtimes/tunnel-client/tunnel-client'), '--version']
         for name, argv in commands.items():
             result = subprocess.run(argv, text=True, capture_output=True, timeout=20)
             if result.returncode or result.stdout.strip() != data['components'][name]['expected_observable_identity']:
                 raise MaintenanceError(f'rollback runtime validation failed: {name}')
-        code = 'import importlib.metadata,sys; sys.path.insert(0,sys.argv[1]); print(importlib.metadata.version("coding-tools-mcp"))'
-        result = subprocess.run([commands['python'][0], '-B', '-I', '-S', '-c', code, str(release / 'runtimes/coding-tools-mcp/site-packages')], text=True, capture_output=True, timeout=20)
-        if result.returncode or result.stdout.strip() != data['components']['coding_tools_mcp']['expected_observable_identity']:
-            raise MaintenanceError('rollback coding-tools identity mismatch')
+        if data['schema_version'] == 3:
+            code = 'import importlib.metadata,sys; sys.path.insert(0,sys.argv[1]); print(importlib.metadata.version("coding-tools-mcp"))'
+            result = subprocess.run([commands['python'][0], '-B', '-I', '-S', '-c', code, str(release / 'runtimes/coding-tools-mcp/site-packages')], text=True, capture_output=True, timeout=20)
+            if result.returncode or result.stdout.strip() != data['components']['coding_tools_mcp']['expected_observable_identity']:
+                raise MaintenanceError('rollback coding-tools identity mismatch')
         for name in COMMANDS[:2]:
             if subprocess.run([str(release / 'bin' / name), '--help'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20).returncode:
                 raise MaintenanceError(f'rollback wrapper validation failed: {name}')

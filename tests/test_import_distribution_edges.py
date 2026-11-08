@@ -3,16 +3,13 @@ from __future__ import annotations
 import io
 import os
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
-import warnings
-import zipfile
 
-from tests.test_distribution import DistributionFixture, INSTALLER, make_tunnel_archive, TUNNEL_IDENTITY
+from tests.test_distribution import DistributionFixture, INSTALLER
 
 
 class ImportInstallerEdges(unittest.TestCase):
@@ -49,37 +46,13 @@ class ImportInstallerEdges(unittest.TestCase):
             self.assertEqual(os.readlink(command), '../lib/workspace-mcp/workspace-mcp-reboot')
             self.assertTrue(helper.is_file())
 
-    def test_arm_tunnel_layout_and_entry_types_are_strict(self):
-        source = INSTALLER.read_text()
-        function = source[source.index('provision_tunnel_client() {'):source.index('stage_distribution_frontends() {')]
-        harness = '''set -euo pipefail
-lock_get() { case "$2" in architecture) printf aarch64;; expected_observable_identity) printf '%s' "$IDENTITY";; *) printf fixture;; esac; }
-acquire_artifact() { printf '%s' "$ARTIFACT"; }
-die() { echo "$*" >&2; exit 2; }
-''' + function + '\nprovision_tunnel_client "$STAGE" unused\n'
+    def test_arm_manager_install_does_not_acquire_tunnel_release(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            original = root / 'original.zip'; make_tunnel_archive(original, 'arm64')
-            with zipfile.ZipFile(original) as archive:
-                entries = [(info, archive.read(info)) for info in archive.infolist()]
-            for case in ('valid','missing','unexpected','duplicate','unsafe','symlink'):
-                with self.subTest(case=case):
-                    selected = list(entries)
-                    if case == 'missing': selected.pop()
-                    if case in {'unexpected','unsafe'}: selected.append((zipfile.ZipInfo('extra' if case == 'unexpected' else '../escape'), b'data'))
-                    if case == 'duplicate': selected.append(entries[0])
-                    candidate = root / (case+'.zip')
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore', UserWarning)
-                        with zipfile.ZipFile(candidate, 'w') as archive:
-                            for info, body in selected:
-                                fresh = zipfile.ZipInfo(info.filename); fresh.external_attr = info.external_attr
-                                if case == 'symlink' and info.filename == 'cloudflared': fresh.external_attr = (stat.S_IFLNK | 0o777) << 16
-                                archive.writestr(fresh, body)
-                    stage = root / case
-                    result = subprocess.run(['bash','-c',harness], text=True, capture_output=True, env={**os.environ,'BOOTSTRAP_PYTHON':sys.executable,'ARTIFACT':str(candidate),'STAGE':str(stage),'IDENTITY':TUNNEL_IDENTITY})
-                    self.assertEqual(result.returncode == 0, case == 'valid', result.stderr)
-                    if case != 'valid': self.assertFalse(stage.exists())
+            fixture = DistributionFixture(Path(directory), arch='aarch64')
+            fixture.tunnel_archive.unlink()
+            result = fixture.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((fixture.current / 'runtimes/tunnel-client').exists())
 
     def test_host_profiles_are_explicit(self):
         source = INSTALLER.read_text()

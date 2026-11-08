@@ -42,7 +42,10 @@ if sys.argv[3] and data["architecture"] != sys.argv[3]:
     raise SystemExit("artifact lock architecture does not match the host")
 
 components = data["components"]
-exact_keys(components, {"python", "uv", "coding_tools_mcp", "tunnel_client"}, "components")
+required_manager = {"python", "uv"}
+required_legacy = required_manager | {"coding_tools_mcp", "tunnel_client"}
+if set(components) not in (required_manager, required_legacy):
+    raise SystemExit("components must contain only manager dependencies (or a historical complete bundle)")
 component_fields = {
     "version", "source_kind", "source_identity", "acquisition_location", "sha256",
     "platform", "architecture", "dependency_lock_identity", "dependencies",
@@ -95,18 +98,19 @@ for name, component in components.items():
         if parsed.scheme != "https" or not parsed.netloc:
             raise SystemExit(f"dependency acquisition_location must be HTTPS for {name}")
 
-coding = components["coding_tools_mcp"]
-if not coding_lock.is_file() or coding_lock.is_symlink():
-    raise SystemExit("requirements-coding-tools.lock is missing/not regular")
-digest = hashlib.sha256(coding_lock.read_bytes()).hexdigest()
-expected_identity = f"requirements-coding-tools.lock@sha256:{digest}"
-if coding["dependency_lock_identity"] != expected_identity:
-    raise SystemExit("coding-tools dependency lock identity mismatch")
-if len(coding["dependencies"]) != 1 or coding["dependencies"][0]["name"] != "PyJWT":
-    raise SystemExit("coding-tools dependency closure must contain exactly pinned PyJWT")
-coding_lock_text = coding_lock.read_text(encoding="utf-8")
-if f"coding-tools-mcp=={coding['version']}" not in coding_lock_text or f"--hash=sha256:{coding['sha256']}" not in coding_lock_text:
-    raise SystemExit("coding-tools component is inconsistent with its dependency lock")
-dependency = coding["dependencies"][0]
-if f"PyJWT=={dependency['version']}" not in coding_lock_text or f"--hash=sha256:{dependency['sha256']}" not in coding_lock_text:
-    raise SystemExit("PyJWT artifact is inconsistent with coding-tools dependency lock")
+if "coding_tools_mcp" in components:
+    coding = components["coding_tools_mcp"]
+    if not coding_lock.is_file() or coding_lock.is_symlink():
+        raise SystemExit("requirements-coding-tools.lock is missing/not regular")
+    digest = hashlib.sha256(coding_lock.read_bytes()).hexdigest()
+    expected_identity = f"requirements-coding-tools.lock@sha256:{digest}"
+    if coding["dependency_lock_identity"] != expected_identity:
+        raise SystemExit("coding-tools dependency lock identity mismatch")
+    if len(coding["dependencies"]) != 1 or coding["dependencies"][0]["name"] != "PyJWT":
+        raise SystemExit("coding-tools dependency closure must contain exactly pinned PyJWT")
+    coding_lock_text = coding_lock.read_text(encoding="utf-8")
+    if f"coding-tools-mcp=={coding['version']}" not in coding_lock_text or f"--hash=sha256:{coding['sha256']}" not in coding_lock_text:
+        raise SystemExit("coding-tools component is inconsistent with its dependency lock")
+    dependency = coding["dependencies"][0]
+    if f"PyJWT=={dependency['version']}" not in coding_lock_text or f"--hash=sha256:{dependency['sha256']}" not in coding_lock_text:
+        raise SystemExit("PyJWT artifact is inconsistent with coding-tools dependency lock")

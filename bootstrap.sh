@@ -502,13 +502,7 @@ setup_render_menu() {
   if $pending; then primary+=' (unavailable: recover in Maintenance first)'; fi
   printf '\n1. %s\n2. %s\n3. Maintenance\n4. Installation details\n' "$primary" "$open"
   $legacy && printf '5. Import legacy toolkit instances\n'
-  local full='Update all bundled components and instances'
-  if $pending; then full+=' (unavailable: recover in Maintenance first)'
-  elif [[ "$ownership" == absent ]]; then full+=' (unavailable: install the manager first)'
-  elif [[ "$ownership" == unknown ]]; then full+=' (unavailable: verify installation status first)'; fi
-  printf '6. %s\n' "$full"
-  printf '7. Install and configure everything\n'
-  printf '\nOption 1 updates only the manager; option 6 also refreshes instance runtimes.\n'
+  printf '\nNew installations contain the manager and Textual only. Install MCP and Tunnel Client manually.\n'
   printf '0. Exit\n\nChoice [0]: '
 }
 
@@ -570,7 +564,7 @@ setup_install_task() {
   if $pending; then printf 'Blocked: recover the interrupted operation in Maintenance first.\n'; return 0; fi
   case "$ownership" in absent|recognized_existing|standalone_distribution) ;; *) printf 'Blocked: verify installation status in Installation details first.\n'; return 0 ;; esac
   if [[ -n "$LOCAL_REPO" ]]; then
-    printf '\nInstall/update from local checkout: %s\nPinned bundled components are installed together. Existing instances change only with option 6.\n' "$LOCAL_REPO"
+    printf '\nInstall/update from local checkout: %s\nOnly manager and Textual dependencies are installed. Existing MCP/tunnel instance references stay unchanged.\n' "$LOCAL_REPO"
   else
     printf '\nInstall or update manager\n\nThis task contacts the release server and reviews the candidate before any change.\n'
   fi
@@ -905,8 +899,7 @@ setup_menu() {
       3) setup_maintenance_task ;;
       4) setup_details ;;
       5) setup_import_task ;;
-      6) setup_full_upgrade_task ;;
-      7) setup_guided_task ;;
+      6|7) printf 'This bundled-runtime setup workflow is retired. Install the manager with option 1, then launch the TUI manually.\n' ;;
       *) printf 'Choose one of the listed tasks, or 0 to exit.\n' ;;
     esac
   done

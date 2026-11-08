@@ -105,6 +105,55 @@ class DistributionRuntimeTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(second.distribution_root, a)
 
+    def test_manager_only_installed_distribution_uses_external_runtimes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release, module = fake_release(root, "d" * 40)
+            for relative in ("runtimes/coding-tools-mcp/bin/coding-tools-mcp",
+                             "runtimes/tunnel-client/tunnel-client"):
+                (release / relative).unlink()
+            uv = release / "tools/uv/uv"
+            uv.parent.mkdir(parents=True)
+            uv.write_text("# fixture\n", encoding="utf-8")
+            (release / "install.json").write_text(json.dumps({
+                "schema_version": 4, "distribution_profile": "manager-only",
+                "distribution_id": release.name, "release_commit": "d" * 40,
+                "components": {"python": {"version": "3.12"}, "uv": {"version": "0.12"}},
+            }), encoding="utf-8")
+            home = root / "home"
+            mcp = home / ".local/opt/coding-tools-mcp/bin/coding-tools-mcp"
+            tunnel = home / ".local/opt/tunnel-client/tunnel-client"
+            for path in (mcp, tunnel):
+                path.parent.mkdir(parents=True)
+                path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                path.chmod(0o755)
+            defaults = runtime_defaults(paths_for(home), module_file=module)
+            self.assertEqual(defaults.distribution_root, release)
+            self.assertEqual(defaults.coding_tools_mcp, mcp)
+            self.assertEqual(defaults.tunnel_client, tunnel)
+            self.assertFalse((release / "runtimes/tunnel-client").exists())
+
+    def test_manager_only_missing_externals_does_not_break_tui(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release, module = fake_release(root, "e" * 40)
+            for relative in ("runtimes/coding-tools-mcp/bin/coding-tools-mcp",
+                             "runtimes/tunnel-client/tunnel-client"):
+                (release / relative).unlink()
+            uv = release / "tools/uv/uv"
+            uv.parent.mkdir(parents=True)
+            uv.write_text("# fixture\n", encoding="utf-8")
+            (release / "install.json").write_text(json.dumps({
+                "schema_version": 4, "distribution_profile": "manager-only",
+                "distribution_id": release.name, "release_commit": "e" * 40,
+                "components": {"python": {"version": "3.12"}, "uv": {"version": "0.12"}},
+            }), encoding="utf-8")
+            home = root / "home"
+            with patch("workspace_mcp_manager.distribution_runtime.shutil.which", return_value=None):
+                defaults = runtime_defaults(paths_for(home), module_file=module)
+            self.assertEqual(defaults.coding_tools_mcp, home / ".local/opt/coding-tools-mcp/bin/coding-tools-mcp")
+            self.assertEqual(defaults.tunnel_client, home / ".local/opt/tunnel-client/tunnel-client")
+
     def test_malformed_installed_projection_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

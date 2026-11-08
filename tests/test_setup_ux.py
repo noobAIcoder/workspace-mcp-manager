@@ -16,8 +16,10 @@ PREVIOUS = 'dist-' + 'b' * 40
 
 
 class GuidedSetupTests(unittest.TestCase):
-    def test_guided_task_is_available_without_changing_existing_numbers(self):
-        self.assertIn('7. Install and configure everything', self.run_menu())
+    def test_setup_offers_manager_only_installation(self):
+        output = self.run_menu()
+        self.assertIn('manager and Textual only', output)
+        self.assertNotIn('Install and configure everything', output)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -308,41 +310,17 @@ fi
         manager.write_text('#!/bin/bash\ncase "$3" in\n preview) printf \'%s\\n\' ' + shlex.quote(json.dumps(preview)) + '\n;;\n apply) touch ' + shlex.quote(str(self.fleet_marker)) + '; printf \'%s\\n\' \'{"ok":true,"action":"instance-upgrade","completed":["one"],"remaining":[]}\';;\n *) exit 2;;\nesac\n')
         manager.chmod(0o755)
 
-    def test_full_upgrade_requires_second_confirmation(self):
+    def test_bootstrap_does_not_offer_bundled_runtime_upgrade(self):
+        result = self.run_menu('0\n')
+        self.assertNotIn('Update all bundled components and instances', result.stdout)
+        self.assertNotIn('Install and configure everything', result.stdout)
+        self.assertIn('manager and Textual only', result.stdout)
+
+    def test_retired_bundled_setup_action_cannot_change_instances(self):
         self.prepare_full_upgrade()
-        result = self.run_menu('6\n1\ny\n\n0\n')
-        self.assertIn('Type UPGRADE', result.stdout)
+        result = self.run_menu('6\n0\n')
         self.assertFalse(self.fleet_marker.exists())
-        self.assertIn('instance runtimes were not changed', result.stdout)
-
-    def test_full_upgrade_refreshes_an_already_current_release(self):
-        self.prepare_full_upgrade()
-        result = self.run_menu('6\n1\nUPGRADE\n0\n', current=True)
-        self.assertIn('Already current', result.stdout)
-        self.assertTrue(self.fleet_marker.exists())
-        self.assertIn('Upgrade manager and all instances', result.stdout)
-
-    def test_cancelled_manager_stage_does_not_start_instance_stage(self):
-        self.prepare_full_upgrade()
-        result = self.run_menu('6\n1\n\n0\n')
-        self.assertFalse(self.fleet_marker.exists())
-        self.assertNotIn('Type UPGRADE', result.stdout)
-
-    def test_full_upgrade_configure_opens_manager_after_refresh(self):
-        self.prepare_full_upgrade()
-        result = self.run_menu('6\n1\ny\nUPGRADE\n0\n', configure=True)
-        self.assertTrue(self.fleet_marker.exists())
-        self.assertTrue(self.tui_marker.exists())
-        self.assertNotIn('Next steps', result.stdout)
-
-    def test_full_upgrade_refuses_preview_for_another_account(self):
-        self.prepare_full_upgrade()
-        manager = self.home / '.local/lib/workspace-mcp-manager/releases' / CURRENT / 'bin/workspace-mcp-manager'
-        manager.write_text(manager.read_text().replace(str(self.home), '/different-account'))
-        result = self.run_menu('6\n1\n0\n', current=True)
-        self.assertFalse(self.fleet_marker.exists())
-        self.assertNotIn('Type UPGRADE', result.stdout)
-        self.assertIn('preview does not match the selected account', result.stdout)
+        self.assertIn('bundled-runtime setup workflow is retired', result.stdout)
 
     def test_maintenance_resumes_recorded_instance_upgrade(self):
         self.prepare_full_upgrade()
