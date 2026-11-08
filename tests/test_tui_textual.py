@@ -659,6 +659,7 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_wsl_host_clipboard_bridge_handles_copy_and_explicit_paste(self) -> None:
         client = FakeClient()
         with (
+            mock.patch("workspace_mcp_manager.tui_textual._is_ssh_session", return_value=False),
             mock.patch("workspace_mcp_manager.tui_textual._copy_to_host_clipboard") as copy_host,
             mock.patch("workspace_mcp_manager.tui_textual._read_host_clipboard", return_value="8123"),
         ):
