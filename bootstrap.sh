@@ -476,7 +476,7 @@ setup_readiness() {
     if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then compatible_python=true; break; fi
   done
   if ! $compatible_python; then host_ready=false; readiness+=$'\nPython >=3.10 is required; prepare prerequisites first.'; fi
-  for required in git curl sha256sum realpath mktemp flock tar unzip systemctl; do
+  for required in git curl sha256sum realpath mktemp flock tar systemctl; do
     if ! command -v "$required" >/dev/null 2>&1; then host_ready=false; readiness+=$'\nMissing prerequisite: '"$required"; fi
   done
   if command -v systemctl >/dev/null 2>&1 && ! systemctl --user show-environment >/dev/null 2>&1; then

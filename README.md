@@ -262,7 +262,7 @@ manager after a successful installation/update.
 
 Supported installation profiles are **WSL2 Ubuntu 24.04 x86_64** and **native Ubuntu 22.04/24.04 ARM64 (aarch64)**. Live migration qualification remains a separate gate. Bootstrap
 prerequisites are Bash, Git, curl, Python >= 3.10, `sha256sum`, `realpath`,
-`mktemp`, `flock`, GNU coreutils, `tar`, `unzip`, and an available user-systemd
+`mktemp`, `flock`, GNU coreutils, `tar`, and an available user-systemd
 manager. The installer does not invoke `sudo`, require system `pip`, or require
 system `uv`.
 

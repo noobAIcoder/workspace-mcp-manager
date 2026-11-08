@@ -264,7 +264,7 @@ validate_checkout_provenance() {
 
 preflight_read_only() {
   local command os_id os_version kernel arch
-  for command in bash git curl python3 sha256sum realpath mktemp flock stat find sort grep awk cat cp mv ln readlink chmod dirname tar unzip date systemctl; do
+  for command in bash git curl python3 sha256sum realpath mktemp flock stat find sort grep awk cat cp mv ln readlink chmod dirname tar date systemctl; do
     require_command "$command"
   done
   bootstrap_python_check
