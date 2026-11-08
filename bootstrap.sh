@@ -194,7 +194,7 @@ if not p["ok"]:
  print("Blocked or interrupted: "+str(error))
 else:
  action=p.get("action") or ("legacy instances imported" if "completed" in p else "operation")
- print("Completed: "+{"noop":"manager already current", "install":"manager installed", "upgrade":"manager updated", "instance-upgrade":"instance runtimes refreshed", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled"}.get(action, str(action).replace("_", " "))+".")
+ print("Completed: "+{"noop":"manager already current", "install":"manager installed", "upgrade":"manager updated", "instance-upgrade":"instance runtimes refreshed", "migration":"manager installation upgraded", "recover":"recovery completed", "rollback":"previous manager version restored", "uninstall":"manager uninstalled", "prune":"unused bundled releases removed"}.get(action, str(action).replace("_", " "))+".")
 if p.get("backup"): print("Preserved data: "+p["backup"])
 if p.get("product_version"): print("Manager version: "+p["product_version"])
 if p.get("completed_instances"): print("Removed deployments: "+", ".join(p["completed_instances"]))
@@ -237,7 +237,7 @@ import json,sys
 p=json.load(sys.stdin)
 s=p.get("status", {})
 action=p.get("action") or {"absent":"install", "recognized_existing":"migration", "standalone_distribution":"upgrade"}.get(p.get("ownership"), "change")
-print("Review: "+{"install":"install manager", "migration":"upgrade older manager installation", "upgrade":"update manager", "rollback":"restore a previous manager version", "uninstall":"uninstall manager"}.get(action,action))
+print("Review: "+{"install":"install manager", "migration":"upgrade older manager installation", "upgrade":"update manager", "rollback":"restore a previous manager version", "uninstall":"uninstall manager", "prune":"remove unused bundled releases"}.get(action,action))
 installed=p.get("installed_product_version")
 candidate=p.get("candidate_product_version")
 if not installed: installed=next((r.get("version") for r in s.get("releases",[]) if r.get("id")==s.get("current")),None)
@@ -547,13 +547,14 @@ setup_open_manager() {
 setup_next_steps() {
   local choice
   while ! $SETUP_EXIT; do
-    printf '\nNext steps\n\n1. Open instance manager\n2. Return to setup\n0. Exit\n\nChoice [0]: '
+    printf '\nNext steps\n\n1. Open instance manager\n2. Remove unused old bundled releases\n3. Return to setup\n0. Exit\n\nChoice [0]: '
     setup_read choice || return 0
     case "$choice" in
       1) setup_open_manager; return 0 ;;
-      2) return 0 ;;
+      2) setup_prune_task; return 0 ;;
+      3) return 0 ;;
       0|'') SETUP_EXIT=true; return 0 ;;
-      *) printf 'Choose 1, 2, or 0.\n' ;;
+      *) printf 'Choose 1, 2, 3, or 0.\n' ;;
     esac
   done
 }
@@ -689,6 +690,54 @@ setup_resume_instance_upgrade() {
   else setup_result <<<"$result" || printf '%s\n' "$result"; printf 'Resume did not complete. Review the failed and remaining instances before retrying.\n'; fi
 }
 
+setup_prune_task() {
+  local preview confirmation result
+  if $pending; then printf 'Blocked: recover unfinished work before pruning releases.\n'; return 0; fi
+  if [[ "$ownership" != standalone_distribution || -z "$backend" ]]; then
+    printf 'Blocked: a verified manager installation is required.\n'; return 0
+  fi
+  preview=$(mktemp)
+  if ! bash "$backend" --maintenance-preview prune --account-home "$ACCOUNT_HOME" --prefix "$PREFIX" >"$preview"; then
+    setup_result <"$preview" || cat -- "$preview"
+    rm -f -- "$preview"
+    printf 'Blocked: install the manager-only release and inspect any references first.\n'
+    return 0
+  fi
+  setup_preview_summary <"$preview"
+  python3 - "$preview" <<'PYPRUNE'
+import json,sys
+p=json.load(open(sys.argv[1]))
+for name in p.get('candidates',[]):
+ print('  Remove historical release: '+name)
+for name,reasons in p.get('protected',{}).items():
+ print('  Retain referenced release: '+name+' ('+', '.join(reasons)+')')
+PYPRUNE
+  if ! python3 - "$preview" <<'PYCOUNT'
+import json,sys
+raise SystemExit(not bool(json.load(open(sys.argv[1])).get('candidates')))
+PYCOUNT
+  then
+    rm -f -- "$preview"
+    printf 'No unused bundled releases to remove.\n'
+    return 0
+  fi
+  printf 'This discards rollback to the listed old releases, but retains the active TUI and external MCP/tunnel installations.\n'
+  printf 'Type PRUNE to remove only the listed unused releases (blank cancels): '
+  if ! setup_read confirmation || [[ "$confirmation" != PRUNE ]]; then
+    rm -f -- "$preview"
+    printf 'Cancelled: old releases retained.\n'
+    return 0
+  fi
+  if result=$(bash "$backend" --maintenance-apply --confirmation PRUNE --account-home "$ACCOUNT_HOME" --prefix "$PREFIX" <"$preview"); then
+    setup_result <<<"$result"
+    setup_inspect
+  else
+    setup_result <<<"$result" || printf '%s\n' "$result"
+    printf 'Review the error and installation details. The active TUI was not removed.\n'
+  fi
+  rm -f -- "$preview"
+}
+
 setup_maintenance_task() {
   local choice confirmation preview target operation selection result reason rollback_reason rollback_count
   while ! $SETUP_EXIT; do
@@ -705,7 +754,7 @@ setup_maintenance_task() {
       rollback_count=$(python3 -c 'import json,sys; s=json.load(sys.stdin); print(sum(r["id"]!=s.get("current") for r in s.get("releases",[])))' <<<"$status")
       [[ "$rollback_count" != 0 ]] || rollback_reason=' (unavailable: no previous version retained)'
     fi
-    printf '2. Restore a previous manager version%s\n3. Uninstall manager%s\n0. Back\n\nChoice [0]: ' "$rollback_reason" "$reason"
+    printf '2. Restore a previous manager version%s\n3. Uninstall manager%s\n4. Remove unused old bundled releases%s\n0. Back\n\nChoice [0]: ' "$rollback_reason" "$reason" "$reason"
     setup_read choice || return 0
     case "$choice" in
       0|'') return 0 ;;
@@ -720,6 +769,10 @@ setup_maintenance_task() {
         fi
         if result=$(bash "$backend" --recover-only --account-home "$ACCOUNT_HOME" --prefix "$PREFIX"); then setup_result <<<"$result"
         else setup_result <<<"$result" || printf '%s\n' "$result"; printf 'Recovery did not complete. Review Installation details before retrying.\n'; fi
+        return 0
+        ;;
+      4)
+        setup_prune_task
         return 0
         ;;
       2|3)
@@ -763,7 +816,7 @@ setup_maintenance_task() {
         rm -f -- "$preview"
         return 0
         ;;
-      *) printf 'Choose 1, 2, 3, or 0.\n' ;;
+      *) printf 'Choose 1, 2, 3, 4, or 0.\n' ;;
     esac
   done
 }

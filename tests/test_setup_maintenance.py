@@ -70,6 +70,38 @@ def manager_only_release(root: Path, char: str) -> Path:
 
 
 
+def add_bundled_runtimes(path: Path) -> None:
+    """Upgrade a historical release fixture to include the former bundles."""
+    for relative in (
+        'runtimes/coding-tools-mcp/bin/coding-tools-mcp',
+        'runtimes/tunnel-client/tunnel-client',
+    ):
+        binary = path / relative
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+        binary.chmod(0o755)
+    data = json.loads((path / 'install.json').read_text(encoding='utf-8'))
+    data['components'] = {
+        'python': {'version': '3.12'},
+        'uv': {'version': '0.12'},
+        'coding_tools_mcp': {'version': '0.5.0'},
+        'tunnel_client': {'version': '0.0.15'},
+    }
+    data['content_manifest'] = [
+        {
+            'path': file.relative_to(path).as_posix(),
+            'type': 'file',
+            'mode': f'{file.stat().st_mode & 0o7777:04o}',
+            'sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
+        }
+        for file in sorted(path.rglob('*'))
+        if file.is_file() and file.name != 'install.json'
+    ]
+    (path / 'install.json').write_text(json.dumps(data), encoding='utf-8')
+
+
+
+
 class MaintenanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -118,6 +150,122 @@ class MaintenanceTests(unittest.TestCase):
         bad.write_text('foreign', encoding='utf-8')
         with self.assertRaises(MaintenanceError):
             validate_release(candidate)
+
+    def _setup_prune_fixture(self):
+        current = self.root / 'current'
+        current.unlink()
+        active = manager_only_release(self.root, 'c')
+        current.symlink_to('releases/' + active.name)
+        add_bundled_runtimes(self.a)
+        add_bundled_runtimes(self.b)
+        return active
+
+    def test_prune_removes_only_unused_old_bundled_releases(self):
+        active = self._setup_prune_fixture()
+        manual = self.home / '.local/opt/coding-tools-mcp/bin/coding-tools-mcp'
+        manual.parent.mkdir(parents=True)
+        manual.write_text('manual runtime')
+        with mock.patch.object(self.service, '_prune_references', return_value={}):
+            before = {p.name for p in (self.root / 'releases').iterdir()}
+            preview = self.service.preview('prune')
+            self.assertEqual(set(preview['candidates']), {self.a.name, self.b.name})
+            self.assertEqual({p.name for p in (self.root / 'releases').iterdir()}, before)
+            with self.assertRaisesRegex(MaintenanceError, 'PRUNE'):
+                self.service.apply(preview, 'yes')
+            result = self.service.apply(preview, 'PRUNE')
+        self.assertEqual(set(result['removed']), {self.a.name, self.b.name})
+        self.assertFalse(self.a.exists())
+        self.assertFalse(self.b.exists())
+        self.assertEqual(self.service.status()['current'], active.name)
+        self.assertTrue((active / 'bin/workspace-mcp-manager-tui').exists())
+        self.assertEqual(manual.read_text(), 'manual runtime')
+
+    def test_prune_protects_historical_release_referenced_by_instance(self):
+        active = self._setup_prune_fixture()
+        registry = self.home / '.config/workspace-mcp-manager/instances'
+        registry.mkdir(parents=True)
+        (registry / 'one.json').write_text(json.dumps({
+            'instance_id': 'one', 'mcp': {'binary': str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp')}
+        }), encoding='utf-8')
+        with mock.patch.object(self.service, '_prune_references',
+                               wraps=self.service._prune_references) as scan, mock.patch(
+                                   'subprocess.run'
+                               ) as cmd:
+            cmd.return_value.returncode = 0
+            cmd.return_value.stdout = ''
+            preview = self.service.preview('prune')
+            self.assertEqual(preview['candidates'], [self.b.name])
+            self.assertIn('instance:one', preview['protected'][self.a.name])
+            self.service.apply(preview, 'PRUNE')
+            scan.assert_called()
+        self.assertTrue(self.a.exists())
+        self.assertFalse(self.b.exists())
+        self.assertTrue(active.exists())
+
+    def test_prune_protects_loaded_services_and_direct_processes(self):
+        self._setup_prune_fixture()
+        references = {
+            'loaded services': 'ExecStart=' + str(self.a / 'runtimes/coding-tools-mcp/bin/coding-tools-mcp'),
+            'process:1234': str(self.b / 'runtimes/tunnel-client/tunnel-client'),
+        }
+        with mock.patch.object(self.service, '_prune_references', return_value=references):
+            preview = self.service.preview('prune')
+            self.assertEqual(preview['candidates'], [])
+            self.assertIn('loaded services', preview['protected'][self.a.name])
+            self.assertIn('process:1234', preview['protected'][self.b.name])
+            result = self.service.apply(preview, 'PRUNE')
+        self.assertEqual(result['removed'], [])
+        self.assertTrue(self.a.is_dir())
+        self.assertTrue(self.b.is_dir())
+
+    def test_interrupted_prune_preserves_active_manager(self):
+        active = self._setup_prune_fixture()
+        quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + self.a.name)
+        with (
+            mock.patch.object(self.service, '_prune_references', return_value={}),
+            mock.patch('workspace_mcp_manager.maintenance.shutil.rmtree',
+                       side_effect=OSError('simulated power interruption')),
+        ):
+            preview = self.service.preview('prune')
+            with self.assertRaisesRegex(MaintenanceError, 'quarantined'):
+                self.service.apply(preview, 'PRUNE')
+        self.assertTrue(quarantine.is_dir())
+        self.assertTrue((active / 'bin/workspace-mcp-manager-tui').exists())
+        self.assertEqual(self.service.status()['current'], active.name)
+
+    def test_prune_blocks_when_legacy_release_is_current(self):
+        add_bundled_runtimes(self.a)
+        with self.assertRaisesRegex(MaintenanceError, 'manager-only'):
+            self.service.preview('prune')
+        self.assertTrue(self.a.exists())
+
+    def test_prune_rejects_stale_preview_and_preserves_bundles(self):
+        self._setup_prune_fixture()
+        with mock.patch.object(self.service, '_prune_references', return_value={}):
+            preview = self.service.preview('prune')
+            source = self.home / '.config/workspace-mcp-manager/instances'
+            source.mkdir(parents=True)
+            (source / 'one.json').write_text(json.dumps({
+                'instance_id': 'one', 'tunnel': {'binary': str(self.a / 'runtimes/tunnel-client/tunnel-client')}
+            }), encoding='utf-8')
+            with self.assertRaisesRegex(MaintenanceError, 'preview changed'):
+                self.service.apply(preview, 'PRUNE')
+        self.assertTrue(self.a.exists())
+        self.assertTrue(self.b.exists())
+
+    def test_prune_never_overwrites_quarantine(self):
+        self._setup_prune_fixture()
+        # Colliding with the *second* release must not remove the first.
+        quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + self.b.name)
+        quarantine.mkdir(parents=True)
+        (quarantine / 'marker').write_text('keep', encoding='utf-8')
+        with mock.patch.object(self.service, '_prune_references', return_value={}):
+            preview = self.service.preview('prune')
+            with self.assertRaisesRegex(MaintenanceError, 'quarantine'):
+                self.service.apply(preview, 'PRUNE')
+        self.assertTrue(self.a.exists())
+        self.assertTrue(self.b.exists())
+        self.assertEqual((quarantine / 'marker').read_text(), 'keep')
 
     def test_preview_is_read_only_and_releases_are_local(self):
         before = sorted(str(p) for p in self.home.rglob('*'))

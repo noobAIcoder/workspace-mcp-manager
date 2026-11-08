@@ -31,7 +31,7 @@ Modes:
 
 Options:
   --maintenance-status   Read-only offline maintenance status
-  --maintenance-preview ACTION  Preview rollback or uninstall (JSON)
+  --maintenance-preview ACTION  Preview rollback, uninstall, or prune (JSON)
   --maintenance-apply    Apply a preview read from stdin
   --maintenance-target ID  Retained release for rollback
   --confirmation TEXT   Explicit maintenance confirmation

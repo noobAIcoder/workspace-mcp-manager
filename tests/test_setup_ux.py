@@ -285,8 +285,12 @@ fi
         self.assertFalse(self.tui_marker.exists())
         self.assertIn('Next steps', result.stdout)
 
+    def test_prune_action_is_listed_under_maintenance(self):
+        result = self.run_menu('3\n0\n0\n')
+        self.assertIn('4. Remove unused old bundled releases', result.stdout)
+
     def test_success_return_refreshes_setup(self):
-        result = self.run_menu('1\n1\ny\n2\n0\n')
+        result = self.run_menu('1\n1\ny\n3\n0\n')
         self.assertTrue(self.marker.exists())
         self.assertFalse(self.tui_marker.exists())
         self.assertIn('1. Review manager update', result.stdout)

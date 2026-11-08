@@ -343,8 +343,14 @@ bundled paths. New or explicitly reconfigured candidates use externally installe
 Coding Tools MCP and Tunnel Client binaries. Streamable HTTP remains the
 per-instance transport.
 
-No automatic release pruning is performed. At minimum this preserves the
-immediately previous release and every release still referenced by a declaration.
+No automatic release pruning is performed. Historical distributions remain
+available for rollback until an operator explicitly selects **Maintenance →
+Remove unused old bundled releases** (also offered after a manager-only update).
+The operation previews which old bundled releases can be removed, protects
+releases referenced by instance declarations or systemd units, and requires
+typing `PRUNE`. It removes entire unused historical releases, not individual
+runtime files, and therefore discards rollback to the removed versions.
+The active manager/TUI and manually installed runtime paths are preserved.
 
 New manager-only release manifests use schema version 4 and declare only
 their internal Python and uv dependencies. Historical schema version 3

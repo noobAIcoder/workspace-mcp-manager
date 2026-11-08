@@ -385,9 +385,165 @@ class Maintenance:
                     result.append(next((line[3:] for line in block.splitlines() if line.startswith('Id=')), 'loaded service'))
         return sorted(set(result))
 
+    def _prune_references(self, status):
+        """Collect exact text references to retained release roots, without secrets."""
+        sources = {}
+        for instance_id, declaration in status['instances'].items():
+            sources['instance:' + instance_id] = json.dumps(declaration, sort_keys=True)
+
+        setup = self.prefix / 'bin/workspace-mcp-manager-setup'
+        if setup.is_symlink():
+            sources['setup launcher'] = os.readlink(setup)
+
+        units = self.home / '.config/systemd/user'
+        if units.is_dir():
+            for path in sorted(units.rglob('*')):
+                if path.suffix not in {'.service', '.timer', '.socket'}:
+                    continue
+                if path.is_symlink():
+                    sources['unit:' + path.name] = os.readlink(path)
+                elif path.is_file():
+                    sources['unit:' + path.name] = path.read_text(encoding='utf-8', errors='replace')
+
+        # A unit may remain loaded after its on-disk file has been deleted.
+        listing = subprocess.run(
+            ['systemctl', '--user', 'list-units', '--all', '--type=service',
+             '--no-legend', '--plain'],
+            text=True, capture_output=True, timeout=20,
+        )
+        if listing.returncode:
+            raise MaintenanceError('cannot inspect loaded services before pruning old releases')
+        names = [line.split()[0] for line in listing.stdout.splitlines() if line.split()]
+        if names:
+            shown = subprocess.run(
+                ['systemctl', '--user', 'show', '--property=Id,ExecStart',
+                 '--', *names],
+                text=True, capture_output=True, timeout=20,
+            )
+            if shown.returncode:
+                raise MaintenanceError('cannot inspect running service commands before pruning')
+            sources['loaded services'] = shown.stdout
+
+        # Also protect a historical release used by a direct (non-systemd)
+        # process. Only record matching paths, never full process arguments.
+        roots = [
+            str(self.root / 'releases' / item['id'])
+            for item in status['releases']
+            if item['id'] != status['current']
+        ]
+        proc = Path('/proc')
+        if proc.is_dir():
+            for process in proc.iterdir():
+                if not process.name.isdigit():
+                    continue
+                try:
+                    if process.stat().st_uid != os.getuid():
+                        continue
+                    argv = (process / 'cmdline').read_bytes().decode('utf-8', errors='replace')
+                except (OSError, UnicodeError):
+                    continue
+                matches = [root for root in roots if root in argv]
+                if matches:
+                    sources['process:' + process.name] = ','.join(matches)
+        return sources
+
+    def preview_prune(self):
+        status = self.status()
+        if status['recovery_required']:
+            raise MaintenanceError('recover pending work before pruning old releases')
+        if status['ownership'] != 'standalone_distribution':
+            raise MaintenanceError('pruning requires a complete installed manager')
+        active = self.root / 'releases' / status['current']
+        if validate_release(active)['schema_version'] != 4:
+            raise MaintenanceError('install and verify the manager-only release before pruning bundled copies')
+
+        references = self._prune_references(status)
+        candidates, protected = [], {}
+        for item in status['releases']:
+            release_id = item['id']
+            if release_id == status['current']:
+                continue
+            path = self.root / 'releases' / release_id
+            data = validate_release(path)
+            if data['schema_version'] != 3:
+                continue
+            if not (
+                (path / 'runtimes/coding-tools-mcp').is_dir()
+                or (path / 'runtimes/tunnel-client').is_dir()
+            ):
+                continue
+            # Do not prune a release referenced by any declaration or unit.
+            absolute = str(path)
+            references_to_release = [
+                label for label, content in references.items()
+                if absolute in content or (
+                    label == 'setup launcher' and release_id in content
+                )
+            ]
+            if references_to_release:
+                protected[release_id] = sorted(references_to_release)
+            else:
+                candidates.append(release_id)
+
+        # Nothing under the active release, external ~/.local/opt, or
+        # managed instance data is included in this removal preview.
+        payload = {
+            'ok': True, 'action': 'prune', 'active': status['current'],
+            'candidates': candidates, 'protected': protected,
+            'preserved': ['active manager and TUI', 'external runtimes',
+                          'instance declarations', 'profiles and credentials',
+                          'referenced historical releases'],
+        }
+        payload['fingerprint'] = digest({
+            'preview': payload,
+            'inventory': inventory(self.root),
+            'declarations': status['instances'],
+            'references': references,
+        })
+        return payload
+
+    def apply_prune(self, preview, confirmation):
+        if confirmation != 'PRUNE':
+            raise MaintenanceError('type PRUNE to confirm removal of unused bundled releases')
+        with self.locked():
+            fresh = self.preview_prune()
+            if preview.get('action') != 'prune' or preview.get('fingerprint') != fresh['fingerprint']:
+                raise MaintenanceError('prune preview changed; inspect again')
+            # Check every destination before removing any candidate, so a
+            # preexisting quarantine cannot cause avoidable partial cleanup.
+            for release_id in fresh['candidates']:
+                quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + release_id)
+                if quarantine.exists() or quarantine.is_symlink():
+                    raise MaintenanceError('old prune quarantine needs manual inspection: ' + str(quarantine))
+            removed = []
+            for release_id in fresh['candidates']:
+                path = self.root / 'releases' / release_id
+                # Always validate before moving, and never follow symlinked roots.
+                validate_release(path)
+                quarantine = self.root.parent / ('.workspace-mcp-manager-prune-' + release_id)
+                os.rename(path, quarantine)
+                sync_dir(self.root / 'releases')
+                # The rename is the removal commit point. An interruption
+                # during deletion cannot corrupt the active manager.
+                try:
+                    shutil.rmtree(quarantine)
+                    sync_dir(self.root.parent)
+                except OSError as exc:
+                    raise MaintenanceError(
+                        'manager remains installed; obsolete release is quarantined at '
+                        + str(quarantine) + ': ' + str(exc)
+                    ) from exc
+                removed.append(release_id)
+            return {
+                'ok': True, 'action': 'prune', 'removed': removed,
+                'protected': fresh['protected'], 'active': fresh['active'],
+            }
+
     def preview(self, action, target=None):
         if list((self.state / 'imports').glob('*.json')):
             raise MaintenanceError('recover pending legacy imports before distribution maintenance')
+        if action == 'prune':
+            return self.preview_prune()
         if action not in {'rollback', 'uninstall'}:
             raise MaintenanceError('unsupported maintenance action')
         status = self.status()
@@ -528,6 +684,8 @@ class Maintenance:
         sync_dir(backup.parent)
 
     def apply(self, preview, confirmation):
+        if preview.get('action') == 'prune':
+            return self.apply_prune(preview, confirmation)
         action = preview.get('action')
         expected = 'UNINSTALL' if action == 'uninstall' else 'yes'
         if confirmation != expected:
@@ -713,7 +871,7 @@ def main():
     parser.add_argument('--prefix', required=True)
     parser.add_argument('--lock-held', action='store_true')
     parser.add_argument('--action', choices=['status', 'preview', 'apply', 'recover'], required=True)
-    parser.add_argument('--operation', choices=['rollback', 'uninstall'])
+    parser.add_argument('--operation', choices=['rollback', 'uninstall', 'prune'])
     parser.add_argument('--target')
     parser.add_argument('--confirmation')
     args = parser.parse_args()
