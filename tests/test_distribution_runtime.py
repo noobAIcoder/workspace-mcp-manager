@@ -28,16 +28,18 @@ def paths_for(home: Path) -> ManagerPaths:
     )
 
 
-def fake_release(root: Path, commit: str) -> tuple[Path, Path]:
+def fake_release(root: Path, commit: str, *, bundled: bool = True) -> tuple[Path, Path]:
     release = root / "lib/workspace-mcp-manager/releases" / f"dist-{commit}"
     module = release / "manager/src/workspace_mcp_manager/distribution_runtime.py"
     module.parent.mkdir(parents=True)
     module.write_text("# fixture\n", encoding="utf-8")
-    for relative in (
-        "runtimes/python/bin/python3",
-        "runtimes/coding-tools-mcp/bin/coding-tools-mcp",
-        "runtimes/tunnel-client/tunnel-client",
-    ):
+    executables = ["runtimes/python/bin/python3"]
+    if bundled:
+        executables.extend((
+            "runtimes/coding-tools-mcp/bin/coding-tools-mcp",
+            "runtimes/tunnel-client/tunnel-client",
+        ))
+    for relative in executables:
         path = release / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture\n", encoding="utf-8")
@@ -108,10 +110,7 @@ class DistributionRuntimeTests(unittest.TestCase):
     def test_manager_only_installed_distribution_uses_external_runtimes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            release, module = fake_release(root, "d" * 40)
-            for relative in ("runtimes/coding-tools-mcp/bin/coding-tools-mcp",
-                             "runtimes/tunnel-client/tunnel-client"):
-                (release / relative).unlink()
+            release, module = fake_release(root, "d" * 40, bundled=False)
             uv = release / "tools/uv/uv"
             uv.parent.mkdir(parents=True)
             uv.write_text("# fixture\n", encoding="utf-8")
@@ -131,15 +130,13 @@ class DistributionRuntimeTests(unittest.TestCase):
             self.assertEqual(defaults.distribution_root, release)
             self.assertEqual(defaults.coding_tools_mcp, mcp)
             self.assertEqual(defaults.tunnel_client, tunnel)
+            self.assertFalse((release / "runtimes/coding-tools-mcp").exists())
             self.assertFalse((release / "runtimes/tunnel-client").exists())
 
     def test_manager_only_missing_externals_does_not_break_tui(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            release, module = fake_release(root, "e" * 40)
-            for relative in ("runtimes/coding-tools-mcp/bin/coding-tools-mcp",
-                             "runtimes/tunnel-client/tunnel-client"):
-                (release / relative).unlink()
+            release, module = fake_release(root, "e" * 40, bundled=False)
             uv = release / "tools/uv/uv"
             uv.parent.mkdir(parents=True)
             uv.write_text("# fixture\n", encoding="utf-8")
@@ -153,6 +150,8 @@ class DistributionRuntimeTests(unittest.TestCase):
                 defaults = runtime_defaults(paths_for(home), module_file=module)
             self.assertEqual(defaults.coding_tools_mcp, home / ".local/opt/coding-tools-mcp/bin/coding-tools-mcp")
             self.assertEqual(defaults.tunnel_client, home / ".local/opt/tunnel-client/tunnel-client")
+            self.assertFalse((release / "runtimes/coding-tools-mcp").exists())
+            self.assertFalse((release / "runtimes/tunnel-client").exists())
 
     def test_malformed_installed_projection_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
