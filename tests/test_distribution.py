@@ -251,6 +251,10 @@ class DistributionFixture:
                 },
             },
         }
+        # New manager installations lock only their own dependencies.
+        # Keep the historical fixture artifacts available to test that the
+        # installer never downloads or requires either external runtime.
+        lock["components"] = {name: lock["components"][name] for name in ("python", "uv")}
         (self.repo / "install-versions.lock").write_text(
             json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -480,10 +484,12 @@ class DistributionInputTests(unittest.TestCase):
             lock.write_text(json.dumps(data), encoding="utf-8")
             self.assertEqual(fixture.run("--check").returncode, 2)
 
+            # External runtime package locks are not part of a manager-only
+            # distribution. A changed legacy lock must not block installation.
             fixture = DistributionFixture(Path(directory) / "second")
             dep_lock = fixture.repo / "requirements-coding-tools.lock"
             dep_lock.write_text(dep_lock.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
-            self.assertEqual(fixture.run("--check").returncode, 2)
+            self.assertEqual(fixture.run("--check").returncode, 0)
 
 
 class DistributionTransactionTests(unittest.TestCase):

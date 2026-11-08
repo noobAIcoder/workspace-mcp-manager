@@ -880,14 +880,9 @@ setup_menu() {
   fi
   while ! $SETUP_EXIT; do
     if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3,10))' >/dev/null 2>&1; then
-      printf '\nWorkspace MCP Manager — Setup\nInstallation state: unknown (Python >=3.10 unavailable).\n7. Install and configure everything\n0. Exit\nChoice [0]: '
-      setup_read choice || return 0
-      case "$choice" in
-        0|'') return 0 ;;
-        7) setup_guided_task ;;
-        *) printf 'Prepare prerequisites with option 7 before inspecting the installation.\n' ;;
-      esac
-      continue
+      printf '\nWorkspace MCP Manager — Setup\nPython >=3.10 is required to inspect or install the manager.\n'
+      printf 'Install Python with the operating system package manager, then rerun setup.\n'
+      return 2
     fi
     setup_inspect
     setup_render_menu
