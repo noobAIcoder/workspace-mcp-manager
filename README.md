@@ -193,13 +193,17 @@ is:
 7. **Installation details**.
 8. **Import legacy toolkit instances** — shown only when applicable.
 
-The two component-uninstall actions do not remove independently installed
-binaries under `~/.local/opt`. Old MCP and tunnel binaries were packaged
-together inside immutable releases. Therefore, uninstalling either bundled
-component retires the entire unused historical distribution, which removes its
-other bundled component too. The active manager/TUI and any referenced historical
-releases are protected. The operator MUST first install the manager-only release
-and MUST explicitly confirm removal (`UNINSTALL-MCP` or `UNINSTALL-TUNNEL`).
+The two component-uninstall actions are single-action operations; they do
+not remove independently installed binaries under `~/.local/opt`.
+When the active manager still contains bundled runtimes, the selected
+uninstall action automatically installs the manager-only distribution using
+the same acquisition source. It then removes unused historical distributions
+that contain the selected component. These older releases contained both
+MCP and Tunnel Client, so removal also deletes the other bundled component
+and forfeits rollback to those releases. The active manager/TUI, manually
+installed executables, and historical releases referenced by existing
+instances or services are preserved. There is no separate manager-upgrade
+step or second uninstall confirmation.
 
 The previous bulk-upgrade and "install and configure everything" menu actions
 are retired. New instance deployments use the existing TUI and external,

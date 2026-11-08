@@ -327,7 +327,7 @@ fi
         result = self.run_menu('0\n')
         self.assertNotIn('Update all bundled components and instances', result.stdout)
         self.assertNotIn('Install and configure everything', result.stdout)
-        self.assertIn('Component removal targets only unused bootstrap-bundled releases', result.stdout)
+        self.assertIn('Uninstall MCP/Tunnel automatically converts old bundled managers', result.stdout)
 
     def test_retired_bundled_setup_action_cannot_change_instances(self):
         self.prepare_full_upgrade()

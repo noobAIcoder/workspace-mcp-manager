@@ -502,8 +502,8 @@ setup_render_menu() {
   if $pending; then primary+=' (unavailable: recover in Maintenance first)'; fi
   printf '\n1. Uninstall manager\n2. Uninstall MCP\n3. Uninstall tunnel\n4. %s\n5. %s\n6. Maintenance\n7. Installation details\n' "$primary" "$open"
   $legacy && printf '8. Import legacy toolkit instances\n'
-  printf '\nComponent removal targets only unused bootstrap-bundled releases.\n'
-  printf 'External runtimes under ~/.local/opt are not removed.\n'
+  printf '\nUninstall MCP/Tunnel automatically converts old bundled managers and removes unused bundles.\n'
+  printf 'The TUI and external runtimes under ~/.local/opt are preserved.\n'
   printf '0. Exit\n\nChoice [0]: '
 }
 
@@ -690,6 +690,51 @@ setup_resume_instance_upgrade() {
   else setup_result <<<"$result" || printf '%s\n' "$result"; printf 'Resume did not complete. Review the failed and remaining instances before retrying.\n'; fi
 }
 
+setup_prepare_component_uninstall() {
+  # The selected uninstall action migrates an older immutable bundle first.
+  # The existing installer owns the transaction and retains all instance data.
+  local manifest="$PREFIX/lib/workspace-mcp-manager/current/install.json"
+  local profile result
+  profile=$(python3 - "$manifest" <<'PYPROFILE'
+import json, pathlib, sys
+path=pathlib.Path(sys.argv[1])
+try:
+    version=json.loads(path.read_text(encoding='utf-8'))['schema_version']
+except (OSError, KeyError, ValueError, TypeError):
+    version='unknown'
+print(version)
+PYPROFILE
+  )
+  case "$profile" in
+    4) return 0 ;;
+    3)
+      printf 'Migrating bundled manager to manager-only distribution (preserving TUI and instances)...\n'
+      if result=$(bash "$self" "${remote_args[@]}"); then
+        setup_result <<<"$result" || return 1
+      else
+        setup_result <<<"$result" || true
+        printf 'Manager migration failed; existing installation was retained.\n'
+        return 1
+      fi
+      setup_inspect
+      if [[ "$ownership" != standalone_distribution ]]; then
+        printf 'Manager installation cannot be verified after migration.\n'
+        return 1
+      fi
+      python3 - "$PREFIX/lib/workspace-mcp-manager/current/install.json" <<'PYVERIFIED'
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as stream:
+        data=json.load(stream)
+    assert data['schema_version']==4 and data['distribution_profile']=='manager-only'
+except (OSError, KeyError, ValueError, AssertionError):
+    raise SystemExit('Migration did not produce a valid manager-only distribution')
+PYVERIFIED
+      ;;
+    *) printf 'No verified bundled manager installation requires conversion.\n' ;;
+  esac
+}
+
 setup_uninstall_component_task() {
   local component=$1 action preview result confirmation expected
   if $pending; then printf 'Blocked: recover interrupted work first.\n'; return 0; fi
@@ -702,16 +747,16 @@ setup_uninstall_component_task() {
     tunnel) expected=UNINSTALL-TUNNEL ;;
     *) printf 'Unsupported component.\n'; return 2 ;;
   esac
+  setup_prepare_component_uninstall || return 0
   preview=$(mktemp)
   if ! bash "$backend" --maintenance-preview "$action" --account-home "$ACCOUNT_HOME" --prefix "$PREFIX" >"$preview"; then
     setup_result <"$preview" || cat -- "$preview"
     rm -f -- "$preview"
-    printf 'Bundled runtime removal requires a verified manager-only release.\n'
-    printf 'Use option 4 to install the manager-only release first.\n'
+    printf 'Component uninstall could not inspect the current installation. No program files were deleted.\n'
     return 0
   fi
 
-  printf '\nBundled %s removal — review\n' "$component"
+  printf '\nUninstalling bootstrap-bundled %s\n' "$component"
   python3 - "$preview" <<'PYCOMPONENT'
 import json,sys
 p=json.load(open(sys.argv[1]))
@@ -733,12 +778,7 @@ PYCOUNT
     printf 'No unused bootstrap-bundled %s releases to remove.\n' "$component"
     return 0
   fi
-  printf 'Type %s to remove the listed historical releases (blank cancels): ' "$expected"
-  if ! setup_read confirmation || [[ "$confirmation" != "$expected" ]]; then
-    rm -f -- "$preview"
-    printf 'Cancelled: installed components unchanged.\n'
-    return 0
-  fi
+  printf 'Uninstalling unused historical bundled releases...\n'
   if result=$(bash "$backend" --maintenance-apply --confirmation "$expected" --account-home "$ACCOUNT_HOME" --prefix "$PREFIX" <"$preview"); then
     setup_result <<<"$result"
     setup_inspect
