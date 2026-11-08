@@ -432,8 +432,6 @@ class BaseScreen(Screen[None]):
     def action_back(self) -> None:
         if len(self.app.screen_stack) > 2:
             self.app.pop_screen()
-        elif not isinstance(self, DashboardScreen):
-            self.app.switch_screen(DashboardScreen())
         else:
             self.app.exit()
 
@@ -501,6 +499,174 @@ class RawJsonScreen(BaseScreen):
             )
             yield Static("Read-only diagnostic evidence", id="screen-status")
         yield Footer()
+
+
+
+class MainMenuScreen(BaseScreen):
+    """Small entry menu; instance management remains the existing dashboard."""
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(classes="page"):
+            yield Static("[b]MCP Lifecycle Manager[/b]", classes="title")
+            yield Static("Choose what to manage.", classes="card")
+            with Horizontal(classes="actions"):
+                yield Button("Manage Components", id="manage-components", variant="primary")
+                yield Button("Manage Instances", id="manage-instances")
+            yield Static("", id="screen-status")
+        yield Footer()
+
+    @on(Button.Pressed)
+    def button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "manage-components":
+            self.app.push_screen(ComponentsScreen())
+        elif event.button.id == "manage-instances":
+            self.app.push_screen(DashboardScreen())
+
+
+class ComponentsScreen(BaseScreen):
+    """Read-only inventory with manual commands; no installation actions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.inventory: Mapping[str, Any] = {}
+        self.names: list[str] = []
+        self.selected_name = "coding-tools-mcp"
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(classes="page"):
+            yield Static("[b]Manage Components[/b]", classes="title")
+            yield Static("Install and update runtimes manually outside the TUI.", classes="card")
+            yield DataTable(id="component-rows", cursor_type="row", zebra_stripes=True)
+            yield Static("Select a component to see its path and official instructions.", id="component-detail", classes="card")
+            yield TextArea("", read_only=True, id="component-instructions")
+            with Horizontal(classes="actions"):
+                yield Button("Refresh local", id="component-refresh", variant="primary")
+                yield Button("Check upstream", id="component-upstream")
+                yield Button("Copy commands", id="component-copy")
+                yield Button("Open documentation", id="component-docs")
+                yield Button("Back", id="component-back")
+            yield Static("", id="screen-status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#component-rows", DataTable)
+        table.add_columns("Component", "Version", "Latest stable", "Status", "Referenced by")
+        self.refresh_authoritative()
+
+    def refresh_authoritative(self, *, check_updates: bool = False) -> None:
+        self.query_one("#component-rows", DataTable).loading = True
+        self.set_status("Checking upstream versions..." if check_updates else "Inspecting local components...")
+        self._load_inventory(check_updates)
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _load_inventory(self, check_updates: bool) -> None:
+        try:
+            inventory = self.client.component_inventory(check_updates=check_updates)
+        except TuiError as exc:
+            self.app.call_from_thread(self._show_error, exc)
+            return
+        self.app.call_from_thread(self._show_inventory, inventory)
+
+    def _show_error(self, exc: TuiError) -> None:
+        self.query_one("#component-rows", DataTable).loading = False
+        self.set_status(f"Component inspection failed: {exc}")
+
+    def _show_inventory(self, inventory: Mapping[str, Any]) -> None:
+        self.inventory = inventory
+        table = self.query_one("#component-rows", DataTable)
+        table.clear()
+        self.names.clear()
+        components = inventory.get("components", {})
+        if not isinstance(components, Mapping):
+            components = {}
+        for name in ("coding-tools-mcp", "tunnel-client", "textual"):
+            component = components.get(name, {})
+            if not isinstance(component, Mapping):
+                continue
+            installed = component.get("installations", [])
+            installed = installed if isinstance(installed, list) else []
+            latest = component.get("latest_stable") or ("managed by manager" if name == "textual" else "not checked")
+            if not installed:
+                table.add_row(
+                    name, str(component.get("version") or "—"), str(latest),
+                    "managed" if name == "textual" else "missing", "—",
+                )
+                self.names.append(name)
+            for installation in installed:
+                if not isinstance(installation, Mapping):
+                    continue
+                users = installation.get("used_by", [])
+                table.add_row(
+                    name, str(installation.get("version") or "unknown"), str(latest),
+                    str(installation.get("status") or "unknown"),
+                    ", ".join(users) if isinstance(users, list) and users else "—",
+                )
+                self.names.append(name)
+        table.loading = False
+        self._render_selection()
+        self.set_status("Upstream versions checked" if any(
+            isinstance(value, Mapping) and value.get("upstream_checked")
+            for value in components.values()
+        ) else "Local inventory refreshed")
+
+    def _render_selection(self) -> None:
+        components = self.inventory.get("components", {})
+        entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
+        if not isinstance(entry, Mapping):
+            entry = {}
+        installations = entry.get("installations", [])
+        paths = [
+            str(item.get("path")) for item in installations
+            if isinstance(item, Mapping) and item.get("path")
+        ] if isinstance(installations, list) else []
+        url = entry.get("documentation_url") or "Internal manager dependency"
+        upstream_error = entry.get("upstream_error")
+        self.query_one("#component-detail", Static).update(
+            f"Component: {self.selected_name}\n"
+            + f"Executables: {', '.join(paths) if paths else 'not detected'}\n"
+            + f"Documentation: {url}"
+            + (f"\nUpstream: {upstream_error}" if upstream_error else "")
+        )
+        commands = entry.get("manual_commands")
+        self.query_one("#component-instructions", TextArea).load_text(
+            str(commands) if commands else "Textual is installed and updated with the manager release."
+        )
+        for button_id in ("component-copy", "component-docs"):
+            self.query_one(f"#{button_id}", Button).disabled = not bool(
+                commands if button_id == "component-copy" else entry.get("documentation_url")
+            )
+
+    @on(DataTable.RowHighlighted, "#component-rows")
+    def row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        index = event.cursor_row
+        if 0 <= index < len(self.names):
+            self.selected_name = self.names[index]
+            self._render_selection()
+
+    @on(Button.Pressed)
+    def button_pressed(self, event: Button.Pressed) -> None:
+        match event.button.id:
+            case "component-refresh":
+                self.refresh_authoritative()
+            case "component-upstream":
+                self.refresh_authoritative(check_updates=True)
+            case "component-copy":
+                components = self.inventory.get("components", {})
+                entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
+                commands = entry.get("manual_commands") if isinstance(entry, Mapping) else None
+                if commands:
+                    self.manager_app.copy_to_clipboard(str(commands))
+                    self.set_status("Manual commands copied; execute them outside the TUI")
+            case "component-docs":
+                components = self.inventory.get("components", {})
+                entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
+                url = entry.get("documentation_url") if isinstance(entry, Mapping) else None
+                if isinstance(url, str):
+                    webbrowser.open(url)
+            case "component-back":
+                self.app.pop_screen()
 
 
 class DashboardScreen(BaseScreen):
@@ -2298,11 +2464,12 @@ class WorkspaceManagerApp(App[None]):
 
     """
 
-    def __init__(self, client: ManagerClient, *, initial_load: bool = True) -> None:
+    def __init__(self, client: ManagerClient, *, initial_load: bool = True, show_main_menu: bool = False) -> None:
         super().__init__()
         self.client = client
         self._guided_closed = False
         self.initial_load = initial_load
+        self.show_main_menu = show_main_menu
         self.busy_instances: set[str] = set()
         self.uncertain_instances: set[str] = set()
         try:
@@ -2358,7 +2525,11 @@ class WorkspaceManagerApp(App[None]):
         self.exit()
 
     def on_mount(self) -> None:
-        self.push_screen(DashboardScreen())
+        self.push_screen(
+            DashboardScreen()
+            if getattr(self.client, 'guided_result', None) or not self.show_main_menu
+            else MainMenuScreen()
+        )
         if getattr(self.client, 'guided_result', None):
             selected = getattr(self.client, 'guided_instance', None)
             self.push_screen(InstanceScreen(selected) if selected else NewInstanceScreen())
@@ -2367,6 +2538,7 @@ class WorkspaceManagerApp(App[None]):
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
+        yield SystemCommand("Manage components", "Inspect installed runtime components", self.open_components)
         yield SystemCommand("Open dashboard", "Overview of all managed instances", self.open_dashboard)
         yield SystemCommand("New instance", "Open the guided instance wizard", self.open_new_instance)
         yield SystemCommand("Host overview", "Open manager-authoritative host state", self.open_host)
@@ -2392,8 +2564,14 @@ class WorkspaceManagerApp(App[None]):
                 discover=False,
             )
 
+    def open_components(self) -> None:
+        self.push_screen(ComponentsScreen())
+
     def open_dashboard(self) -> None:
-        self.switch_screen(DashboardScreen())
+        if isinstance(self.screen, MainMenuScreen):
+            self.push_screen(DashboardScreen())
+        else:
+            self.switch_screen(DashboardScreen())
 
     def open_new_instance(self) -> None:
         self.push_screen(NewInstanceScreen())
@@ -2652,12 +2830,14 @@ class WorkspaceManagerApp(App[None]):
             )
 
 
-def build_app(client: ManagerClient, *, initial_load: bool = True) -> WorkspaceManagerApp:
-    return WorkspaceManagerApp(client, initial_load=initial_load)
+def build_app(
+    client: ManagerClient, *, initial_load: bool = True, show_main_menu: bool = False,
+) -> WorkspaceManagerApp:
+    return WorkspaceManagerApp(client, initial_load=initial_load, show_main_menu=show_main_menu)
 
 
 async def _smoke(client: ManagerClient) -> None:
-    app = build_app(client, initial_load=False)
+    app = build_app(client, initial_load=False, show_main_menu=True)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
@@ -2666,5 +2846,5 @@ def run_textual(client: ManagerClient, *, smoke: bool = False) -> int:
     if smoke:
         asyncio.run(_smoke(client))
         return 0
-    build_app(client).run()
+    build_app(client, show_main_menu=True).run()
     return 0

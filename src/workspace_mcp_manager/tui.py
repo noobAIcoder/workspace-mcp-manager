@@ -489,6 +489,17 @@ class ManagerClient:
         components = self.invoke("host", "components").payload
         return {"ok": True, "inspect": inspect, "components": components}
 
+    def component_inventory(self, *, check_updates: bool = False) -> Mapping[str, Any]:
+        args = ("host", "components", "--check-updates") if check_updates else ("host", "components")
+        payload = self.invoke(
+            *args, require_ok=True,
+            timeout=LONG_READ_TIMEOUT_SECONDS if check_updates else READ_TIMEOUT_SECONDS,
+        ).payload
+        inventory = payload.get("inventory")
+        if not isinstance(inventory, Mapping):
+            raise TuiError("manager returned no component inventory")
+        return inventory
+
     def host_doctor(self) -> Mapping[str, Any]:
         return self.invoke("host", "doctor", timeout=LONG_READ_TIMEOUT_SECONDS).payload
 

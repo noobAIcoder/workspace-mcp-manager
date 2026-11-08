@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from . import __version__
 from .access import AccessManager
 from .cleanup import LegacyCleanupService
+from .component_inspection import ComponentInventory
 from .legacy_import import LegacyImportService
 from .instance_upgrade import InstanceUpgradeService
 from .codex_jobs import CodexJobManager
@@ -81,9 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     host = subparsers.add_parser("host")
     host_sub = host.add_subparsers(dest="command", required=True)
-    for command in ("inspect", "doctor", "components", "ports"):
+    for command in ("inspect", "doctor", "ports"):
         item = host_sub.add_parser(command)
         item.add_argument("--pretty", action="store_true")
+    components_command = host_sub.add_parser("components")
+    components_command.add_argument("--pretty", action="store_true")
+    components_command.add_argument("--check-updates", action="store_true", help="read-only upstream version check")
     host_reboot = host_sub.add_parser("reboot")
     host_reboot.add_argument("--reason", required=True)
     host_reboot.add_argument("--pretty", action="store_true")
@@ -398,7 +402,9 @@ def _run_host(args: argparse.Namespace, paths: ManagerPaths) -> dict[str, Any]:
     if args.command == "doctor":
         return inspector.doctor()
     if args.command == "components":
-        return inspector.components()
+        snapshot = inspector.components()
+        snapshot["inventory"] = ComponentInventory(paths).inspect(check_upstream=args.check_updates)
+        return snapshot
     raise AssertionError(args.command)
 
 
