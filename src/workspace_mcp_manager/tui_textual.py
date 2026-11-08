@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from textual import on, work
-from textual.app import App, ComposeResult, SystemCommand
+from textual.app import App, ComposeResult, SystemCommand, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
@@ -54,6 +54,12 @@ from .tui import (
 
 
 HOST_CLIPBOARD_MAX_BYTES = 256 * 1024
+
+
+def _is_ssh_session() -> bool:
+    """An SSH process cannot write directly to the user's client clipboard."""
+    return bool(os.environ.get("SSH_TTY") or os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
+
 
 
 def _development_toolchain_lines(projection: Mapping[str, Any]) -> list[str]:
@@ -542,10 +548,12 @@ class ComponentsScreen(BaseScreen):
             yield Static("Select a component to see its path and official instructions.", id="component-detail", classes="card")
             yield TextArea("", read_only=True, id="component-instructions")
             with Horizontal(classes="actions"):
-                yield Button("Refresh local", id="component-refresh", variant="primary")
-                yield Button("Check upstream", id="component-upstream")
-                yield Button("Copy commands", id="component-copy")
+                yield Button("Copy commands", id="component-copy", variant="primary")
+                yield Button("Show in terminal", id="component-show")
                 yield Button("Open documentation", id="component-docs")
+            with Horizontal(classes="actions"):
+                yield Button("Refresh local", id="component-refresh")
+                yield Button("Check upstream", id="component-upstream")
                 yield Button("Back", id="component-back")
             yield Static("", id="screen-status")
         yield Footer()
@@ -633,10 +641,31 @@ class ComponentsScreen(BaseScreen):
         self.query_one("#component-instructions", TextArea).load_text(
             str(commands) if commands else "Textual is installed and updated with the manager release."
         )
-        for button_id in ("component-copy", "component-docs"):
+        for button_id in ("component-copy", "component-show", "component-docs"):
             self.query_one(f"#{button_id}", Button).disabled = not bool(
-                commands if button_id == "component-copy" else entry.get("documentation_url")
+                commands if button_id != "component-docs" else entry.get("documentation_url")
             )
+
+    def _selected_commands(self) -> str | None:
+        components = self.inventory.get("components", {})
+        entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
+        value = entry.get("manual_commands") if isinstance(entry, Mapping) else None
+        return str(value) if isinstance(value, str) and value else None
+
+    def show_commands_in_terminal(self, commands: str) -> None:
+        """Temporarily restore terminal scrollback for manual copying over SSH."""
+        try:
+            with self.app.suspend():
+                print(f"\n=== {self.selected_name}: manual installation/update commands ===\n", flush=True)
+                print(commands, end="" if commands.endswith("\n") else "\n", flush=True)
+                try:
+                    input("\nSelect and copy with your terminal, then press Enter to return to the TUI...")
+                except EOFError:
+                    pass
+        except SuspendNotSupported:
+            self.set_status("Terminal suspension is unavailable. Press F6 and use terminal text selection.")
+            return
+        self.set_status("Commands were displayed in the terminal for manual copying.")
 
     @on(DataTable.RowHighlighted, "#component-rows")
     def row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -653,12 +682,20 @@ class ComponentsScreen(BaseScreen):
             case "component-upstream":
                 self.refresh_authoritative(check_updates=True)
             case "component-copy":
-                components = self.inventory.get("components", {})
-                entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
-                commands = entry.get("manual_commands") if isinstance(entry, Mapping) else None
+                commands = self._selected_commands()
                 if commands:
-                    self.manager_app.copy_to_clipboard(str(commands))
-                    self.set_status("Manual commands copied; execute them outside the TUI")
+                    self.manager_app.copy_to_clipboard(commands)
+                    self.set_status(
+                        "Clipboard request sent to SSH terminal via OSC 52; paste to verify. "
+                        "If blocked, select Show in terminal."
+                        if _is_ssh_session()
+                        else "Clipboard request sent; paste to verify. "
+                             "If blocked, select Show in terminal."
+                    )
+            case "component-show":
+                commands = self._selected_commands()
+                if commands:
+                    self.show_commands_in_terminal(commands)
             case "component-docs":
                 components = self.inventory.get("components", {})
                 entry = components.get(self.selected_name, {}) if isinstance(components, Mapping) else {}
@@ -2484,7 +2521,10 @@ class WorkspaceManagerApp(App[None]):
         """Copy through Textual and, on WSL, directly to the Windows clipboard."""
 
         super().copy_to_clipboard(text)
-        _copy_to_host_clipboard(text)
+        # OSC 52 travels through SSH to the client terminal. PowerShell (when
+        # available on the server) writes to the *remote* host, not the client.
+        if not _is_ssh_session():
+            _copy_to_host_clipboard(text)
 
     def action_toggle_terminal_selection(self) -> None:
         """Release/restore terminal mouse reporting for native terminal selection."""
