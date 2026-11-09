@@ -212,6 +212,24 @@ manually installed runtime executables.
 The installer does not automatically launch the TUI. Use
 `workspace-mcp-manager-tui` from any working directory after installation.
 
+### Tunnel API key onboarding
+
+The new-instance wizard's **Tunnel** step includes **Configure tunnel API key**.
+If the selected tunnel environment file does not contain a valid
+`CONTROL_PLANE_API_KEY`, advancing from that step launches a foreground
+terminal prompt automatically. The prompt stores the credential in
+`~/.config/tunnel-client/runtime.env` (mode `0600`), without adding the key
+to manager declarations, the TUI form, subprocess arguments, or logs.
+The parent directory is created with mode `0700` when absent. The terminal
+intentionally echoes entered text to make SSH paste behavior apparent;
+avoid exposing the session while entering secrets.
+
+The API key is shared across tunnel instances; each repository still requires
+its own tunnel ID. If the operator selects a nonstandard environment-file
+location, the local helper requires a file under
+`~/.config/tunnel-client/` and otherwise reports that the file must be
+configured manually.
+
 Download prerequisites are Bash, curl and CA certificates. A fresh Ubuntu host
 can open the menu without Python, but needs Python >=3.10 and Git before source
 acquisition and strict lock validation. When package validation needs a newer

@@ -803,7 +803,8 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
             app.screen.query_one("#new-tunnel-id", Input).value = "tunnel_new_qual"
             app.screen.query_one("#new-health-port", Input).value = "7171"
-            await pilot.click("#wizard-next")
+            with mock.patch("workspace_mcp_manager.tui_textual.tunnel_credential_ready", return_value=True):
+                await pilot.click("#wizard-next")
             for _ in range(3):
                 await pilot.pause()
             await pilot.click("#wizard-next")
@@ -818,6 +819,55 @@ class TextualPilotTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.save_calls, 1)
             self.assertEqual(client.apply_calls, ["a" * 64])
             self.assertIsInstance(app.screen, InstanceScreen)
+
+    async def test_new_wizard_configures_missing_tunnel_key_on_next(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(100, 34)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(4):
+                await pilot.pause()
+            screen = app.screen
+            screen.step = 2
+            screen._show_step()
+            screen.query_one("#new-tunnel-id", Input).value = "tunnel_example"
+            screen.query_one("#new-health-port", Input).value = "7272"
+            with (
+                mock.patch("workspace_mcp_manager.tui_textual.tunnel_credential_ready", return_value=False),
+                mock.patch("workspace_mcp_manager.tui_textual.configure_tunnel_credential", return_value=True) as setup,
+                mock.patch.object(app, "suspend", return_value=nullcontext()) as suspend,
+            ):
+                await pilot.click("#wizard-next")
+                await pilot.pause()
+                setup.assert_called_once()
+                suspend.assert_called_once()
+            self.assertEqual(screen.step, 3)
+            self.assertIn("Configure tunnel API key", str(screen.query_one("#new-auth-setup", Button).label))
+
+    async def test_tunnel_setup_button_runs_foreground_without_key_widget(self) -> None:
+        client = FakeClient()
+        app = build_app(client, initial_load=False)
+        from workspace_mcp_manager.tui_textual import NewInstanceScreen
+
+        async with app.run_test(size=(90, 30)) as pilot:
+            app.push_screen(NewInstanceScreen())
+            for _ in range(4):
+                await pilot.pause()
+            screen = app.screen
+            screen.step = 2
+            screen._show_step()
+            with (
+                mock.patch("workspace_mcp_manager.tui_textual.configure_tunnel_credential", return_value=True) as setup,
+                mock.patch.object(app, "suspend", return_value=nullcontext()),
+            ):
+                await pilot.click("#new-auth-setup")
+                await pilot.pause()
+                setup.assert_called_once()
+            self.assertFalse(
+                any("api-key" in str(widget.id).lower() for widget in screen.query(Input))
+            )
 
     async def test_pm3_1_wizard_projects_manager_context_without_profile_or_secret_inputs(self) -> None:
         client = FakeClient()

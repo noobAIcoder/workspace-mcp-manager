@@ -35,6 +35,11 @@ from textual.widgets import (
 )
 
 from . import __version__
+from .tunnel_auth_helper import (
+    TunnelCredentialSetupError,
+    configure_tunnel_credential,
+    tunnel_credential_ready,
+)
 from .github_token_guidance import (
     PROVIDER_TOKEN_URL,
     fine_grained_pat_guidance,
@@ -1824,7 +1829,6 @@ class NewInstanceScreen(BaseScreen):
         self.preview_payload: Mapping[str, Any] | None = None
         self.workspace_identity: str | None = None
         self.existing_instance_id: str | None = None
-        self.setup_action_url: str | None = None
         self._dirty_paths: set[str] = set()
         self._workspace_dirty = False
         self._populating = True
@@ -1881,7 +1885,7 @@ class NewInstanceScreen(BaseScreen):
                     yield Static("Loading manager port projection…", id="new-tunnel-known-ports", classes="card")
                     yield Label("Authentication")
                     yield Static("Loading external authentication status…", id="new-auth-status", classes="card")
-                    yield Button("Open credential setup", id="new-auth-setup")
+                    yield Button("Configure tunnel API key", id="new-auth-setup")
                 with Vertical(id="wizard-git", classes="wizard-step"):
                     yield Label("Git Repository")
                     yield Static("Loading manager Git discovery…", id="new-git-summary", classes="card")
@@ -2194,16 +2198,20 @@ class NewInstanceScreen(BaseScreen):
         auth = discovery.get("authentication_status") if isinstance(discovery.get("authentication_status"), Mapping) else {}
         providers = auth.get("providers") if isinstance(auth.get("providers"), list) else []
         auth_lines: list[str] = []
-        self.setup_action_url = None
         for item in providers:
             if not isinstance(item, Mapping):
                 continue
             auth_lines.append(f"{item.get('provider', '?')}: {item.get('status', 'unknown')} — {item.get('reason', '')}")
-            action = item.get("setup_action") if isinstance(item.get("setup_action"), Mapping) else None
-            if self.setup_action_url is None and action and isinstance(action.get("url"), str):
-                self.setup_action_url = str(action["url"])
+        credential_path = self._tunnel_credential_path()
+        ready = tunnel_credential_ready(credential_path)
+        auth_lines.insert(
+            0,
+            f"Tunnel credential: {'configured' if ready else 'setup required'} — {credential_path}",
+        )
         self.query_one("#new-auth-status", Static).update("\n".join(auth_lines) or "Authentication status unavailable")
-        self.query_one("#new-auth-setup", Button).styles.display = "block" if self.setup_action_url else "none"
+        setup = self.query_one("#new-auth-setup", Button)
+        setup.label = "Change tunnel API key" if ready else "Configure tunnel API key"
+        setup.styles.display = "block"
 
         existing_row = self.query_one("#existing-workspace-row")
         existing_row.styles.display = "block" if self.existing_instance_id else "none"
@@ -2212,6 +2220,28 @@ class NewInstanceScreen(BaseScreen):
                 f"Already managed by {self.existing_instance_id}. Opening the existing instance is the primary action."
             )
         self._show_step()
+
+    def _tunnel_credential_path(self) -> Path:
+        candidate = self.candidate_payload or {}
+        desired = candidate.get("effective_declaration") if isinstance(candidate.get("effective_declaration"), Mapping) else {}
+        tunnel = desired.get("tunnel") if isinstance(desired.get("tunnel"), Mapping) else {}
+        path = tunnel.get("env_file")
+        return Path(str(path)) if path else Path.home() / ".config/tunnel-client/runtime.env"
+
+    def _configure_tunnel_credential(self) -> bool:
+        path = self._tunnel_credential_path()
+        self.set_status("Entering foreground tunnel API key setup…")
+        try:
+            with self.app.suspend():
+                configured = configure_tunnel_credential(path, home=Path.home())
+        except (TunnelCredentialSetupError, OSError, RuntimeError) as exc:
+            self.set_status(f"✗ Tunnel API key setup failed: {exc}")
+            return False
+        if not configured:
+            self.set_status("Tunnel API key setup cancelled; no credential changes were made")
+            return False
+        self._request_candidate("Tunnel API key configured")
+        return True
 
     def _show_step(self) -> None:
         self.query_one("#wizard-progress", Static).update(
@@ -2419,6 +2449,9 @@ class NewInstanceScreen(BaseScreen):
             except (ValueError, TypeError) as exc:
                 self.set_status(f"✗ {exc}")
                 return
+            if self.step == 2 and not tunnel_credential_ready(self._tunnel_credential_path()):
+                if not self._configure_tunnel_credential():
+                    return
             self.step += 1
             self._show_step()
             if self.step == 4:
@@ -2445,9 +2478,8 @@ class NewInstanceScreen(BaseScreen):
                 self.access_edits.append({"operation": "remove", "mode": mode, "target_alias": alias})
                 self._request_candidate("Access folder removed")
             return
-        if button_id == "new-auth-setup" and self.setup_action_url:
-            webbrowser.open(self.setup_action_url)
-            self.set_status("Opened manager-projected external authentication setup")
+        if button_id == "new-auth-setup":
+            self._configure_tunnel_credential()
             return
         if button_id == "new-github-token":
             webbrowser.open(PROVIDER_TOKEN_URL)
